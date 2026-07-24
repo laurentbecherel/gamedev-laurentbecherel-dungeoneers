@@ -1,0 +1,13 @@
+name = "Dungeoneers: Foundation Engine"
+instruction = "./instruction.md"
+
+[game]
+game-tags = ["rpg", "action", "retro"]
+tech-stack-tags = ["vanilla-js", "webgl", "html5"]
+assets-used = ["primitives", "procedural"]
+avocado-model = "Muse Spark 1.1"
+harness = "Metacode"
+screenshots = []
+videos = []
+teaser = ""
+commit-hash = ""
