@@ -1,0 +1,1 @@
+{"version":1,"materials":[{"id":1,"name":"stone_ceiling","type":"slab","base":[80,78,70],"roughness":0.9,"metal":0,"tag":"ceiling","role":"Flat stone ceiling"},{"id":2,"name":"wooden_beams","type":"beams","base":[60,45,30],"roughness":0.8,"metal":0,"tag":"ceiling","role":"Wooden beam ceiling"}]}

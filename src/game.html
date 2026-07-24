@@ -1,0 +1,22 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1.0">
+<title>Dungeoneers</title>
+<link rel="stylesheet" href="style.css">
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@phosphor-icons/web@2.1.1/src/regular/style.css">
+<link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500&family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+</head>
+<body class="game">
+<header class="topbar game-topbar">
+  <div class="brand">DUNGEONEERS</div>
+  <div class="spacer"></div>
+  <a class="btn btn-ghost" href="index.html"><i class="ph ph-house"></i> Home</a>
+  <a class="btn btn-ghost" href="editor.html"><i class="ph ph-wrench"></i> Editor</a>
+</header>
+<div class="game-viewport">
+  <canvas id="game-canvas" width="640" height="360"></canvas>
+</div>
+<div class="game-hud" id="game-hud">Loading config…</div>
+<script type="module" src="main.js"></script>
+</body></html>

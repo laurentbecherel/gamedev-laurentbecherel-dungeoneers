@@ -1,0 +1,16 @@
+{
+  "name": "dungeoneers-engine",
+  "version": "0.1.0",
+  "type": "module",
+  "scripts": {
+    "start": "node server/server.js",
+    "test": "npm run test:unit && npm run test:e2e",
+    "test:e2e": "npx playwright test",
+    "test:ui": "npx playwright test --ui",
+    "test:unit": "node --test tests/unit/*.test.js"
+  },
+  "devDependencies": {
+    "@playwright/test": "^1.40.0"
+  },
+  "dependencies": {}
+}

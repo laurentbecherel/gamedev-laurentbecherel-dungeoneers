@@ -1,0 +1,16 @@
+{
+  "version": 1,
+  "renderer": {
+    "resolution": "640x360",
+    "authentic": true
+  },
+  "player": {
+    "moveSpeed": 3,
+    "mouseSensitivity": 0.0022
+  },
+  "generator": {
+    "mapW": 32,
+    "mapH": 32,
+    "seed": null
+  }
+}

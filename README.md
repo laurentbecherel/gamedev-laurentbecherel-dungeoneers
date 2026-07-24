@@ -12,19 +12,19 @@ per task under `tasks/`.
 
 ```text
 gamedev-laurentbecherel-dungeoneers/
-├── src/                  Client-side game source — HTML, ES modules, CSS, assets
-│   │                     Served statically by Node.js server.
+├── src/                  Full self-contained project — client, server, tests, config
+│   │                     All code, assets, server, and tests in one folder.
 │   ├── index.html        Landing page with links to game and editor
 │   ├── game.html         Runtime game entry point
 │   ├── editor.html       Editor entry point for live tuning
 │   ├── config/           Client-side config API client
 │   ├── assets/           JSON data assets (materials, themes, architectures)
 │   └── ...               Subsystem folders added incrementally per task
-├── server/               Server-side Node.js application
+│   ├── server/           Server-side Node.js application (inside src/)
 │   ├── server.js         HTTP server + REST API for config and asset CRUD
 │   ├── package.json      Dependencies and npm scripts
 │   └── config-state.json Runtime persisted config (created on first save)
-├── tests/                Test suite
+│   ├── tests/            Playwright E2E test suite (inside src/)
 │   ├── playwright.config.js
 │   └── e2e/              Playwright end-to-end tests for all pages
 ├── tasks/                One folder per task (descriptive kebab-case names)
@@ -53,15 +53,15 @@ Notes:
 
 **Install dependencies (first time):**
 ```bash
-npm install              # installs Playwright for testing (+ Express if used)
+cd src && npm install              # installs Playwright for testing (+ Express if used)
 npx playwright install   # downloads browser binaries for E2E tests
 ```
 
 **Start server:**
 ```bash
-npm start
+cd src && npm start
 # Server runs at http://localhost:8000
-# Override port:  PORT=3000 npm start   (Unix)  or  $env:PORT=3000; npm start  (PowerShell)
+# Override port:  PORT=3000 cd src && npm start   (Unix)  or  $env:PORT=3000; cd src && npm start  (PowerShell)
 ```
 
 **Open in browser:**
@@ -71,8 +71,8 @@ npm start
 
 **Run tests:**
 ```bash
-npm test          # Playwright E2E tests headless
-npm run test:ui   # Playwright UI mode for debugging
+cd src && npm test          # Playwright E2E tests headless
+cd src && npm run test:ui   # Playwright UI mode for debugging
 ```
 
 ## Engine & Framework
@@ -111,14 +111,14 @@ git clone https://github.com/laurentbecherel/gamedev-laurentbecherel-dungeoneers
 cd gamedev-laurentbecherel-dungeoneers
 
 # Install dependencies (first time only)
-npm install              # installs Playwright for testing
+cd src && npm install              # installs Playwright for testing
 npx playwright install   # downloads browser binaries for E2E tests
 
 # Start server
-npm start
+cd src && npm start
 # Server runs at http://localhost:8000
-# Override port:  PORT=3000 npm start   (Unix/macOS)
-#                  $env:PORT=3000; npm start   (PowerShell on Windows)
+# Override port:  PORT=3000 cd src && npm start   (Unix/macOS)
+#                  $env:PORT=3000; cd src && npm start   (PowerShell on Windows)
 ```
 
 **Open in browser:**
@@ -128,8 +128,8 @@ npm start
 
 **Run tests:**
 ```bash
-npm test          # Playwright E2E tests headless
-npm run test:ui   # Playwright UI mode for interactive debugging
+cd src && npm test          # Playwright E2E tests headless
+cd src && npm run test:ui   # Playwright UI mode for interactive debugging
 npx playwright show-report   # View HTML test report after run
 ```
 

@@ -1,0 +1,1 @@
+{"version":1,"materials":[{"id":1,"name":"stone_slab","type":"slab","base":[90,88,80],"roughness":0.88,"metal":0,"tag":"floor","role":"Stone slab floor"},{"id":2,"name":"cobblestone","type":"cobble","base":[70,68,60],"roughness":0.95,"metal":0,"tag":"floor","role":"Cobblestone path"}]}

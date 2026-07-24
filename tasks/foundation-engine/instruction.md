@@ -1,6 +1,12 @@
 # Foundation Engine — Dungeoneers Task 1
 
-Build the foundational engine structure for Dungeoneers, a retro dungeon crawler. This task establishes a Node.js server with REST API, a landing page, runtime game page, editor page, data-driven JSON config architecture with API persistence to disk, and a test suite with Playwright end-to-end tests. No gameplay yet — just the scaffolding.
+Build the foundational engine structure for Dungeoneers, a retro dungeon crawler built on a lightweight custom engine layer rather than an off-the-shelf game framework.
+
+**Why custom lightweight:** Dungeoneers will use bespoke rendering techniques — starting from a column-based raycaster evolving toward WebGL2 with procedural PBR materials, parallax occlusion mapping, and torch-based lighting — alongside a fully data-driven asset pipeline where game content (materials, themes, dungeon architectures, runtime parameters) lives as editable JSON. A heavyweight engine would impose incompatible asset formats, editor paradigms, and rendering abstractions that fight the retro-first-person aesthetic and the need for live parameter tuning during development. A minimal custom scaffolding gives full control over the rendering pipeline, asset formats, and editor workflow from day one.
+
+This task establishes that scaffolding: a Node.js server with unified asset REST API persisting JSON to disk, a landing page introducing the game, a fullscreen game runtime page with canvas placeholder, a live asset editor with dual-mode (visual widgets + raw JSON) editing, a cohesive design system shared across all pages, and Playwright end-to-end test coverage. No gameplay logic yet — this is the foundation upon which dungeon generation, rendering, entities, and RPG systems build incrementally in subsequent tasks.
+
+The editor is central from day one because retro crawler feel depends heavily on parameter tuning — movement speed, field of view, material properties, light falloff, dungeon generation seeds. A live editor writing directly to disk (not localStorage) enables iteration without touching code, with changes tracked naturally via git alongside source.
 
 ## Requirements
 
@@ -8,70 +14,59 @@ Build the foundational engine structure for Dungeoneers, a retro dungeon crawler
 Create project with this layout:
 ```
 /
-├── src/                      # Client-side code (served statically)
-│   ├── index.html            # Landing page with links to game and editor
-│   ├── game.html             # Runtime game entry point
-│   ├── editor.html           # Editor entry point
-│   ├── main.js               # Game bootstrap (minimal placeholder)
-│   ├── editor.js             # Editor bootstrap (minimal placeholder)
-│   ├── landing.js            # Landing page logic (optional, can be inline)
-│   ├── style.css             # Shared styles
+├── src/                      # Full self-contained project
+│   ├── index.html            # Landing page with hero, features, navigation
+│   ├── game.html             # Fullscreen game canvas entry point
+│   ├── editor.html           # Editor with sidebar navigation and asset panels
+│   ├── main.js               # Game bootstrap — fullscreen canvas, config HUD
+│   ├── editor.js             # Editor bootstrap — sidebar nav, asset editor
+│   ├── style.css             # Shared design system (CSS variables, components)
 │   ├── config/
-│   │   └── config.js         # Central config system (client-side API client)
-│   └── assets/               # JSON data assets (edited via API)
-│       ├── materials/
-│       │   ├── walls.json
-│       │   ├── floors.json
-│       │   ├── ceils.json
-│       │   └── architectures.json
-│       └── themes/
-│           └── themes.json
-├── server/                   # Server-side
-│   ├── server.js             # Node.js HTTP server with REST API + static serving
-│   ├── package.json          # Node dependencies and scripts
-│   └── config-state.json     # Server-side persisted config state (created at runtime if not exists)
-├── tests/                    # Test suite
-│   ├── playwright.config.js  # Playwright configuration
-│   └── e2e/
-│       ├── landing.spec.js   # Landing page tests
-│       ├── game.spec.js      # Game page tests
-│       └── editor.spec.js    # Editor page tests
+│   │   └── config.js         # Unified asset API client (config is an asset)
+│   ├── assets/               # All JSON data assets including config
+│   │   ├── config/
+│   │   │   └── main.json     # Game configuration (unified asset)
+│   │   ├── materials/
+│   │   │   ├── walls.json
+│   │   │   ├── floors.json
+│   │   │   ├── ceils.json
+│   │   │   └── architectures.json
+│   │   └── themes/
+│   │       └── themes.json
+│   ├── server/               # Server-side Node.js application
+│   │   └── server.js         # HTTP server with unified asset REST API
+│   ├── tests/                # Playwright E2E test suite
+│   │   ├── playwright.config.js
+│   │   └── e2e/
+│   │       ├── landing.spec.js
+│   │       ├── game.spec.js
+│   │       └── editor.spec.js
+│   └── package.json          # Node dependencies and npm scripts
 └── README.md                 # Running instructions
 ```
 
-### 2. Server with REST API (server/server.js)
+### 2. Server with Unified Asset REST API (src/server/server.js)
 Build a Node.js HTTP server serving static files AND providing REST API endpoints. Use Node's built-in `http` module to minimize dependencies, OR Express if preferred (add to package.json dependencies).
 
 **Server responsibilities:**
 - Serve static files from `src/` directory at root path `/` over HTTP (enables ES modules — no file:// restriction)
-- Provide REST API endpoints under `/api/` prefix for config and asset management
+- Provide unified REST API endpoints under `/api/` prefix — config is treated as an asset under `assets/config/` category
 - Handle CORS headers (straightforward since same origin serving)
 - Listen on configurable port (default 8000, override via PORT env var)
 - Graceful shutdown on SIGINT/SIGTERM signals
 
 **Required API endpoints:**
 
-`GET /api/config`
-- Returns current config as JSON.
-- On first call with no persisted state, returns defaults merged from in-code DEFAULTS + JSON asset files.
-- Response: 200 with JSON body `{version:1, renderer:{...}, player:{...}, generator:{...}}`
-
-`POST /api/config`
-- Accepts JSON body (full config object or partial patch — support full replacement for simplicity in foundation).
-- Validates: must be valid JSON parseable, must be object type, should have version field (warn if missing but accept).
-- Persists to `server/config-state.json` on disk (pretty-printed, 2-space indent). Create server/ directory if needed. On subsequent GET requests, read from this file and merge over defaults.
-- Returns updated config as JSON with 200 status, or 400 on validation error with JSON error message body.
-
 `GET /api/assets`
-- Returns list of available JSON assets with metadata.
-- Scans `src/assets/materials/` and `src/assets/themes/` directories for .json files.
-- Response: 200 with JSON array like `[{"category":"materials","name":"walls","path":"materials/walls.json","itemCount":2}, ...]`
-- itemCount = number of items in array for materials files, or number of keys for object-type files like architectures/themes.
+- Returns list of available JSON assets with metadata across all categories including config.
+- Scans `src/assets/*/` directories dynamically — each subfolder name becomes a category. Scans all `.json` files within each category folder.
+- Response: 200 with JSON array like `[{"category":"config","name":"main","path":"config/main.json","itemCount":4}, {"category":"materials","name":"walls","path":"materials/walls.json","itemCount":2}, ...]`
+- itemCount heuristic: if top-level value is array, use array length; else find first array-valued field in object and use its length; else count top-level object keys. Fully generic — no hardcoded field names.
 
 `GET /api/assets/:category/:name`
 - Serves specific JSON asset file content dynamically.
-- Category must be `materials` or `themes`. Name without extension: `walls`, `floors`, `ceils`, `architectures`, `themes`.
-- Reads corresponding file from `src/assets/{category}/{name}.json`, parses and returns as JSON.
+- Category is any valid subfolder name under `src/assets/` — validated server-side against existing directories to prevent path traversal. Name without extension derived from filename, e.g., `main`, `walls`, `floors`, etc.
+- Reads corresponding file from `src/assets/{category}/{name}.json` — config lives at `src/assets/config/main.json`, parses and returns as JSON.
 - Response: 200 with JSON body on success, 404 with JSON error if file not found or category invalid.
 
 `PUT /api/assets/:category/:name`
@@ -84,152 +79,152 @@ Build a Node.js HTTP server serving static files AND providing REST API endpoint
 - Returns 200 with success JSON on write success, 400 with error JSON on validation failure, 404 if category/name invalid.
 
 **Server startup and package.json:**
-- `node server/server.js` starts server.
-- package.json at `server/package.json` OR at repo root — pick one consistently (repo root simpler for single npm install command). Recommend repo root `package.json` for simplicity.
-- package.json minimal content:
-```json
-{
-  "name": "dungeoneers-engine",
-  "version": "0.1.0",
-  "type": "module",
-  "scripts": {
-    "start": "node server/server.js",
-    "test": "npx playwright test",
-    "test:ui": "npx playwright test --ui"
-  },
-  "devDependencies": {
-    "@playwright/test": "^1.40.0"
-  },
-  "dependencies": {}
-}
-```
-- If using Express: add `"express": "^4.18.0"` to dependencies (not devDependencies since needed at runtime).
-- Log on startup: "Dungeoneers server running at http://localhost:{port}" to console.
-- Log API requests at info level (method, path, status code, maybe timing) for debugging.
+- `cd src && node server/server.js` (or `npm start`) starts the server.
+- `package.json` lives at `src/package.json` since `src/` is the self-contained project root.
+- Must define npm scripts: `start` to launch the server, `test` to run Playwright headless, `test:ui` for Playwright UI mode.
+- Must set `"type": "module"` for ES module support in Node.js.
+- Dev dependency: `@playwright/test` at appropriate recent version for E2E testing. If using Express instead of Node built-in http module, add express as runtime dependency.
+- Server must log startup confirmation message including the port number to console.
+- Server should log API requests for debugging purposes (method, path, status code).
 
 ### 3. Landing Page (src/index.html)
-- HTML5 boilerplate, title "Dungeoneers — Delve Co."
-- Clean landing page design introducing the game — NOT the game itself.
+- HTML5 boilerplate with Google Fonts (Inter for UI, JetBrains Mono for code/data)
+- Elegant landing page with cohesive design system — NOT the game itself.
+- Design system via CSS variables in style.css: dark theme with gold accent (#c9a84c), elevated surfaces, soft borders, generous spacing scale, subtle shadows and glows.
 - Content sections:
   - Game title/logo area with tagline: "Tank. Heal. Loot. Clock Out."
   - Short pitch paragraph describing 4-player co-op retro dungeon crawler concept
-  - Two prominent action buttons/links:
-    * "Play Game" → links to `game.html`
-    * "Open Editor" → links to `editor.html`
+  - Top bar navigation (consistent across all pages, see Navigation System section) with Play and Editor links using Phosphor icons before text labels.
+  Two prominent hero action buttons/links with Phosphor icons:
+    * "Play Game" (with ph-play icon before text) → links to `game.html`
+    * "Open Editor" (with ph-wrench icon before text) → links to `editor.html`
   - Optional: brief feature list, controls reference, or "About" section
-- Styling via style.css — dark dungeon aesthetic matching game theme (dark background, readable text, retro pixel font if available or monospace fallback)
+- Styling via style.css design system — dark dungeon aesthetic with CSS variables for colors, spacing, radius, shadows. Hero section with radial gradient and subtle scanline texture overlay. Feature cards in responsive grid. Elegant typography hierarchy with Inter font family.
 - No JavaScript required for landing page functionality beyond basic link navigation, but may include landing.js for subtle animations or dynamic content if desired (optional).
 - This page served at root path `/` when user visits http://localhost:8000/
 
-### 4. Game Page (src/game.html)
-- HTML5 boilerplate, title "Dungeoneers"
-- Canvas element for game rendering with id="game-canvas", width 640, height 360 (internal resolution, CSS may scale for display)
-- Loads main.js as ES module via `<script type="module" src="main.js">`
-- Styling via style.css — canvas centered, dark background, optional retro CRT styling hints (scanline overlay via CSS pseudo-element acceptable but not required for foundation)
-- Link back to landing page (small link in corner or header: "← Back to Home" linking to index.html)
-- Placeholder rendering via main.js: canvas cleared to dark color (#0a0a0a or similar), centered text "Dungeoneers — Foundation Engine" in light color with readable font
-- Fetches config from API on load and logs to console to verify API connectivity
+### Navigation System (shared across all pages)
+All three pages share a consistent top bar navigation component with identical structure, styling, and icon usage:
 
-### 5. Editor Page (src/editor.html)
-- HTML5 boilerplate, title "Dungeoneers Editor"
-- Simple UI shell — for foundation task, basic layout sufficient (detailed tabbed UI with 14 subsystem tabs comes in Task 7)
+- **HTML structure** (same on every page):
+  ```html
+  <header class="topbar [page-specific-class]">
+    <div class="brand">DUNGEONEERS</div>  <!-- or "DUNGEONEERS EDITOR" on editor page -->
+    <div class="spacer"></div>
+    <a class="btn btn-ghost" href="..."><i class="ph ph-..."></i> Label</a>
+    <a class="btn btn-ghost" href="..."><i class="ph ph-..."></i> Label</a>
+  </header>
+  ```
+- **Layout**: brand/title on left, spacer flex pushes navigation to right, two ghost-style buttons on right
+- **Icon placement**: Phosphor icon always BEFORE text label in navigation buttons, consistent across all pages
+- **Icon mapping**: Home → `ph-house`, Play/Game → `ph-play`, Editor → `ph-wrench`
+- **Styling**: shared `.topbar` CSS class with dark elevated background, bottom border, 52px height. Game page uses `.game-topbar` variant with gradient overlay and transparent background for fullscreen immersion, but same HTML structure and button styles.
+- **Page-specific navigation**:
+  * Landing (`index.html`): brand "DUNGEONEERS", right nav has Play → game.html and Editor → editor.html
+  * Game (`game.html`): brand "DUNGEONEERS", right nav has Home → index.html and Editor → editor.html
+  * Editor (`editor.html`): brand "DUNGEONEERS EDITOR", right nav has Play → game.html and Home → index.html
+
+### 4. Game Page (src/game.html) — Fullscreen Canvas
+- HTML5 boilerplate with Google Fonts and Phosphor Icons CDN (@phosphor-icons/web), title "Dungeoneers". Consistent top bar navigation shared across all pages. No emoji — Phosphor icons only.
+- **Fullscreen layout**: body has no margins, black background, canvas fills viewport while maintaining 640×360 internal resolution scaled via CSS to fit window preserving aspect ratio
+- Canvas element with id="game-canvas", width 640, height 360 internal resolution
+- Top bar uses shared navigation component with `.topbar.game-topbar` classes — gradient overlay variant for fullscreen immersion, same button structure as other pages (brand left, Home and Editor links right with icons before text)
+- Fixed bottom HUD pill showing config status (version, resolution, player speed, map size) — semi-transparent backdrop-blur design
+- Loads main.js as ES module
+- Styling: pure black background (#000), canvas centered in viewport flex container, scaled responsively via JavaScript calculating scale factor from window dimensions
+- Placeholder rendering via main.js: canvas with dark background, subtle scanline pattern, centered "DUNGEONEERS" title in gold accent color with Inter font, subtitle and resolution info
+- Fetches config from unified asset API (`/api/assets/config/main`) on load, displays in HUD, logs to console
+
+### 5. Editor Page (src/editor.html) — Dual-Mode Asset Editor with Folder Tree
+- HTML5 boilerplate with Google Fonts (Inter + JetBrains Mono) and Phosphor Icons CDN (@phosphor-icons/web), title "Dungeoneers Editor". No emoji characters — all icons via Phosphor <i> tags.
+- **Elegant three-panel layout with resizable sidebar**: top bar with branding and actions, left sidebar as folder tree explorer, draggable resizer bar (4px) between sidebar and main panel allowing width adjustment from 180px to 480px, main content area with tabbed editor
+- Design system: CSS variables for colors/spacing/radius/shadows, Inter sans-serif + JetBrains Mono monospace typography, Phosphor Icons icon system via CDN (@phosphor-icons/web), gold accent theme. Sidebar with active state highlighting. Top bar with Save Changes button and status pills.
 - Loads editor.js as ES module
-- Displays current config values fetched from API — simple `<pre>` formatted JSON dump acceptable for foundation, OR basic form with a few key fields editable
-- Buttons wired to API:
-  - **Save Config** → collects current config state → POST to `/api/config` → show success/error feedback
-  - **Reset Config** → confirm dialog → POST default config to API (or dedicated reset — for foundation, POST hardcoded defaults object is fine) → re-fetch and re-render UI
-  - **Export Config** → client-side blob download of current config as JSON file (no server roundtrip — uses local config object stringified)
-  - **Import Config** → file input element → FileReader reads selected JSON file → parse and validate locally → POST to `/api/config` → on success re-fetch and update UI
-- Asset management section:
-  - Fetch asset list from `/api/assets` on page load, display as list or dropdown
-  - Select asset → fetch content via `/api/assets/{category}/{name}` → display in textarea for editing
-  - Save Asset button → PUT edited JSON back to same endpoint → show success/error feedback
-  - For foundation, simple textarea JSON editor sufficient — structured per-field UI comes in Task 7
-- Link back to landing page ("← Back to Home" → index.html)
+- **Folder tree explorer sidebar**: fully generic file explorer reflecting actual folder hierarchy under `src/assets/`. Root "assets" folder node at top level, expandable/collapsible with chevron toggle (▼/▶). Each subfolder becomes a collapsible category node sorted alphabetically, with auto-formatted labels (snake/kebab-case to Title Case). Each JSON file appears as a leaf node under its folder with `.json` extension shown and item count badge. Clicking a file node loads it into the editor panel and highlights active state. No hardcoded category names, labels, or icons anywhere — entirely driven by filesystem structure discovered via API. Collapsed/expanded state tracked in memory per folder.
+- **Dual-mode editor panel with tabs** (Visual Editor default, Raw JSON secondary):
+  - **Visual Editor tab (default)**: Generic form renderer inspects JSON structure and generates appropriate widgets automatically — no hardcoded schemas per asset type. Widget mapping:
+    * `number` → number input; for 0-1 ranges also synchronized range slider
+    * `string` → text input
+    * `boolean` → toggle switch with enabled/disabled label
+    * `null` → text input with null placeholder
+    * Array of 3 numbers (RGB) → color picker + RGB number trio kept in sync
+    * Array of objects → expandable card list with per-item header, delete button, Add item button
+    * Nested object → indented fieldset with left border, recursive rendering
+    * Field labels auto-generated from keys with capitalized words
+  - **Raw JSON tab**: monospace textarea with pretty-printed JSON for power users. Switching tabs syncs bidirectionally — visual edits update object live via oninput; switching to raw serializes; switching back parses (error pill shown and stays in raw if invalid).
+- **Buttons wired to unified asset API:**
+  - **Save Changes** (top bar, sole action button) → collects current data from active mode → PUT to `/api/assets/{category}/{name}` → status pill feedback (green ok / red err)
+  - No reset, export, or import buttons — version control handled via git; edit JSON files directly or via editor and commit normally
+- **Asset navigation:** fetch list from `/api/assets` on load — server scans `src/assets/*/` folders dynamically. Build tree UI with root assets node containing collapsible folder nodes per category, each containing file leaf nodes. Click file node to load asset into Visual mode by default. Save PUTs to unified endpoint. Config treated identically to other assets. Sidebar width adjustable via drag resizer.
+- **Widget styling:** tabs with active underline accent; uppercase field labels; dark inputs with accent glow on focus; custom range sliders; sliding toggle pills; color picker squares; array cards with header bar and delete; nested left-border indents; rounded status pills
+- Top bar navigation links use Phosphor house icon for Home and wrench icon for Editor / play icon for Play
 
-### 6. Central Config System (src/config/config.js)
-Client-side module providing API client functions for config and asset management. Replaces old localStorage-based approach — server API is source of truth.
+### 6. Unified Asset API Client (src/config/config.js)
+Client-side module providing unified API client for all assets including config. Config is just another asset under `config` category accessed via the same asset API paths as all other game data — no separate config-specific endpoints exist at all.
 
 **Must export async functions:**
 
 `async getConfig()`
-- GET fetch to `/api/config`
-- On success (200): parse JSON response, merge over in-code DEFAULTS via deepMerge as defensive fallback for missing keys, cache result, return config object
-- On failure: log warning to console, return deep clone of DEFAULTS as fallback so app doesn't crash if server unavailable
-- Always returns Promise resolving to config object (never throws — graceful degradation)
+- GET fetch to `/api/assets/config/main`
+- On success (200): parse JSON response, cache result, return config object
+- On failure: log error and throw — config asset must exist at `src/assets/config/main.json`, no fallback defaults
+- Always returns Promise resolving to config object, throws on error
 
 `async saveConfig(cfg)`
-- POST fetch to `/api/config` with cfg JSON-stringified in request body, Content-Type: application/json header
-- On 200 response: parse returned JSON, update cache, dispatch CustomEvent, return true
-- On non-200 or network error: log error, return false
-- Dispatches `new CustomEvent('dungeoneers-config-saved', {detail: savedConfig})` on window on success
-
-`async resetConfig()`
-- POST default config object (deep clone of DEFAULTS) to `/api/config`
-- On success: clear cache, return fresh config from response
-- On failure: return null or defaults fallback
-
-`exportConfigJSON()`
-- Synchronous — returns `JSON.stringify(getConfigSync() || DEFAULTS, null, 2)` for pretty-printed download
-- No server call needed (uses cached config or defaults)
-
-`async importConfigJSON(jsonStr)`
-- Parse jsonStr locally, validate basic structure (must be object, should have version field — warn if missing but proceed)
-- On parse/validation success: call saveConfig(parsed) to persist via API
-- Return boolean success
+- PUT fetch to `/api/assets/config/main` with cfg JSON-stringified in request body
+- On 200 response: update cache, dispatch CustomEvent, return true
+- On non-200 or network error: log error and throw
 
 `async getAssetList()`
 - GET fetch to `/api/assets`
 - Returns array of asset metadata objects, or empty array on failure
 
 `async getAsset(category, name)`
-- GET fetch to `/api/assets/${category}/${name}`
-- Returns parsed asset JSON object/array, or null on failure
+- GET fetch to `/api/assets/{category}/{name}` — category validated server-side against existing asset folders
+- Returns parsed JSON or null on failure
 
 `async saveAsset(category, name, data)`
-- PUT fetch to `/api/assets/${category}/${name}` with data JSON-stringified in body
-- Returns boolean success based on response status
+- PUT fetch to `/api/assets/{category}/{name}` — writes back to corresponding JSON file on disk
+- Returns boolean success
 
-**Helper functions (internal, not necessarily exported but useful):**
-- `deepClone(obj)` — JSON parse/stringify deep clone for safe copying
-- `deepMerge(target, source)` — recursive merge where source overrides target deeply, arrays replaced wholesale, objects merged key-by-key
-- `isBrowser()` — check for window/document existence for graceful Node degradation (though config.js primarily client-side, good practice for test harness compatibility)
+**Helper functions:**
+- `clone(obj)` — JSON parse/stringify deep clone for safe copying
+- No deepMerge needed — config asset is authoritative source of truth, no fallback merging
 
-**DEFAULTS object structure (minimal for foundation, version 1):**
-```js
-const DEFAULTS = {
-  version: 1,
-  renderer: {
-    resolution: "640x360",
-    authentic: true,
-  },
-  player: {
-    moveSpeed: 3.0,
-    mouseSensitivity: 0.0022,
-  },
-  generator: {
-    mapW: 32,
-    mapH: 32,
-    seed: null,   // null means random seed each generation
-  },
-  // Note: walls, floors, ceils, architectures, themes are NOT embedded here —
-  // they live as separate JSON asset files under src/assets/, accessed via asset API.
-};
+**Config asset structure (`src/assets/config/main.json`, version 1):**
+```json
+{
+  "version": 1,
+  "renderer": { "resolution": "640x360", "authentic": true },
+  "player": { "moveSpeed": 3.0, "mouseSensitivity": 0.0022 },
+  "generator": { "mapW": 32, "mapH": 32, "seed": null }
+}
 ```
+Config lives as a regular JSON asset file on disk — no hardcoded defaults in code. Server returns 404 if missing; client throws error.
 
 **Caching strategy:**
-- Module-level `_cachedConfig` variable holds last fetched config to avoid repeated API calls within same page session
-- Invalidate cache (set to null) on saveConfig success so next getConfig re-fetches fresh state from server
-- getConfig checks cache first, fetches from API only on cache miss
+- Module-level `_cache` variable holds last fetched config
+- getConfig checks cache first, fetches from unified asset API only on cache miss
+- saveConfig updates cache on success and dispatches CustomEvent
 
 **Event pattern for cross-tab updates (optional for foundation, nice to have):**
 - saveConfig dispatches CustomEvent on successful save
 - Game page (if open in another browser tab) could listen for storage events OR poll periodically OR require manual refresh — for foundation task, manual refresh acceptable. Live cross-tab update via BroadcastChannel or storage event listening can be enhancement in later task.
 
-### 7. JSON Assets Structure
-Create placeholder JSON files in `src/assets/` defining schemas with example entries demonstrating structure. These are authoritative storage — edited via API PUT endpoints which write back to these files on disk.
+### 7. JSON Assets Structure (Unified)
+Create placeholder JSON files in `src/assets/` defining schemas with example entries. Config is stored as `src/assets/config/main.json` alongside other assets — unified storage model. All assets edited via same PUT `/api/assets/{category}/{name}` endpoint.
 
-**Required files with example schema:**
+**Required files with example schema (note config/ category added):**
+
+`src/assets/config/main.json`:
+```json
+{
+  "version": 1,
+  "renderer": { "resolution": "640x360", "authentic": true },
+  "player": { "moveSpeed": 3.0, "mouseSensitivity": 0.0022 },
+  "generator": { "mapW": 32, "mapH": 32, "seed": null }
+}
+```
 
 `src/assets/materials/walls.json`:
 ```json
@@ -338,40 +333,32 @@ Create placeholder JSON files in `src/assets/` defining schemas with example ent
 
 For foundation task, minimal example data sufficient — 2 materials per type demonstrates array structure and API roundtrip works. Full 16/10/8 materials come in later tasks.
 
-### 8. Test Suite with Playwright
+### 8. Test Suite — Unit Tests and Playwright E2E
 
-Create end-to-end test suite using Playwright to validate all three pages and API functionality.
+Create two complementary test suites validating the foundation from different angles: unit tests for server-side asset handling logic, and end-to-end tests for full-stack user flows across all three pages.
 
-**Setup:**
-- Add `@playwright/test` to devDependencies in package.json (already in template above)
-- Run `npx playwright install` once to download browser binaries (document in README as setup step, or include in package.json postinstall script)
-- Create `playwright.config.js` at repo root with basic configuration
+**Test structure:**
+- Unit tests at `src/tests/unit/` using Node.js built-in test runner (`node --test`) — no additional test framework dependency needed beyond Node itself
+- E2E tests at `src/tests/e2e/` using Playwright
+- `package.json` scripts should expose: `test:unit` running Node test runner on unit test files, `test:e2e` running Playwright, and `test` running both in sequence
 
-**playwright.config.js structure:**
-```js
-// @ts-check
-import { defineConfig } from '@playwright/test';
+**Unit test coverage expectations (`server.test.js` or similar):**
 
-export default defineConfig({
-  testDir: './tests/e2e',
-  fullyParallel: true,
-  forbidOnly: !!process.env.CI,
-  retries: process.env.CI ? 2 : 0,
-  workers: process.env.CI ? 1 : undefined,
-  reporter: 'html',
-  use: {
-    baseURL: 'http://localhost:8000',
-    trace: 'on-first-retry',
-  },
-  // Start dev server automatically before tests (Playwright webServer feature):
-  webServer: {
-    command: 'node server/server.js',
-    url: 'http://localhost:8000',
-    reuseExistingServer: !process.env.CI,
-    timeout: 10000,
-  },
-});
-```
+The server exposes pure functions for asset file handling that deserve direct unit testing independent of HTTP layer complexity. Tests should start the server programmatically on an alternate port to avoid conflicts, exercise edge cases via HTTP requests, and clean up temporary test artifacts afterward.
+
+Expected test scenarios:
+- Item counting heuristic correctness across different JSON structures — arrays at top level, objects containing array-valued fields, objects with only scalar fields, and empty objects should each produce expected counts used for sidebar badges
+- Path traversal attacks are blocked — requests attempting directory traversal via `../` segments or URL-encoded variants must not escape the assets directory and should return 404
+- Invalid category and asset names containing characters outside the safe alphanumeric/underscore/hyphen pattern are rejected appropriately
+- Malformed JSON in PUT request bodies results in 400 response with error details rather than server crash
+- Requests for non-existent assets return 404 with clear error messaging
+- Save and load roundtrip preserves data exactly and writes pretty-printed JSON with consistent indentation to disk — verify by reading file content back from filesystem after API write
+- New category folders created under `src/assets/` are automatically discovered by subsequent API list requests without requiring server restart or code changes, demonstrating the fully generic folder-driven architecture
+
+**Playwright E2E setup:**
+- Add `@playwright/test` to devDependencies in package.json
+- Run `cd src && npx playwright install` once to download browser binaries (document in README)
+- Create `src/playwright.config.js` with configuration specifying test directory, base URL pointing to local server, HTML reporter, trace capture on retry, CI-appropriate settings, and webServer configuration to launch the Node.js server automatically before test run with health check URL and timeout.
 
 **Test files to create in `tests/e2e/`:**
 
@@ -393,81 +380,67 @@ export default defineConfig({
 - No console errors related to config loading or canvas setup
 
 `editor.spec.js` — Editor page tests:
-- Editor page loads at `/editor.html` without errors
-- Page title contains "Editor" or "Dungeoneers Editor"
-- Config display area shows fetched config data (verify text content contains expected fields like version, renderer, etc.)
-- Save Config button exists and is clickable
-- Reset Config button exists
-- Export and Import buttons exist
-- Asset management section shows asset list fetched from API (verify dropdown or list contains expected asset names like walls, floors, etc.)
-- Test Save Config flow:
-  * Click Save button
-  * Wait for API POST request to /api/config to complete (Playwright can waitForResponse)
-  * Verify success feedback shown (toast message or status text)
-  * Optionally verify via direct API GET that config persisted
-- Test asset edit flow:
-  * Select asset from dropdown/list
-  * Verify textarea populated with JSON content from API
-  * Modify JSON content in textarea (e.g., change a material name)
-  * Click Save Asset button
-  * Wait for PUT request to complete successfully
-  * Re-fetch asset and verify change persisted
-  * Restore original content to leave clean state for next test run
+- Editor page loads at `/editor.html` without errors, title contains "Editor"
+- Folder tree sidebar is visible and populated with asset categories discovered from API
+- Clicking a file node in the tree loads asset content into editor panel
+- Visual Editor tab is active by default showing structured form widgets; Raw JSON tab is available and switchable
+- Save Changes button exists, is clickable, and triggers successful API request with status feedback visible on click
+- Asset edit flow: select asset from tree → switch to Raw JSON tab → modify JSON content → save → verify success feedback → optionally verify persistence via direct API GET → restore original to leave clean state
 - No console errors during normal editor operation
 
 **Running tests:**
 ```bash
 # Install Playwright browsers (first time only):
-npx playwright install
+cd src && npx playwright install
 
-# Run all E2E tests headless:
-npm test
-# or: npx playwright test
+# Run all tests (unit + E2E):
+cd src && npm test
 
-# Run with UI mode for debugging:
-npm run test:ui
-# or: npx playwright test --ui
+# Run only unit tests (fast, no browser):
+cd src && npm run test:unit
+# or: cd src && node --test tests/unit/*.test.js
+
+# Run only E2E tests:
+cd src && npm run test:e2e
+# or: cd src && npx playwright test
+
+# Run E2E with UI mode for debugging:
+cd src && npm run test:ui
 
 # Run specific test file:
-npx playwright test tests/e2e/landing.spec.js
+cd src && npx playwright test tests/e2e/landing.spec.js
+cd src && node --test tests/unit/server.test.js
 
-# View HTML report after run:
-npx playwright show-report
+# View HTML report after E2E run:
+cd src && npx playwright show-report
 ```
 
 **Test philosophy for foundation task:**
-Tests validate that the scaffolding works end-to-end — server starts, pages load, API endpoints respond correctly, editor can read/write config and assets persist to disk. Tests do NOT need to validate game logic (no game logic exists yet) or visual correctness beyond basic element presence. As features added in subsequent tasks, test suite expands to cover new functionality.
+Unit tests validate server-side asset handling in isolation — file I/O correctness, path traversal defenses, input validation, dynamic folder discovery, and persistence formatting. They run fast via Node's built-in test runner with no browser overhead, catching edge cases that full-stack E2E tests might miss or find expensive to exercise.
 
-**CI consideration:** Playwright config includes CI-specific settings (forbidOnly, retries, single worker) so tests suitable for CI pipeline if GameDev track adds automated validation later. For now, tests run locally during development to catch regressions.
+E2E tests validate full-stack integration — server starts successfully, all three pages render without console errors, navigation between pages functions correctly, editor folder tree populates from live API data, dual-mode editor tabs switch properly with bidirectional data sync, save operations persist to disk and survive page reload. E2E tests do not need to validate game logic (none exists yet in foundation scope) or pixel-perfect visual correctness beyond basic element presence and interaction flows.
 
-### 9. Main.js — Game Page Bootstrap
-- Async IIFE wrapper or top-level await to handle async config fetch at module load time
-- Get canvas element by ID "game-canvas", verify exists, get 2D rendering context
-- Clear canvas to dark background (#0a0a0a or similar)
-- Draw centered placeholder text "Dungeoneers — Foundation Engine" in light color, readable font size
-- Import config module and call `await getConfig()` — log returned config object to browser console to verify API connectivity working
-- Display fetched config values on page somewhere visible (simple text overlay div showing version and key settings, OR console log sufficient for foundation with text overlay as nice-to-have)
-- No game loop needed yet — static render proves canvas and rendering context functional
-- Handle errors gracefully: if config fetch fails, log warning and fall back to displaying default message; canvas placeholder still renders even without config
+Together the two suites provide confidence at different layers: units catch logic errors and security edge cases fast; E2E catches integration failures across the full stack. As subsequent tasks add dungeon generation algorithms, rendering math, and gameplay systems, both suites expand — units for pure algorithmic functions, E2E for user-visible feature flows.
 
-### 10. Editor.js — Editor Page Bootstrap
-- Import config API client functions from config module
-- Async initialization on page load:
-  * `await getConfig()` → store working config object
-  * Render config into DOM — simple `<pre>` element with pretty-printed JSON acceptable for foundation task (structured form UI with individual controls comes in Task 7)
-  * `await getAssetList()` → populate asset selector dropdown or list UI
-- Asset editor section:
-  * Dropdown/select to choose asset from list (display as "materials/walls", "themes/themes", etc.)
-  * On selection change: `await getAsset(category, name)` → populate textarea with pretty-printed JSON
-  * Save Asset button → parse textarea JSON (try/catch for validation) → `await saveAsset(category, name, parsedData)` → show success toast or error message with details
-- Wire up config buttons:
-  * **Save Config** → `await saveConfig(workingConfig)` → toast success/failure feedback
-  * **Reset Config** → confirm() dialog → on confirm, POST default config object to API (or call reset endpoint if server provides dedicated one) → on success, re-fetch config and re-render UI to show reset state (or reload page for simplicity)
-  * **Export Config** → create Blob from `exportConfigJSON()` string → create temporary anchor element with download attribute → trigger click → browser downloads dungeoneers-config.json file → clean up temporary elements. No server roundtrip needed.
-  * **Import Config** → file input change handler → FileReader reads selected file as text → parse JSON with try/catch → on valid parse, `await saveConfig(parsed)` to persist via API → on success re-fetch and re-render UI (or reload page)
-- Listen for CustomEvent `dungeoneers-config-saved` → re-render config display to stay in sync (useful if multiple editor tabs open, though primary use case is single editor tab)
-- Handle async throughout with loading indicators or at minimum try/catch with user-visible error messages — UI should not silently fail or break on network errors
-- Back to Home link to index.html landing page
+**CI consideration:** Both test runners support CI-friendly modes. Playwright config includes CI-specific settings; Node test runner is inherently CI-compatible with no extra dependencies. For now tests run locally during development to catch regressions.
+
+### 9. Main.js — Game Runtime Bootstrap
+
+Game page JavaScript responsible for initializing the canvas rendering context, fetching configuration from the unified asset API, and displaying a placeholder render proving the rendering pipeline functions end-to-end. No game loop or gameplay logic in foundation scope — a static render is sufficient to validate canvas setup, module loading, and API connectivity.
+
+**Behavioral requirements:** On page load, obtain canvas element and 2D rendering context, render a placeholder scene communicating foundation state (dark background with subtle retro display patterning, centered title text, resolution information), fetch config asset asynchronously and display key values in the HUD element, log config to browser console for verification, handle fetch failures gracefully with appropriate HUD messaging while keeping placeholder render visible.
+
+### 10. Editor.js — Dual-Mode Asset Editor Application
+
+Editor page JavaScript powering the folder tree navigation and dual-mode editing interface. Must feel responsive and robust — no silent failures on network errors, clear user feedback via status pills.
+
+**Behavioral requirements:**
+
+On initialization, fetch the asset catalog from the unified API and construct a folder tree UI reflecting the actual directory structure under `src/assets/` — root assets node containing collapsible folder nodes per discovered category, each containing clickable file leaf nodes showing filename and item count. Folder expand/collapse state managed in memory. Clicking a file node loads that asset's content and switches editor to Visual mode.
+
+The editor panel implements two tabs switching between Visual Editor (default) and Raw JSON modes with bidirectional data synchronization. Visual mode renders a structured form by inspecting the JSON data structure at runtime — mapping data types to appropriate input widgets generically without hardcoded schemas specific to any asset type. Raw mode displays editable pretty-printed JSON textarea. Switching tabs must preserve edits: visual-to-raw serializes current in-memory state; raw-to-visual attempts parse and shows error feedback remaining in raw mode if invalid JSON.
+
+Save Changes button in the toolbar collects current data from whichever tab is active and persists via PUT to the unified asset API, displaying success or error status pill feedback. No reset, export, or import functionality — version control handled externally via git.
 
 ### 11. Running Instructions and Documentation
 Update README.md at repo root with clear setup and running instructions:
@@ -488,12 +461,12 @@ npm install
 # If using Node built-in http module with zero runtime dependencies, only dev dependencies installed.
 
 # Install Playwright browsers (first time only):
-npx playwright install
+cd src && npx playwright install
 ```
 
 **Start server section:**
 ```bash
-npm start
+cd src && npm start
 # Starts Node.js server at http://localhost:8000
 # Alternative: node server/server.js
 # Override port:  PORT=3000 npm start    (Unix/macOS)
@@ -507,43 +480,42 @@ npm start
 
 **Run tests section:**
 ```bash
-npm test              # Run Playwright E2E tests headless
+cd src && npm test              # Run Playwright E2E tests headless
 npm run test:ui       # Run with Playwright UI mode for debugging
-npx playwright show-report   # View HTML test report after run
+cd src && npx playwright show-report   # View HTML test report after run
 ```
 
 **Project structure overview** in README explaining src/, server/, tests/, tasks/ layout and purpose of each.
 
 ## Acceptance Criteria
 - [ ] `npm install` completes successfully installing Playwright (and Express if used)
-- [ ] `npx playwright install` downloads browser binaries successfully (one-time setup)
+- [ ] `cd src && npx playwright install` downloads browser binaries successfully (one-time setup)
 - [ ] `npm start` starts Node.js server successfully, logs "Dungeoneers server running at http://localhost:8000" to console, no errors on startup
-- [ ] `http://localhost:8000/` loads landing page (index.html) showing game title, tagline, pitch text, "Play Game" button linking to game.html, and "Open Editor" button linking to editor.html
+- [ ] `http://localhost:8000/` (or `http://localhost:8000/index.html`) loads elegant landing page with hero section, game title in large gold typography, tagline, pitch paragraph, feature cards in responsive grid, and prominent "Play Game" and "Open Editor" buttons
 - [ ] Landing page "Play Game" link navigates to game.html successfully
 - [ ] Landing page "Open Editor" link navigates to editor.html successfully
-- [ ] `http://localhost:8000/game.html` loads game page showing canvas with "Dungeoneers — Foundation Engine" placeholder text rendered via 2D context
-- [ ] Game page fetches config from `/api/config` on load and logs config object to browser console (verify via DevTools console)
-- [ ] Game page has "Back to Home" link navigating to index.html landing page
-- [ ] `http://localhost:8000/editor.html` loads editor page displaying config fetched from API (visible in UI as JSON dump or form)
-- [ ] Editor Save Config button POSTs to `/api/config` successfully, shows success confirmation feedback to user
-- [ ] Editor Reset Config button restores defaults via API successfully with confirmation dialog shown before reset
-- [ ] Editor Export Config button triggers browser download of current config as JSON file
-- [ ] Editor Import Config button accepts JSON file selection, parses and POSTs to API successfully, UI updates to reflect imported values
-- [ ] Editor asset section lists available JSON assets fetched from `/api/assets` endpoint
-- [ ] Editor can select an asset from list/dropdown, view its JSON content in textarea fetched via `/api/assets/{category}/{name}`
-- [ ] Editor can modify asset JSON in textarea and save via PUT to API endpoint — changes persist to actual JSON file on disk (verify by inspecting file content on disk after save, and by restarting server and re-fetching to confirm persistence survives restart)
-- [ ] Editor has Back to Home link navigating to index.html
+- [ ] `http://localhost:8000/game.html` loads fullscreen game page with black background, canvas scaled to fit viewport maintaining 640×360 internal resolution, placeholder rendering with title and scanline effect, fixed top bar navigation, and bottom HUD pill showing config values fetched from unified asset API
+- [ ] Game page fetches config asset from unified API on load and logs to browser console, HUD displays config values
+- [ ] Game page top bar navigation consistent with other pages — brand on left, Home and Editor links on right with Phosphor icons before text labels
+- [ ] `http://localhost:8000/editor.html` loads editor with three-panel layout: top bar with consistent navigation, left sidebar as collapsible folder tree explorer, main panel with tabbed dual-mode editor
+- [ ] Editor sidebar reflects folder hierarchy under `src/assets/` dynamically — root assets node expandable, category folders collapsible with chevron toggle, file nodes clickable, no hardcoded category names
+- [ ] Editor sidebar width adjustable via draggable resizer
+- [ ] Editor defaults to Visual Editor tab showing auto-generated form widgets appropriate to data types; Raw JSON tab available with bidirectional sync and validation
+- [ ] Editor Save Changes button PUTs to unified asset API successfully with status pill feedback; no Reset, Export, or Import buttons present
+- [ ] Editor top bar navigation consistent with other pages
 - [ ] No console errors on landing page, game page, or editor page during normal operation (API fetch errors handled gracefully with user-visible feedback, not silent failures or uncaught exceptions)
 - [ ] Pure ES modules on client side (all `<script type="module">` imports resolve correctly over HTTP)
 - [ ] Node.js server uses built-in modules only for core functionality (http, fs, path, url) OR Express as single documented dependency in package.json — no other runtime dependencies
-- [ ] Server handles invalid API requests gracefully: 400 status with JSON error body for malformed JSON or invalid structure, 404 for unknown asset paths or endpoints, 500 for unexpected server errors with details logged server-side
-- [ ] Playwright test suite exists with 3 test files covering landing page, game page, and editor page functionality as specified in section 8 above
-- [ ] `npm test` runs Playwright tests successfully with all tests passing (may require server running or rely on Playwright webServer config to start server automatically)
-- [ ] Test files follow Playwright best practices: descriptive test names, appropriate assertions, waiting for network responses where needed, cleanup to restore state after asset modification tests
+- [ ] Server handles invalid API requests gracefully: 400 status for malformed JSON or invalid category/name pattern, 404 for unknown asset paths, 500 for unexpected errors with details logged server-side. No legacy `/api/config` endpoints exist — only unified `/api/assets/*` paths.
+- [ ] Unit test suite exists at `src/tests/unit/` using Node.js built-in test runner, covering server asset handling edge cases: item counting heuristic across JSON structure variants, path traversal blocking, invalid name rejection, malformed JSON handling, missing asset 404s, save/load roundtrip with pretty-print verification, and dynamic category discovery
+- [ ] Playwright E2E test suite exists with 3 test files covering landing, game, and editor pages as specified in section 8
+- [ ] `package.json` defines `test`, `test:unit`, `test:e2e`, and `test:ui` npm scripts appropriately
+- [ ] `cd src && npm test` runs both unit and E2E suites successfully with all tests passing
+- [ ] Test files follow appropriate best practices for their respective frameworks with descriptive names and proper cleanup
 
 ## Out of Scope for This Task
 - Actual dungeon rendering or gameplay mechanics — that's Task 2 (dungeon generator) and beyond
-- Full editor UI with structured per-field controls organized in 14 subsystem tabs — foundation provides basic shell with config JSON display and asset textarea editor; structured tabbed UI with individual sliders/color pickers per parameter comes in Task 7 (editor-complete)
+- Domain-specific custom editor controls beyond generic JSON-driven widgets — foundation provides generic form renderer mapping data types to appropriate inputs; specialized per-subsystem UI with custom layouts comes in Task 7 (editor-complete)
 - WebGL rendering — 2D canvas placeholder sufficient for foundation task to prove rendering pipeline works; WebGL2 raycaster implementation comes in Task 3
 - Authentication, multi-user support, or session management — single-user local development server sufficient for foundation; no login, no user accounts, no access control needed
 - Database persistence layer — JSON files on disk sufficient for configuration and asset storage at this stage; SQLite or other database introduction deferred to future if needed for scale or querying capabilities

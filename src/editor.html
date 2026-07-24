@@ -1,0 +1,37 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1.0">
+<title>Dungeoneers Editor</title>
+<link rel="stylesheet" href="style.css">
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@phosphor-icons/web@2.1.1/src/regular/style.css">
+<link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500&family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+</head>
+<body class="editor">
+<header class="topbar">
+  <div class="brand">DUNGEONEERS EDITOR</div>
+  <div class="spacer"></div>
+  <a class="btn btn-ghost" href="game.html"><i class="ph ph-play"></i> Play</a>
+  <a class="btn btn-ghost" href="index.html"><i class="ph ph-house"></i> Home</a>
+</header>
+<div class="editor-body">
+  <nav class="editor-sidebar" id="sidebar">
+    <div class="sidebar-header">ASSETS</div>
+    <div id="asset-tree"></div>
+  </nav>
+  <div class="sidebar-resizer" id="sidebar-resizer"></div>
+  <main class="editor-main">
+    <div class="editor-toolbar">
+      <div class="title" id="editor-title">Select an asset</div>
+      <button class="btn btn-sm btn-primary" id="btn-save">Save Changes</button>
+      <span id="status-area"></span>
+    </div>
+    <div class="editor-content">
+      <div class="editor-panel" id="editor-panel">
+        <div class="empty-state"><div class="emoji"><i class="ph ph-folder-open" style="font-size:32px;opacity:.4"></i></div><p>Select an asset from the sidebar to edit its JSON definition.</p><p style="margin-top:8px;font-size:13px">Folder structure under src/assets/ is reflected here — fully dynamic.</p></div>
+      </div>
+    </div>
+  </main>
+</div>
+<script type="module" src="editor.js"></script>
+</body></html>

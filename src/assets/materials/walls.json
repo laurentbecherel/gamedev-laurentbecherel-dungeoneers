@@ -1,0 +1,58 @@
+{
+  "version": 1,
+  "materials": [
+    {
+      "id": 1,
+      "name": "dungeon_brick",
+      "type": "brick",
+      "base": [
+        138,
+        58,
+        44
+      ],
+      "roughness": 0.85,
+      "metal": 0,
+      "tag": "masonry",
+      "role": "Basic dungeon brick wall",
+      "architectureShape": "brick_bond",
+      "tileScale": 1,
+      "variationSeed": 101,
+      "emissiveColor": [
+        0,
+        0,
+        0
+      ],
+      "emissiveStrength": 0,
+      "storyTags": [
+        "dungeon"
+      ]
+    },
+    {
+      "id": 2,
+      "name": "rough_stone",
+      "type": "stone_block",
+      "base": [
+        102,
+        100,
+        92
+      ],
+      "roughness": 0.92,
+      "metal": 0,
+      "tag": "masonry",
+      "role": "Rough natural stone blocks",
+      "architectureShape": "ashlar_rough",
+      "tileScale": 1,
+      "variationSeed": 102,
+      "emissiveColor": [
+        0,
+        0,
+        0
+      ],
+      "emissiveStrength": 0,
+      "storyTags": [
+        "dungeon",
+        "cave"
+      ]
+    }
+  ]
+}

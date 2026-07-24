@@ -37,7 +37,7 @@ One GitHub repo per game, named `gamedev-{unixname}-{game-name}` (e.g., `gamedev
 ### Full structure
 ```
 gamedev-{unixname}-{game-name}/
-├── src/                          # Gold game source — single shared buildable project
+├── src/                          # Gold game source — self-contained runnable project — single shared buildable project
 │   ├── index.html                # Runtime game entry point (for web games)
 │   ├── editor.html               # Editor/authoring tool entry (if applicable)
 │   ├── main.js                   # Game bootstrap
@@ -49,6 +49,10 @@ gamedev-{unixname}-{game-name}/
 │   ├── systems/                  # Cross-cutting systems (input, physics, audio...)
 │   ├── ui/                       # User interface / HUD
 │   ├── assets/                   # JSON data assets, sprites, sounds
+│   ├── server/                   # Node.js server with REST API
+│   ├── tests/                    # Playwright E2E test suite
+│   ├── package.json              # Node dependencies and scripts
+│   ├── playwright.config.js      # Playwright configuration
 │   └── ...                       # other subsystem folders as needed
 │
 ├── tasks/                        # One folder per task
