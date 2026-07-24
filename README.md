@@ -12,33 +12,68 @@ per task under `tasks/`.
 
 ```text
 gamedev-laurentbecherel-dungeoneers/
-├── src/                  Gold game source — the single, shared, buildable game
-│                         project (code, scenes, assets, build config). One
-│                         source of truth for the whole game; tasks do NOT copy
-│                         it. Built with 1P (Avocado) or by hand — never 3P.
-├── tasks/                One folder per task (a "todo item" — a larger, complex
-│   └── <task-name>/      chunk of work toward the game). Name it descriptively;
-│       │                 do not prefix with a date (record the completion date
-│       │                 in task.toml / the task README instead).
-│       ├── instruction.md    Detailed game task description — the prompt used to
-│       │                     reproduce this task's golden feature. No 3P models.
-│       ├── task.toml         Task metadata (see the example task's task.toml).
-│       ├── screenshots/      Screenshots of the running game for this task.
-│       │   └── screen-01.png Referenced from task.toml; capture key states.
-│       └── README.md         Task description, Avocado vs Claude comparison,
-│                             and trajectory links.
-└── README.md             This file — the game-level overview.
+├── src/                  Client-side game source — HTML, ES modules, CSS, assets
+│   │                     Served statically by Node.js server.
+│   ├── index.html        Landing page with links to game and editor
+│   ├── game.html         Runtime game entry point
+│   ├── editor.html       Editor entry point for live tuning
+│   ├── config/           Client-side config API client
+│   ├── assets/           JSON data assets (materials, themes, architectures)
+│   └── ...               Subsystem folders added incrementally per task
+├── server/               Server-side Node.js application
+│   ├── server.js         HTTP server + REST API for config and asset CRUD
+│   ├── package.json      Dependencies and npm scripts
+│   └── config-state.json Runtime persisted config (created on first save)
+├── tests/                Test suite
+│   ├── playwright.config.js
+│   └── e2e/              Playwright end-to-end tests for all pages
+├── tasks/                One folder per task (descriptive kebab-case names)
+│   └── <task-name>/
+│       ├── instruction.md    Detailed task spec — prompt to reproduce feature
+│       ├── task.toml         Task metadata
+│       ├── README.md         Task description + model comparison + trajectories
+│       └── screenshots/      Screenshots of running game for this task
+├── README.md             This file — game overview + running instructions
+├── TASK_GUIDELINES.md    How to author tasks in GameDev track
+├── PROTOTYPE_ANALYSIS.md Exhaustive prototype feature breakdown (2,131 lines)
+└── RECONSTRUCTION_PLAN.md 10-task rebuild strategy with dependency DAG
 ```
 
 Notes:
 
-- **`src/`** holds the complete, buildable gold game — not loose scripts, and not
-  copied into each task. Tasks reference it and build on top of it.
-- **No binaries in the repo.** Per the latest track guidance, only the oracle
-  (gold) solution is submitted; there is no reliable way to run peers' binaries,
-  so builds are not committed. Share behavior via screenshots and videos instead.
-- **Videos** are not stored in the repo; upload them to **PixelCloud** and
-  reference the links from each task's `task.toml` and README.
+- **`src/`** holds client-side game code served statically. Tasks build incrementally on top of shared src/.
+- **`server/`** provides REST API for reading/writing config and JSON assets — edits persist to disk, not localStorage.
+- **`tests/`** contains Playwright E2E test suite validating pages and API functionality.
+- **No binaries in repo.** Only source code submitted; share behavior via screenshots and PixelCloud video links.
+- **Videos** uploaded to PixelCloud, referenced from task.toml and README — not stored in repo.
+
+## Running the Game
+
+**Prerequisites:** Node.js v18+ installed.
+
+**Install dependencies (first time):**
+```bash
+npm install              # installs Playwright for testing (+ Express if used)
+npx playwright install   # downloads browser binaries for E2E tests
+```
+
+**Start server:**
+```bash
+npm start
+# Server runs at http://localhost:8000
+# Override port:  PORT=3000 npm start   (Unix)  or  $env:PORT=3000; npm start  (PowerShell)
+```
+
+**Open in browser:**
+- Landing page: http://localhost:8000/ — introduction and navigation
+- Game: http://localhost:8000/game.html — runtime game experience
+- Editor: http://localhost:8000/editor.html — live parameter tuning
+
+**Run tests:**
+```bash
+npm test          # Playwright E2E tests headless
+npm run test:ui   # Playwright UI mode for debugging
+```
 
 ## Core Features
 
@@ -57,4 +92,4 @@ Notes:
 
 | Task | Description | Completed |
 | --- | --- | --- |
-| [foundation-engine](./tasks/foundation-engine/) | Index page runtime + editor page + data-driven JSON config structure | — |
+| [foundation-engine](./tasks/foundation-engine/) | Landing page + game page + editor page + Node.js server with REST API + test suite (Playwright E2E) + data-driven JSON config with API persistence | — |
