@@ -10,5 +10,5 @@ screenshots = ["./screenshots/landing.png", "./screenshots/game.png", "./screens
 videos = []
 teaser = ""
 base-commit-hash = "f97d6d67c800fa135f23f297216f251dc3a95b39"
-commit-hash = "36077847836cc56c02ce26b0be55f6ca2a969336"
+commit-hash = "f0f966703e8b73e29bb93692d53832de78b299e5"
 avocado-model = "Muse Spark 1.1"
