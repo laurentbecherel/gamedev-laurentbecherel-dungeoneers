@@ -116,7 +116,7 @@ name = "Dungeoneers: Foundation Engine"
 instruction = "./instruction.md"
 
 [game]
-game-tags = ["rpg", "action", "retro"]        # gameplay genre tags
+tags = ["rpg", "action", "retro"]        # gameplay genre tags
 tech-stack-tags = ["vanilla-js", "webgl", "html5"]  # technology tags
 assets-used = ["primitives", "procedural"]    # asset types: primitives, procedural, sprites, audio, etc.
 avocado-model = "Muse Spark 1.1"              # model used to build golden solution
@@ -149,7 +149,7 @@ criteria = ["craft", "feel", "solvability", "aesthetics", "audio"]
 ```
 
 Field notes:
-- `game-tags`: choose from examples like sports, action, rpg, puzzle, platformer, racing, strategy, simulation, retro, arcade, etc. Pick 2-4 most representative.
+- `tags`: choose from examples like sports, action, rpg, puzzle, platformer, racing, strategy, simulation, retro, arcade, etc. Pick 2-4 most representative.
 - `tech-stack-tags`: examples: godot, unity, unreal, love2d, vanilla-js, webgl, html5, canvas, threejs, babylonjs, phaser, pixijs, etc.
 - `assets-used`: primitives (basic shapes), procedural (generated textures/models), sprites (2D images), audio (sound/music), models-3d, tilemaps, etc.
 - `avocado-model`: currently "Muse Spark 1.1" for Avocado-built golden solutions. If built manually, note accordingly in README.

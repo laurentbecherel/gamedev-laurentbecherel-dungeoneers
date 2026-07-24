@@ -75,6 +75,64 @@ npm test          # Playwright E2E tests headless
 npm run test:ui   # Playwright UI mode for debugging
 ```
 
+## Engine & Framework
+
+- **Engine / framework:** Custom vanilla JavaScript ES modules + Node.js HTTP server (no game engine framework — pure web platform)
+- **License:** MIT (for engine-agnostic custom code — no engine license restrictions apply)
+
+## Dependencies
+
+| Library | Version | Source | License |
+| --- | --- | --- | --- |
+| Node.js | 18+ | https://nodejs.org | MIT |
+| @playwright/test | ^1.40.0 | https://playwright.dev (dev dependency for E2E testing) | Apache-2.0 |
+
+*No runtime dependencies beyond Node.js built-in modules (http, fs, path, url). Express optional — if used, add to table above with exact version.*
+
+## Assets & Attribution
+
+| Asset / Folder | Type | Source | License / Attribution |
+| --- | --- | --- | --- |
+| `src/assets/materials/*.json` | material definitions | original (authored) | internal-use |
+| `src/assets/themes/*.json` | theme definitions | original (authored) | internal-use |
+| `src/assets/sprites/` | sprites | TBD — to be generated procedurally or authored | TBD |
+
+*Foundation task uses only JSON data assets (original authored). No third-party art, audio, fonts, or models in foundation scope. Sprite assets to be added in Task 8.*
+
+No third-party tokens, proprietary code, or IP appear in the code, assets, or the model-visible environment; all third-party material is attributed above.
+
+## Building & Running
+
+**Prerequisites:** Node.js v18 or higher installed. Modern browser with ES module support (Chrome, Firefox, Safari, Edge).
+
+```bash
+# Clone repository
+git clone https://github.com/laurentbecherel/gamedev-laurentbecherel-dungeoneers.git
+cd gamedev-laurentbecherel-dungeoneers
+
+# Install dependencies (first time only)
+npm install              # installs Playwright for testing
+npx playwright install   # downloads browser binaries for E2E tests
+
+# Start server
+npm start
+# Server runs at http://localhost:8000
+# Override port:  PORT=3000 npm start   (Unix/macOS)
+#                  $env:PORT=3000; npm start   (PowerShell on Windows)
+```
+
+**Open in browser:**
+- Landing page: http://localhost:8000/ — introduction and navigation hub
+- Game: http://localhost:8000/game.html — runtime game experience
+- Editor: http://localhost:8000/editor.html — live parameter editor
+
+**Run tests:**
+```bash
+npm test          # Playwright E2E tests headless
+npm run test:ui   # Playwright UI mode for interactive debugging
+npx playwright show-report   # View HTML test report after run
+```
+
 ## Core Features
 
 - **4-Player Co-op:** Drop-in/out, built for 4 but trinity scales (1 Tank / 1 Heal / 2 DPS flex)

@@ -2,12 +2,14 @@ name = "Dungeoneers: Foundation Engine"
 instruction = "./instruction.md"
 
 [game]
-game-tags = ["rpg", "action", "retro"]
+# Controlled vocabularies — see Tag reference tables in README.md
+tags = ["rpg", "action", "retro"]           # one or more from game-tags list
 tech-stack-tags = ["vanilla-js", "nodejs", "html5", "rest-api", "playwright"]
-assets-used = ["primitives", "procedural"]
-avocado-model = "Muse Spark 1.1"
+assets-used = ["primitives", "procedural"]   # primitives | procedural | sprites | audio | etc.
 harness = "Metacode"
 screenshots = []
-videos = []
-teaser = ""
-commit-hash = ""
+videos = []                                  # PixelCloud links
+teaser = ""                                  # ~10 sec highlight video (PixelCloud)
+base-commit-hash = "251dc3b"                 # repo state before task (initial barebone structure)
+commit-hash = ""                             # to be filled after task implementation
+avocado-model = "Muse Spark 1.1"
