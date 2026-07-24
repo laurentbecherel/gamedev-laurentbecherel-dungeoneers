@@ -3,7 +3,7 @@ instruction = "./instruction.md"
 
 [game]
 game-tags = ["rpg", "action", "retro"]
-tech-stack-tags = ["vanilla-js", "webgl", "html5"]
+tech-stack-tags = ["vanilla-js", "nodejs", "html5", "rest-api"]
 assets-used = ["primitives", "procedural"]
 avocado-model = "Muse Spark 1.1"
 harness = "Metacode"
