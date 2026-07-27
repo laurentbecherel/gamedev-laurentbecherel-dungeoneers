@@ -151,3 +151,5 @@ npx playwright show-report   # View HTML test report after run
 | Task | Description | Completed |
 | --- | --- | --- |
 | [foundation-engine](./tasks/foundation-engine/) | Landing page + game page + editor page + Node.js server with REST API + test suite (Playwright E2E) + data-driven JSON config with API persistence | — |
+| [dungeon-generator](./tasks/dungeon-generator/) | Procedural dungeon generator with intentional linear topology, room roles, 5-zone theme progression, parchment minimap renderer with 3 visualization modes | — |
+| [renderer-3d](./tasks/renderer-3d/) | **NEW — merges old Tasks 3+5+6.** WebGL2 first-person raycaster with PBR materials, POM parallax, dynamic lighting with shadow raymarching, fog, player WASD navigation, minimap overlay toggle | — |

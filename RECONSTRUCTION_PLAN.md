@@ -66,69 +66,67 @@ gamedev-laurentbecherel-dungeoneers/
 
 ### Proposed Task Breakdown (feature by feature)
 
-**Task 1: foundation-engine** ← FIRST TO BUILD
-- index.html runtime page + editor.html editor page
-- config/ with central config.js (defaults + localStorage + versioned migration + live getters)
-- assets/ JSON structure (materials/walls.json, floors.json, ceils.json, architectures.json, themes/themes.json)
-- Minimal main.js bootstrap + editor.js UI shell
-- Data-driven pipeline: JSON assets loadable/editable, editor writes to localStorage, game reads on boot
-- Empty render placeholder (canvas clears, no game yet)
-- Deliverable: two HTML pages, config system working, editor can edit JSON-like values, persists to localStorage
+> **Renumbering — 2026-07-27:** Original Tasks 3 (renderer-gpu-core), 5 (materials-pbr-system), and 6 (lighting-particles) merged into new Task 3 (renderer-3d) as a single coherent first-person rendering deliverable. Subsequent tasks renumbered accordingly. Original numbering preserved in parentheses below for reference.
 
-**Task 2: dungeon-generator**
-- world/dungeon/ generator.js: rooms → corridors → theme zones → carve → paint
-- world/materials.js procedural texture atlas stub
-- world/map.js façade
-- Deterministic seed, JSON-configurable params
-- Deliverable: generator produces walkable grid map, editor shows params, game can regen with R key
+**Task 1: foundation-engine** ← DONE
+- Node.js server with unified asset REST API persisting JSON to disk
+- index.html landing page + game.html + editor.html with shared design system
+- config/ client module with asset API client, caching, CustomEvent dispatch
+- assets/ JSON structure (materials, themes, architectures, config)
+- editor with folder tree explorer + generic Visual/Raw JSON dual-mode editor
+- Playwright E2E + Node unit test suites
+- Deliverable: three HTML pages, config system working, editor edits JSON assets, persists to disk
 
-**Task 3: renderer-gpu-core**
-- render/renderer-gpu.js WebGL2 setup, column raycaster skeleton
-- render/shaders.js GLSL, render/gl-utils.js, render/palette.js
-- Basic wall/floor/ceiling rendering, no POM yet
-- Deliverable: first-person view of generated dungeon, navigable
+**Task 2: dungeon-generator** ← DONE
+- world/dungeon/generator.js: 10-stage intentional topology generator (main path + side branches, room roles, 5-zone theme progression, stair wall metadata, material assignment, deco flags)
+- world/map.js query facade, world/items.js torch placement
+- render/minimap.js parchment-style top-down 2D renderer with 3 modes (role/zone/material), legend, keyboard controls
+- src/assets/config/generator.json dedicated config asset
+- Deterministic seed, JSON-configurable params via generic editor
+- Deliverable: generator produces walkable grid map with clear linear main path, game page shows parchment minimap, R regenerates, 1/2/3 switch modes
 
-**Task 4: player-controller**
-- entities/player.js FPS controller (WASD + mouse, grid mode toggle)
-- systems/input.js
-- Collision, view bob params in config
-- Deliverable: walk around dungeon, editor tunes movement
+**Task 3: renderer-3d** ← NEXT — merges old 3 + 5 + 6
+- render/renderer-gpu.js — GPURenderer class, WebGL2 context, fullscreen quad, framebuffers
+- render/shaders.js — GLSL vertex + fragment with DDA grid walk, PBR BRDF, shadow raymarching, fog, POM parallax
+- render/gl-utils.js — shader compile/link helpers with error logging
+- render/map-upload.js — dungeon grid → GPU RGBA texture for texelFetch sampling
+- world/materials.js — procedural PBR atlas generation (albedo, normal from height, height, roughMetal, AO, emissive) for 1 wall + 1 floor + 1 ceiling material
+- entities/player.js — minimal WASD + QE turning with slide collision, emits point light
+- systems/input.js — keyboard state tracking
+- Config expansion: renderer section (FOV, texture filter), lights section (ambient, fog), player.light section, materialProc section — all editable via generic JSON editor
+- Game page: 3D first-person view as default, M toggles minimap overlay, R regenerates, WASD+QE navigate
+- Unit tests (materials atlas, player movement/collision, shader validity) + E2E tests (3D render, navigation, minimap toggle)
+- Deliverable: walk through dungeon in first-person 3D with PBR materials, dynamic player light with shadows, fog, POM parallax depth, minimap overlay toggle
 
-**Task 5: materials-pbr-system**
-- Procedural PBR texture generation (albedo/normal/height/AO/roughness/metal)
-- JSON material definitions with architecture shapes, story tags, emissive
-- POM parallax mapping
-- Deliverable: rich material visuals, editor edits materials live
+**Task 4: player-controller-polish** ← old Task 4, expanded scope
+- entities/player.js enhancements: mouse look via pointer lock API, view bob with figure-8 path and 5 tunable parameters + presets, optional grid snap movement mode toggle
+- systems/input.js extended for mouse delta accumulation
+- Config tuning UI via generic editor (view bob presets, movement speeds, mouse sensitivity)
+- Deliverable: full FPS controller feel with mouse look and view bob, editor tunes parameters
 
-**Task 6: lighting-particles**
-- systems/lights.js (torch flicker, sun, ambient, fog)
-- systems/particles.js (torch flame/smoke)
-- Light types JSON registry
-- Deliverable: atmospheric torch-lit dungeon
+**Task 5: editor-complete** ← old Task 7
+- editor/tabs/ for each subsystem with custom layouts (materials, generator, lights, player, renderer, themes, architectures) — replacing generic JSON form with purpose-built UI per subsystem
+- Live preview integration, PBR material debugger page
+- Deliverable: full editor parity with prototype, 14 subsystem tabs
 
-**Task 7: editor-complete**
-- editor/tabs/ for each subsystem (materials, generator, lights, player, renderer, themes, architectures)
-- Live preview, JSON export/import
-- Deliverable: full editor parity with prototype
+**Task 6: characters-sprites** ← old Task 8
+- entities/characters.js billboard sprites with directional facing
+- render/character-billboard.js CPU sprite mode + render/sprite-gpu.js GPU mode
+- Sprite atlas loading with PBR maps (albedo, normal, ORM)
+- Shadow projection system (contact shadow + silhouette)
+- Deliverable: NPCs in dungeon with torch shadows, G key toggles CPU/GPU sprite mode
 
-**Task 8: characters-sprites**
-- entities/characters.js billboard sprites
-- render/sprite-gpu.js PBR billboard shader
-- Sprite atlas + PBR params in config
-- Shadow projection system
-- Deliverable: NPCs in dungeon with torch shadows
+**Task 7: rpg-trinity-loop** ← old Task 9
+- rpg/classes.js Tank/Healer/DPS roles, rpg/equipment.js, rpg/boons.js, rpg/run.js
+- Wire RunManager into game loop replacing debug free-roam
+- Floor progression, chest interaction, boon pick UI, camp between floors
+- Deliverable: trinity gameplay functional with role-based mechanics
 
-**Task 9: rpg-trinity-loop**
-- rpg/classes.js Tank/Healer/DPS roles
-- rpg/equipment.js, boons.js, run.js
-- Wire into game loop: aggro, threat, heal, DPS mechanics
-- Deliverable: trinity gameplay functional
-
-**Task 10: ui-hud-polish**
-- ui/ui.js HUD minimap + stats
-- Main menu, pause, results screens
-- CRT post-processing aesthetic toggle
-- Deliverable: complete game shell
+**Task 8: ui-hud-polish** ← old Task 10
+- ui/ui.js HUD expansion beyond minimap overlay
+- Main menu, pause screen, results screen
+- CRT post-processing aesthetic toggle option
+- Deliverable: complete game shell with polished UI flow
 
 ---
 
