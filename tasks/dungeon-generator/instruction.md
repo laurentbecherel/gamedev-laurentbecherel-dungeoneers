@@ -2,21 +2,21 @@
 
 Build the procedural dungeon generation subsystem for Dungeoneers, transforming the foundation engine's empty canvas placeholder into a live top-down 2D minimap visualizing generated dungeon layouts with toggleable rendering modes.
 
-**Why procedural generation:** Dungeoneers is a 10-minute delve dungeon crawler where every run should feel distinct. Hand-authoring layouts doesn't scale to the variety needed for replayability, and the ADO GameDev track emphasizes data-driven content. A deterministic generator ensures the same seed produces bit-identical output across runs — critical for regression testing, sharing interesting layouts, and agent evaluation reproducibility.
+**Why procedural generation:** Dungeoneers is a 10-minute delve dungeon crawler where every run should feel distinct yet purposeful. Hand-authoring layouts doesn't scale to the variety needed for replayability, and the ADO GameDev track emphasizes data-driven content. A deterministic generator ensures the same seed produces bit-identical output across runs — critical for regression testing, sharing interesting layouts, and agent evaluation reproducibility.
 
-**Why grid-based MST topology:** Grid maps align perfectly with the eventual DDA raycaster renderer (Task 3) using the same approach as Wolfenstein 3D. Minimum Spanning Tree guarantees full connectivity — every room reachable, no isolated dead sections. The longest path via double-BFS gives a natural critical path from entrance to stairs without manual authoring. Side branches become treasure/secret rooms organically, creating emergent level flow.
+**Why intentional linear topology over random maze:** Dungeoneers is not a maze crawler — it's a 10-minute delve with narrative pacing. The dungeon must tell a spatial story through its layout alone: a clear main path from entry stair to exit stair, with purposeful detours branching off at specific junctions for optional loot, guardian encounters, armory upgrades, or hidden secrets — then back to the main path to continue the descent. Pure random placement with minimum spanning tree connectivity produces chaotic corridor spaghetti that breaks narrative flow and feels like noise, not design. Instead, the generator must bias toward a strong linear backbone where rooms are placed roughly in sequence along a main axis, side branches are strictly limited in depth and count, and extra loops are very sparse so they feel like intentional shortcuts rather than labyrinthic confusion. The result should read on the minimap as intentional level design — the player always senses the general direction of progress, but is rewarded for exploring well-placed detours.
 
-**Why top-down minimap in Task 2:** First-person 3D rendering is Task 3's scope. Task 2 needs visual proof that the generator works — a top-down 2D view serves as both developer debugging tool and the eventual in-game HUD minimap foundation. Building it as a proper `MinimapRenderer` class with legend, scale, title, and toggleable modes establishes the architecture early rather than a throwaway sketch.
+**Why top-down minimap in Task 2:** First-person 3D rendering is Task 3's scope. Task 2 needs visual proof that the generator works — a top-down 2D view serves as both developer debugging tool and the eventual in-game HUD minimap foundation. Building it as a properly architected renderer class with legend, scale, title, and toggleable modes establishes clean component boundaries early rather than a throwaway sketch.
 
-**Why deterministic hashing over RNG for material picks:** `hash2i(x,y)` integer hash gives identical output every time for same coordinates across all JS engines. Ensures same seed = same dungeon = same minimap, enabling golden regression tests. `Math.random()` would vary between runs breaking determinism. RNG still used for room placement and graph construction via seeded LCG, maintaining determinism through controlled seed propagation.
+**Why deterministic over random for content picks:** The same seed must produce bit-identical output every time across all JavaScript engines and runs. This enables golden regression tests, sharing interesting seeds between team members, and reproducible agent evaluation. Any randomness in the pipeline must flow through a seeded source so outputs are fully deterministic given seed + config.
 
-This task builds on Task 1's foundation: config system, JSON asset API, editor shell, and server. It adds the `world/` subsystem, generator algorithm, minimap renderer, and editor Generator tab. No WebGL yet, no player movement, no 3D — purely data generation and 2D visualization.
+This task builds on Task 1's foundation: config system, JSON asset API, editor file explorer, and server. It adds the world generation subsystem, minimap renderer, and a dedicated generator configuration asset. No WebGL yet, no player movement, no 3D — purely data generation and 2D visualization.
 
 ---
 
 ## Requirements
 
-### 1. Project Structure Additions
+### 1. Project Structure
 
 Extend `src/` with these new files and folders:
 
@@ -24,376 +24,263 @@ Extend `src/` with these new files and folders:
 src/
 ├── world/                       # NEW — dungeon generation subsystem
 │   ├── dungeon/
-│   │   ├── generator.js         # 10-stage pipeline: rooms → corridors → zones → carve → paint → deco → items
-│   │   ├── themes.js            # Theme zone resolution, weighted pool picker, hash2i deterministic hash
-│   │   ├── atlas.js             # Material ID constants and lookup helpers (stub for Task 2, full in Task 5)
-│   │   └── index.js             # Public API: generateDungeon(config) → DungeonMap
-│   ├── map.js                   # Map façade — wraps DungeonMap with query helpers
-│   └── items.js                 # Torch placement logic with min distance constraint
-├── render/                      # NEW — 2D rendering subsystem (3D comes in Task 3)
-│   └── minimap.js               # MinimapRenderer class with toggleable visualization modes
-├── main.js                      # MODIFIED — replace placeholder with minimap render loop + R-key regen
-├── editor.js                    # MODIFIED — add Generator tab with dungeon params and seed control
-├── assets/config/main.json      # MODIFIED — expand generator section with full params
-└── tests/
-    ├── unit/
-    │   └── generator.test.js    # NEW — unit tests for generator determinism, connectivity, role assignment
-    └── e2e/
-        └── game.spec.js         # MODIFIED — add minimap render assertions
+│   │   ├── generator.js         # Main generator — produces DungeonMap from config + seed
+│   │   ├── themes.js            # Theme definitions, zone resolution, deterministic utilities
+│   │   ├── atlas.js             # Material ID constants and lookup helpers
+│   │   └── index.js             # Public API exports
+│   ├── map.js                   # Map query facade with helper methods
+│   └── items.js                 # Item placement logic (torches etc.)
+├── render/                      # NEW — 2D rendering subsystem
+│   └── minimap.js               # MinimapRenderer class
+├── assets/config/
+│   └── generator.json           # NEW — dedicated generator configuration asset
+├── config/
+│   └── config.js                # MODIFIED — add generator config loader
+├── main.js                      # MODIFIED — replace placeholder with live minimap
+├── tests/unit/
+│   └── generator.test.js        # NEW — unit tests
+└── tests/e2e/
+    └── game.spec.js             # MODIFIED — minimap interaction tests
 ```
 
-### 2. Generator Algorithm — 10 Stage Pipeline
+### 2. Dungeon Generation — Intent and Properties
 
-Implement `src/world/dungeon/generator.js` exporting `async function generateDungeon(config, seedOverride)` returning a `DungeonMap` object.
+Implement a generator that produces dungeons satisfying these design properties. How you achieve them is up to you — describe the approach at high level in code comments, but the instruction here specifies what must be true about the output, not which algorithms to use.
 
-**Configuration source:** Read from `config.generator` section of `src/assets/config/main.json`. Task 2 expands this section from the minimal 4 fields in Task 1 to full parameter set (see section 6 below).
+**Core design intent — intentional level, not random maze:**
 
-**Seed handling:** If `seedOverride` provided, use it. Else if `config.generator.seed` is non-null number, use that. Else generate random seed via `Date.now()`. Always return the used seed in output for reproducibility.
+The dungeon represents one level of a larger descent. The player enters via a stair at one side of the map and must reach an exit stair at the opposite side to progress deeper. Between entry and exit lies a main path of chambers connected in sequence — this is the critical path the player follows to complete the level. Along this main path, at specific junctions, short side branches lead to optional content: treasure rooms with loot, armories with equipment upgrades, shrines with boons, guardian chambers with mini-boss encounters, or secret rooms tucked away at depth 2. After exploring a side branch, the player returns to the main path hub junction and continues toward the exit. Occasionally — rarely — a loop shortcut connects two points on the main path or a side branch back to main path, rewarding thorough exploration with faster backtracking. The overall feel on the minimap should be a clear directed flow from left to right (or top to bottom, chosen per seed), with purposeful dead-end spurs, not a tangled maze.
 
-**Stage 1 — Rooms + connectivity:**
-- Target room count from `config.generator.roomTarget` (default 52 for epic 80×80 scale, or scale down for Task 2 initial scope — 32 rooms on 64×64 is acceptable for first implementation).
-- Grid dimensions from `config.generator.mapW` and `mapH`.
-- Room placement: random x,y within bounds, random size 4..11 tiles, reject if overlaps existing room or too close to boundary. Up to `roomAttempts` tries (default 260).
-- Build complete graph: nodes = rooms, edge weight = squared Euclidean distance between room centers.
-- Kruskal's MST algorithm for minimum spanning tree → base connectivity ensuring every room reachable.
-- Double BFS to find longest path in MST: BFS from arbitrary node to find farthest A, BFS from A to find farthest B and path. This path becomes the **main critical path**.
-- Add extra loop edges: for each non-MST edge, add with probability `config.generator.loopExtraChance` (default 0.18) for alternative routes.
-- Tag each edge as `main` (on critical path), `side` (MST branch off critical path), `loop` (extra edge), or `secret` (deep branch).
+**Required dungeon properties:**
 
-**Stage 2 — Role assignment (story topology):**
-Assign role to each room based on position in main path and graph degree:
-- `entrance` — first room on main critical path (start position)
-- `stairs` — last room on main critical path (goal, stairs_down material forced)
-- `guardian` — rooms at approximately 65-75% and 85-95% along main path (boss encounters)
-- `treasure` — rooms at approximately 40% and 60% along main path
-- `hub` — rooms on main path with degree ≥3 (junction decision points)
-- `hall` — other rooms on main path
-- `armory` or `shrine` — side branch rooms 1 tile deep off main path
-- `secret` — leaf nodes or 2+ tiles deep from main path
-- `corridor` — default for non-room cells (filled in later stages)
+- **Main path connectivity:** The entrance room must reach the exit room via a traversable corridor path. This is the core story requirement — the player must be able to complete the level. Most walkable floor cells should be reachable from the entry position via orthogonal moves (no diagonal through corners). Minor isolated cells due to placement edge cases are acceptable as long as the main path is fully connected.
 
-**Stage 3 — BFS depth from start:**
-- Compute shortest-path distance in rooms graph from entrance room to every room via BFS.
-- Normalize depths to 0..1 range within level.
-- For multi-level support (future), map to global depth via helper: `globalDepth = (levelIndex + localT) / levelCount`. For Task 2, `levelIndex=0, levelCount=1` so global = local.
+- **Clear main path:** There exists a primary sequence of rooms from entry to exit forming the critical path. On the minimap in role visualization mode, this path should be visually traceable as a coherent chain across the map — not hidden among chaotic branches.
 
-**Stage 4 — Theme zone resolution:**
-Implement `src/world/dungeon/themes.js` with:
-- `zoneForDepth(globalT)` returning zone object and local progress within zone.
-- Theme `classic` with 5 zones (boundaries as fraction of global depth):
-  - **Entrance** 0.00–0.15 — grand ashlar halls, welcoming
-  - **Upper Works** 0.15–0.35 — crafted masonry, maintained
-  - **Mid Vaults** 0.35–0.58 — rough stone, age showing
-  - **Deep Damp** 0.58–0.82 — moss, roots, nature reclaiming
-  - **Abyss Shrine** 0.82–1.01 — otherworldly, mystical
-- Each zone defines: `wallPool` (array of `{id, weight}`), `floorPool`, `ceilPool`, `deco` probabilities object (8 deco types), `height` ranges, `vaultWeights` (4 vault types), `pillar` spec, `architectureWeights`.
-- For Task 2, minimal pools sufficient: 2 wall materials, 2 floor, 2 ceiling defined in existing `assets/materials/*.json`.
+- **Purposeful room roles assigned by topology:** Rooms along the main path receive roles that create narrative pacing:
+  - Exactly one `entrance` room at the start of the main path. This room contains the entry stair — a special wall segment on one edge representing stairs ascending out of the dungeon back toward the surface and lobby area. In the grid data model this is stored as a wall cell like any other wall, but marked distinctively in room metadata so the 3D renderer in a future task can draw it as a stairwell facade rather than flat stone — a "fake wall" that visually reads as stairs going up into darkness. The generator must decide which of the four wall edges of the entrance room hosts this stair, choosing the edge that faces generally opposite to the direction of dungeon progression so the stair feels like an entry point from the outside world, and ensuring the chosen edge does not overlap with the corridor doorway into the room. The chosen edge direction and the specific 3-cell-wide wall segment coordinates must be stored in the room's metadata.
+  - Exactly one `exit` room at the end of the main path. Contains an exit stair — same fake-wall concept but representing stairs descending deeper to the next dungeon level. Generator chooses which wall edge faces generally in the direction of main path progression so it reads as leading onward, avoiding overlap with the corridor doorway. Store edge direction and wall segment coordinates in room metadata. The stair wall segment should use a distinct wall material ID so it remains visually identifiable even in top-down minimap material visualization mode, complementing the role-mode color coding.
+  - `guardian` rooms at roughly 60-70% and 80-90% along main path — these are mini-boss encounters that gate progress
+  - `treasure` rooms at roughly 30-35% and 50-55% along main path, plus occasional side branches — optional loot detours
+  - `hub` rooms where main path has 3+ connections — junction decision points
+  - `hall` rooms filling remaining main path positions — standard traversal chambers
+  - `armory` or `shrine` rooms on side branches at depth 1 from main path — optional upgrade/boon rooms
+  - `secret` rooms on side branches at depth 2 from main path — hidden rewards, rare
+- **Limited side branch depth:** Side branches extending from main path hubs must not exceed a configurable maximum depth (default 2 rooms deep, ideally 1). Deeper branches create labyrinthic dead ends that break story flow. Depth 1 branches are common purposeful detours; depth 2 branches are rare secrets.
+- **Sparse loops:** Extra connections beyond the tree backbone should be very rare — default probability low enough that most dungeons have 0-1 loops, occasional dungeon has 2. Loops should feel like intentional shortcuts rewarding exploration, not maze complexity.
+- **Linear placement bias:** Room positions should follow a general progression direction across the map (west-to-east or north-to-south, chosen per seed). A configurable linearity parameter controls how strictly rooms follow this axis versus allowing variation. Higher linearity produces clearer main path readability on minimap.
+- **Larger purposeful rooms:** Main path rooms should be noticeably larger on average than side branch rooms, reinforcing visual hierarchy on the minimap. Room sizes configurable with separate ranges for main path vs side rooms.
+- **Entry-exit separation:** The entry room and exit room must be substantially separated — at least 30% of map diagonal distance apart — so the dungeon feels like a journey, not adjacent chambers.
+- **Deterministic output:** Given identical configuration asset content and identical seed value, the generator must produce bit-identical output every time — same grid array values, same room positions and sizes, same roles, same everything. This enables regression testing and reproducible evaluation.
 
-**Stage 5 — Room material assignment:**
-- Deterministic weighted pick using `hash2i(x, y, seed)` — integer hash function, NOT `Math.random()`. Must be pure function returning same value for same inputs across all JS engines.
-- `hash2i` implementation suggestion: 32-bit mix like `((x*73856093) ^ (y*19349663) ^ (seed*83492791)) >>> 0`, then normalize to 0..1.
-- Weighted pick: sum weights, hash to 0..sum, iterate accumulating until threshold crossed.
-- Special cases: entrance room forces primary wall material for readability, stairs room forces wall material ID 9 (or highest available ID if only 2 materials in Task 2), treasure room forces floor material ID 2 (or highest floor ID), secret rooms favor cave/plaster types if available.
-- Architecture picked per room from zone `architectureWeights` + role bias.
-- Height profile from zone: `floorMin/Max`, `floorBlockAmp`, `ceilMin/Max`, `ceilJitter`, `vaultWeights`.
-- Vault type picked from zone vault weights with guardian/treasure bias toward dome.
+**Zone progression — single level journey:**
 
-**Stage 6 — Grid carving:**
-- Initialize `grid` Uint8Array of size `w*h` filled with boundary wall material ID (from `config.boundaryWallId` or default 1).
-- Carve each room: set cells within room bounds to `GRID_FLOOR = 0` (walkable).
-- Carve corridors: for each MST edge between room A and B, create L-shaped path (randomly choose horizontal-then-vertical or vertical-then-horizontal) connecting room centers. Set path cells to 0.
-- Enforce outer boundary: ensure grid perimeter cells remain walls.
+The dungeon uses 5 thematic zones progressing along the main path from entry to exit within this single level (not across multiple levels). Each zone has distinct visual character through material pools, decoration density, height variation, and architecture weights:
 
-**Stage 7 — Wall painting (coherent per room):**
-- First pass: for each room, paint its perimeter wall cells with that room's assigned `wallMat` ID (coherent coloring per room).
-- Special: stairs room south wall, 3 cells wide centered, override to stairs material for fake door illusion.
-- Second pass: corridor wall cells pick material from corridor pool via `hash2i`. Unpainted interior walls assign nearest room's material.
-- Pillar accents: at wall corners and along long straight walls, insert carved_pillar material based on zone pillar spec (`spacing`, `columnChance`). For Task 2 with minimal materials, pillar accent can be skipped or use wall material 2 as accent.
-- Enforce outer boundary again with boundary wall ID.
+- **Entry** (0–15% along main path) — entry stair chamber, grand halls, welcoming atmosphere, well-lit, crafted stonework suggesting a maintained entrance area where adventurers arrive.
+- **Antechamber** (15–35%) — entrance halls transitioning to active dungeon, crafted masonry, first encounters, moderate decoration. The dungeon proper begins here.
+- **Depths** (35–60%) — rough stone vaults, age showing through cracks and wear, main dungeon body with most rooms and first guardian encounter. Visual storytelling of long-abandoned depths.
+- **Sanctum** (60–85%) — moss-covered damp areas with roots breaking through stonework, puddles on floors, overgrown atmosphere suggesting nature reclaiming the depths. Second guardian encounter and hidden treasure rooms.
+- **Exit** (85–100%) — shrine-like exit chamber with exit stair leading deeper, climactic atmosphere with hints of otherworldly power below. Distinct from entry — darker, more mystical, suggesting greater danger ahead.
 
-**Stage 8 — Floor/ceiling heights and materials:**
-- Per-cell floor height: room base height + block variation (scaled 30% to avoid floating tile bug from prototype) + cell jitter via `hash2i` + rare shallow pits/mounds (5% chance).
-- Per-cell ceiling height: room base + vault logic (dome = radial falloff from room center, barrel NS/EW = directional arch, cross = intersection) + jitter.
-- Floor material per cell: 86% chance room's assigned floor material, 14% accent pick from zone floor pool via hash.
-- Ceiling material: room's assigned ceiling material (no accent variation for simplicity in Task 2).
-- Corridors: floor height blended toward nearest room base to prevent doorway steps (almost flat). Use corridor floor pool for material.
-- **Critical:** use `floorToRoom` lookup array to track which room owns each floor cell, NOT `floorHeight !== 0` check (prototype bug: room floor at height 0 was misidentified as corridor).
+Zone assignment flows from room depth along main path from entry. Rooms at similar progression depth share zone identity, creating coherent visual regions on the minimap in zone visualization mode.
 
-**Stage 9 — Deco flags (bitmask per cell):**
-- Define deco bit constants: `DECO_COLUMN=1, DECO_MOSS=2, DECO_VINES=4, DECO_ARCH=8, DECO_BROKEN=16, DECO_PUDDLE=32, DECO_ROOTS=64, DECO_BEAM=128`.
-- Wall deco probabilities from zone `deco` object + material bonuses (e.g., mossy material +28% moss chance, cave +22%). Suppress deco for stairs material.
-- Floor/ceiling deco: BROKEN, PUDDLE, ROOTS, BEAM with zone-driven probabilities.
-- Store as `deco` Uint8Array bitmask per cell. For Task 2 minimap, deco can be visualized as small dots or ignored — not required in minimap but must be generated in data.
+**Architecture, Theme, and Material — how they relate:**
 
-**Stage 10 — Items and lights:**
-Implement `src/world/items.js` exporting `generateDungeonItems(dungeonMap, config)`:
-- Place torches with minimum distance constraint (`config.items.minTorchDist`, default ~6 tiles).
-- Corridor bias factor (`config.items.corridorBias`, default ~1.5 — torches more likely in corridors for wayfinding).
-- Color variation from `config.torchColors` array (4 variants default: warm orange, cool blue, green, purple).
-- Each torch becomes item object `{x, y, type:'torch', color, intensity}` and corresponding light definition.
-- Return array of items; generator attaches to dungeon output.
+These three concepts form a hierarchy that may be confusing at first, so here's how they fit together in Dungeoneers' data-driven pipeline:
 
-**Output format — DungeonMap object:**
-```js
-{
-  w, h,                                    // grid dimensions
-  grid: Uint8Array,                        // w*h, 0=floor walkable, 1..N=wall material ID
-  floorHeight: Float32Array,               // w*h per-cell floor Z in world units
-  ceilHeight: Float32Array,                // w*h per-cell ceiling Z
-  deco: Uint8Array,                        // w*h bitmask per cell
-  floorMat: Uint8Array,                    // w*h, 1..M floor material ID
-  ceilMat: Uint8Array,                     // w*h, 1..C ceiling material ID
-  startX, startY,                          // entrance room center position (float tile coords)
-  seed,                                    // seed used for generation
-  rooms: [                                 // array of room objects
-    { x, y, w, h, cx, cy, role, zone, wallMat, floorMat, ceilMat,
-      architecture, vaultType, depth, globalDepth, ... }
-  ],
-  items: [ {x, y, type, color, ...} ],     // torch placements etc.
-  lights: [ {x, y, z, color, intensity, radius, ...} ],
-  meta: {
-    themeId, themeName, levelIndex, levelCount, boundaryWallId,
-    zoneSummary, edges, depths, rolesSummary, archSummary, ...
-  }
-}
-```
+- **Theme** is the top-level container defining the overall dungeon identity for one complete level. Task 2 implements one theme called "classic". A theme contains 5 zones arranged in progression order from entry to exit. Each zone specifies weighted pools describing what materials, architectures, decorations, height profiles, and vault types belong in that thematic area. Themes are data — in Task 2 they live in code as a starting point, but the architecture supports moving them to JSON assets under `assets/themes/` in a future task so designers can author new themes without touching code.
 
-### 3. Map Façade API
+- **Zone** is one thematic region within a theme, covering a specific fraction of the main path progression from entry (0.0) to exit (1.0). When the generator assigns a room its zone, it looks at how far along the main path that room sits topologically — rooms near the start get Entry zone, rooms near the end get Exit zone, middle rooms get Antechamber, Depths, or Sanctum accordingly. Each zone's weighted pools then drive all downstream content choices for rooms in that zone, ensuring visual coherence — rooms in the Sanctum zone will predominantly use mossy materials with high decoration density, while Entry zone rooms use clean ashlar with minimal decoration, creating storytelling through environment alone.
 
-Implement `src/world/map.js` exporting `class DungeonMapWrapper` or plain object with query helpers:
+- **Architecture** describes structural style — dungeon masonry, ruined stonework, natural cave, grand cathedral vaulting, wooden construction, crystalline formations, etc. Each zone specifies architecture weights (e.g., Sanctum zone might be 50% dungeon, 30% ruins, 20% cave) and each room picks one architecture deterministically from its zone's weights. Architecture influences material selection bias and will drive procedural texture generation patterns in Task 5. In Task 2 scope, architecture is stored in room metadata and visible in data output but does not yet produce distinct visual differences on the minimap beyond the material colors already assigned — the architecture field is forward-looking infrastructure for the PBR material system.
 
-- `isWalkable(x, y)` — true if grid cell at integer coords is floor (0)
-- `getCell(x, y)` — returns `{grid, floorMat, ceilMat, floorHeight, ceilHeight, deco}` or null if out of bounds
-- `getRoomAt(x, y)` — returns room object containing this cell, or null
-- `getStartPos()` — returns `{x, y}` start position
-- `getRoomsByRole(role)` — filter rooms by role string
-- `width`, `height` getters
+- **Material** is the concrete surface definition with specific visual properties: numeric ID, name string, base RGB color triplet, roughness value, metalness value, architecture shape hint, descriptive tags, and story tags. Materials live as JSON assets under `src/assets/materials/` (walls.json, floors.json, ceilings.json) editable through the existing asset editor UI. Each zone's weighted material pools reference these material IDs by number with weights — for example, Entry zone wall pool might specify material ID 1 at weight 0.65 and ID 2 at weight 0.35, meaning roughly two thirds of Entry zone walls use material 1. The generator picks materials per room deterministically using a hash of room coordinates and seed, so same seed always yields same material assignments. Room perimeter walls use coherent material (same ID for all walls of one room) creating solid color blocks on minimap in material visualization mode. In Task 2 the minimap renders materials as flat solid colors derived from base RGB; Task 5 expands this into full procedural PBR texture atlases with albedo, normal maps, height maps, roughness/metalness, ambient occlusion, and emissive channels.
 
-Pure functions, no side effects, safe to call from renderer every frame.
+The data flow is: Theme → Zone (by main path depth) → Architecture pick (from zone weights) + Material pick (from zone pools) → Room stores all selections → Grid carving paints cells → Minimap visualizes → Future 3D renderer will consume same data for full PBR rendering.
 
-### 4. Minimap Renderer — Proper Class Architecture
+**Material system integration (minimal for Task 2):**
 
-Implement `src/render/minimap.js` exporting `class MinimapRenderer`.
+For Task 2 scope, use the existing 2 wall materials, 2 floor materials, and 2 ceiling materials already defined in `src/assets/materials/*.json`. Each room picks materials deterministically from its zone's weighted pools. Room perimeter walls should use coherent material per room (same material for all walls of one room) to create solid color blocks on minimap in material visualization mode. Corridors pick from corridor-specific pools. Full procedural PBR texture generation comes in Task 5 — Task 2 uses solid colors derived from material JSON base RGB values for minimap display.
 
-**This is the central visual component of Task 2 and must be architected properly — not a quick sketch.** It will evolve into the in-game HUD minimap in later tasks, so establish clean component boundaries now.
+**Decoration system (data generated, minimally visualized):**
 
-**Class structure:**
-```js
-export class MinimapRenderer {
-  constructor(canvas, dungeonMap) { ... }
-  setDungeonMap(dungeonMap) { ... }           // swap to new generated dungeon
-  setMode(mode) { ... }                        // 'role' | 'zone' | 'material'
-  setZoom(zoom) { ... }                        // zoom level for detail control
-  setPanOffset(dx, dy) { ... }                 // pan for large maps
-  render() { ... }                             // main render entry point
-  _renderGrid(ctx) { ... }                     // draw cell grid based on current mode
-  _renderLegend(ctx) { ... }                   // draw legend panel
-  _renderScale(ctx) { ... }                    // draw scale bar
-  _renderTitle(ctx) { ... }                    // draw title overlay
-  _renderRoomLabels(ctx) { ... }               // optional room role labels
-  _getCellColor(x, y) { ... }                  // color logic per mode
-  _drawCell(ctx, x, y, color) { ... }          // single cell draw
-}
-```
+Generate per-cell decoration flags as bitmask values driven by zone probabilities and material type bonuses (e.g., mossy materials increase moss probability, cave materials increase root probability). Define bit constants for wall decorations (column/pillar, moss, vines, arch) and floor/ceiling decorations (broken tiles, puddles, roots, wooden beams). Store in output data structure for future use in 3D renderer — minimap visualization of deco is optional for Task 2 (small dots acceptable, or omit entirely).
 
-**Visualization modes (toggleable via keyboard 1/2/3 keys):**
+**Item placement:**
 
-- **Mode 1 — Role (`'role'`)** — default on load:
-  - Color-code rooms by assigned role. Suggested palette (dark theme, gold accent consistent with site design):
-    - `entrance` — bright green `#4ade80` with "START" label
-    - `stairs` — bright red `#ef4444` with "EXIT" label
-    - `guardian` — purple `#a855f7` with "BOSS" label
-    - `treasure` — gold `#c9a84c` (site accent) with "$" or treasure icon
-    - `hub` — cyan `#22d3ee` junction marker
-    - `hall` — medium gray `#6b7280` for main path rooms
-    - `armory` / `shrine` — orange `#f97316` side room marker
-    - `secret` — dim gray `#374151` subtle
-    - Corridor floor — very dark gray `#1f1f1f`
-    - Walls — near-black `#0a0a0a` or material-tinted dark shade
-  - Draw room role labels as text overlay at room center for key roles (entrance, stairs, guardian, treasure). Use Inter font, small size, centered.
+Place torches throughout the dungeon respecting minimum distance between torches and with configurable bias toward corridors versus rooms (corridors need more wayfinding light). Each torch selects color variant from configured palette. Output torch positions as items array and corresponding light definitions for future renderer use.
 
-- **Mode 2 — Zone (`'zone'`)**:
-  - Tint overlay showing 5 theme zones with distinct hues progressing from light/warm (entrance) to dark/cool (abyss):
-    - Entrance 0-15% — warm cream `#f5e6ca` tint
-    - Upper 15-35% — light stone `#d4c4a8`
-    - Mid 35-58% — medium gray-brown `#8b7355`
-    - Deep 58-82% — dark green-brown `#4a5d3a` (moss/damp)
-    - Abyss 82-100% — deep purple-black `#2d1b3d` (mystical)
-  - Apply tint as overlay multiply or alpha blend over base floor color. Walls remain dark for contrast.
-  - Optional zone boundary lines as subtle dividers.
+**Configuration asset:**
 
-- **Mode 3 — Material (`'material'`)**:
-  - Wall cells colored by wall material ID using distinct hues from material definitions in `assets/materials/walls.json` (convert RGB base color to display color, darkened for wall shading).
-  - Floor cells colored by floor material ID similarly from `floors.json`.
-  - Shows material distribution coherence — rooms should appear as solid color blocks, corridors as consistent material, validating the wall painting algorithm's per-room coherence.
+Create `src/assets/config/generator.json` as a dedicated JSON asset file (not embedded in main.json). The editor's existing file system explorer automatically discovers and provides editing UI for any JSON file under `src/assets/` — no custom editor code needed. The file appears in sidebar tree under `assets → config → generator.json`, editable via Visual Editor tab (auto-generated form widgets for numbers, sliders, arrays, nested objects) and Raw JSON tab.
 
-**Legend component:**
-- Positioned top-right or bottom-right corner as semi-transparent panel with backdrop blur matching site design system.
-- Shows current mode title, color swatches with labels for each category in current mode.
-- Updates dynamically when mode toggled.
-- Styled with site CSS variables: dark elevated background, gold accent border, Inter font.
+Required configuration fields with suggested defaults tuned for clear linear structure:
+- `version`: 1
+- `mapW`: 64, `mapH`: 64 — grid dimensions in tiles
+- `roomTarget`: 14 — total rooms to place (fewer than old prototype's 32/52 for clearer purposeful structure)
+- `mainPathRooms`: 8 — rooms in main path sequence from entry to exit
+- `roomAttempts`: 200 — placement attempts before giving up
+- `roomSizeMin`: 6, `roomSizeMax`: 14 — room size range in tiles (larger than old 4-11 for more substantial chambers)
+- `mainPathRoomSizeBonus`: 2 — extra size added to main path rooms for visual hierarchy
+- `linearity`: 0.85 — 0..1 bias strength for linear placement (1.0 very linear, 0.0 random scatter)
+- `sideBranchMaxDepth`: 1 — maximum depth of side branches from main path (1 = short detours, 2 = rare secrets allowed)
+- `loopExtraChance`: 0.02 — probability of extra loop edges (very low for intentional linear feel)
+- `levelCount`: 1 — for future multi-level support, Task 2 uses single level
+- `seed`: null — fixed number for reproducibility, or null for random each generation
+- `flattenStartRadius`: 2 — tiles around spawn flattened for stable starting area
+- `items` object with `maxTorches`, `minTorchDist`, `corridorBias`, `torchOffset`
+- `torchColors` array with RGB variants
+- `boundaryWallId`: 1 — wall material for map outer boundary
+- `corridorWidthMain`: 2 — corridor width in tiles for main path connections (wider for visual hierarchy and comfortable traversal)
+- `corridorWidthSide`: 1 — corridor width in tiles for side branch connections (narrower to reinforce that side branches are secondary detours)
+- `corridorWidth`: 1 — deprecated fallback, prefer corridorWidthMain/Side
 
-**Scale bar component:**
-- Bottom-left corner showing grid scale reference (e.g., "10 tiles" with bar graphic).
-- Helps orient viewer to dungeon size.
+**Seed handling:** Generator function accepts optional seed override parameter. If provided, use it. Else read seed from configuration asset — if non-null number, use that for fixed reproducible output; if null, generate random seed (e.g., from current time). Always include the used seed value in returned dungeon data for display and reproducibility.
 
-**Title overlay:**
-- Top-left or top-center showing dungeon metadata: seed number, dimensions, room count, theme name.
-- Example: "Seed 42 · 64×64 · 32 rooms · Classic theme"
+**Output data structure:**
 
-**Grid rendering:**
-- Calculate cell size to fit dungeon within canvas while maintaining aspect ratio and leaving margin for legend/title.
-- For 64×64 dungeon on 640×360 canvas: cell size ~5px fits comfortably with margins. For 80×80: ~4px.
-- Draw each cell as filled rectangle. Walls slightly darker than floors for depth.
-- Optional 1px grid lines in very dark color for cell boundaries (toggleable or subtle alpha).
-- Start position marked with pulsing green circle or arrow. Stairs marked with red downward arrow or distinct icon.
+The generator must return an object describing the complete dungeon state, suitable for rendering and gameplay systems to consume. At minimum include:
+- Grid dimensions and arrays: grid cell types (0 for walkable floor, positive integers for wall material IDs), per-cell floor heights, ceiling heights, decoration bitmasks, floor material IDs, ceiling material IDs — all as typed arrays sized to grid width × height for efficient access
+- Start position coordinates (entry room center)
+- Seed value used
+- Rooms array with per-room properties: position, size, center coordinates, assigned role, zone name, selected materials, architecture type, vault type, depth along main path, and flags indicating whether room lies on main path and at what depth from main path for side branches. Entrance and exit rooms must include stair wall metadata specifying edge direction and 3-cell wall segment coordinates, chosen to avoid overlap with corridor doorways.
+- Items array with placed torch positions and properties
+- Lights array derived from torches for renderer consumption
+- Metadata object summarizing theme, level indices, role counts, zone distribution, edge counts, etc.
 
-**Interaction:**
-- Keyboard `1` → role mode, `2` → zone mode, `3` → material mode. Update legend accordingly.
-- Keyboard `R` → regenerate dungeon with new random seed, re-render minimap.
-- Keyboard `+` / `-` or mouse wheel → zoom in/out centered on canvas.
-- Optional drag to pan when zoomed (nice to have, not required for Task 2 acceptance but architect class to support it).
+Exact field names and structure should follow clear conventions matching the prototype analysis document as reference, adapted for Task 2 scope.
 
-**Styling consistency:**
-- Use site design system from `style.css`: CSS variables for colors (`--bg`, `--surface`, `--accent: #c9a84c`, etc.), Inter font for UI text, JetBrains Mono for seed/numbers.
-- Minimap should feel integrated with the Dungeoneers visual identity — dark dungeon aesthetic, gold accents, not bright cartoon colors (except role mode needs distinguishable hues; desaturate to fit dark theme).
+### 3. Map Query Facade
 
-### 5. Main.js Integration
+Provide a query interface wrapping the raw dungeon data with convenient helper methods for renderer and future gameplay code to use. Should support checking whether a grid coordinate is walkable, retrieving cell properties at given coordinates with bounds safety, finding which room contains given coordinates, getting start position, and filtering rooms by role. Pure functions with no side effects.
 
-Modify `src/main.js` to replace static placeholder with live minimap:
+### 4. Minimap Renderer
 
-- Import `getConfig` from config API and `MinimapRenderer` from render module and `generateDungeon` from world module.
-- On load: fetch config, call `generateDungeon(config)`, create `MinimapRenderer` instance with canvas and dungeon result, render.
-- Display HUD pill updated to show: seed, dimensions, room count, current visualization mode.
-- Keyboard event listeners:
-  - `R` key → regenerate with new random seed → update minimap → update HUD
-  - `1`, `2`, `3` keys → switch minimap mode → re-render → update HUD mode indicator
-  - `+`/`-` → zoom (optional)
-- Console log dungeon summary on generation for debugging.
-- Handle config fetch failure gracefully (show error in HUD, keep canvas with error message).
+Implement a properly architected renderer class responsible for drawing the dungeon top-down view on an HTML5 canvas element. This is a central visual component — architect it with clean separation of concerns as it will evolve into the in-game HUD minimap in later tasks.
 
-Canvas setup remains 640×360 internal resolution scaled to viewport as in Task 1.
+**Required capabilities:**
+- Accept a dungeon data object and render it to canvas
+- Support swapping to newly generated dungeon without recreating renderer instance
+- Support at least three visualization modes toggleable at runtime, with distinct visual encoding per mode
+- Render legend explaining current mode's visual encoding
+- Support zoom level adjustment and pan offset for navigating large dungeons
+- Follow parchment adventurer's map aesthetic — light parchment background, ink-style rendering
 
-### 6. Config Expansion
+**Visualization modes — what each must communicate:**
 
-Update `src/assets/config/main.json` generator section from minimal Task 1 version to full Task 2 parameter set:
+*Role mode (default):* Show dungeon topology and narrative structure through room role encoding. Each room colored distinctly by its assigned role so the main path story is immediately readable: entrance room, exit room, guardian rooms as major encounters along the path, treasure rooms as optional objectives, hubs as junction decision points, side branch rooms (armory, shrine, secret) distinguishable from main path halls. Corridors in medium gray, walls as dark ink borders. No text labels overlaid on rooms — the legend provides role identification, keeping the map clean and readable. The minimap should tell the dungeon's story at a glance through color alone — follow the chain of rooms from entrance to exit, spot guardian encounters blocking the way, notice gold treasure detours branching off.
 
-```json
-{
-  "version": 1,
-  "renderer": { "resolution": "640x360", "authentic": true },
-  "player": { "moveSpeed": 3.0, "mouseSensitivity": 0.0022 },
-  "generator": {
-    "mapW": 64,
-    "mapH": 64,
-    "roomTarget": 32,
-    "roomAttempts": 160,
-    "levelCount": 1,
-    "seed": null,
-    "loopExtraChance": 0.18,
-    "flattenStartRadius": 2
-  },
-  "items": {
-    "maxTorches": 24,
-    "minTorchDist": 6,
-    "corridorBias": 1.5,
-    "torchOffset": 0.35
-  },
-  "boundaryWallId": 1
-}
-```
+*Zone mode:* Show thematic progression through the level via color tinting reflecting the 5 zones from entry to exit. Each zone uses distinct hue progressing from warm light tones at entry through to deep cool tones at exit, communicating the single-level journey spatially. Apply as overlay tint over base floor colors so underlying structure remains visible. Walls stay dark for contrast. Zone names in legend must match single-level semantics: Entry, Antechamber, Depths, Sanctum, Exit.
 
-Defaults chosen for reasonable Task 2 scope — 64×64 with 32 rooms renders clearly on minimap without overwhelming detail. Can scale to 80×80 / 52 rooms later.
+*Material mode:* Show material distribution for debugging and validating coherent room wall painting. Wall cells colored by wall material ID, floor cells by floor material ID, using colors derived from material JSON definitions. Rooms should appear as solid coherent color blocks validating that wall painting assigns consistent material per room perimeter. Corridors show corridor pool materials distinctly.
 
-### 7. Editor Generator Tab
+**Legend — what it must show:**
 
-Modify `src/editor.js` to add Generator tab to the sidebar navigation and editor panel.
+Legend positioned below the centered minimap as a horizontal strip of color swatches paired with text labels. Shows proper full role names: Entrance, Exit, Guardian, Treasure, Hub, Hall, Armory, Shrine, Secret (no abbreviations). Must update dynamically when mode changes — switching from role to zone mode replaces role swatches with zone swatches seamlessly. Legend uses parchment panel styling matching the map aesthetic.
 
-**Generator tab UI controls** (using existing generic widget system from Task 1 editor):
-- Map width number input (32–128 range)
-- Map height number input (32–128)
-- Room target number input (16–64)
-- Room attempts number input (80–320)
-- Loop extra chance slider 0..0.5 step 0.01
-- Flatten start radius slider 0..5 step 1
-- Seed text input (empty = random on next generation, numeric = fixed seed for reproducibility)
-- Level count number input 1..10 (for future multi-level, Task 2 uses 1)
-- Max torches number input
-- Min torch distance slider
-- Corridor bias slider 0.5..3.0
+**Grid rendering approach:**
 
-Save button persists to unified asset API as in Task 1. Game page picks up changes on next R-key regen (no live cross-tab update required for Task 2 — manual R press sufficient).
+Full canvas background is warm light parchment (`#e8dcc4`) with subtle texture scanlines. Calculate appropriate cell pixel size to fit the full dungeon grid within canvas bounds while preserving aspect ratio, centering the minimap horizontally and vertically with legend below. Rooms render as solid rounded rectangles (not per-cell grids) with dark ink wall borders — rounded corners give a hand-drawn parchment map feel. Corridors render as solid connecting rectangles. Empty space outside the dungeon structure remains parchment — only wall cells adjacent to floors are drawn as dark ink, so the map reads as ink on paper rather than dark void.
 
-Add Generator tab button to sidebar folder tree or as top-level tab alongside existing asset categories. Follow existing editor patterns from Task 1.
+Entrance and exit positions are indicated solely by stair markers at their respective wall locations — a single clear visual indicator per stair, positioned at the 3-cell wall segment coordinates stored in room metadata, using distinct directional glyphs (upward for entrance stair ascending toward surface, downward for exit stair descending deeper) rendered with high contrast against parchment so they remain clearly visible at typical zoom levels. No separate room-center markers and no text labels overlaid on rooms — the stair markers serve as both position indicators and stair placement verification, while the legend provides role identification for all room types.
 
-### 8. Tests
+**Interaction requirements:**
 
-**Unit tests** — create `src/tests/unit/generator.test.js` using Node.js built-in test runner:
+Keyboard controls on game page for interacting with minimap without mouse dependency:
+- Number keys 1, 2, 3 switch between role, zone, and material visualization modes respectively, updating legend and re-rendering immediately
+- R key triggers dungeon regeneration with new random seed (unless config specifies fixed seed), updating minimap display and HUD
+- Plus and minus keys (or equals and underscore) adjust zoom level centered on canvas
+- Optional mouse wheel zoom and drag-to-pan when zoomed are nice enhancements but not required for Task 2 — architect the renderer class to support pan offset so these can be added easily later without restructuring
 
-- Determinism test: same config + same seed → bit-identical DungeonMap output (deep compare grid, floorMat, rooms array). Run twice, assert equality.
-- Connectivity test: every floor cell reachable from start position via flood fill (no isolated disconnected regions). Assert all floor cells visited.
-- Role assignment test: generated dungeon has exactly 1 entrance room, exactly 1 stairs room, 2 guardian rooms, 2 treasure rooms (within tolerance for small dungeons — adjust expectations based on room count).
-- Start/goal separation test: Manhattan or path distance between entrance and stairs is substantial fraction of dungeon diameter (not adjacent).
-- Bounds test: all room coordinates within grid bounds, no out-of-bounds access.
-- Material ID validity test: all wall material IDs in grid are valid (1..N where N = walls.json materials count), same for floor and ceiling arrays.
-- Hash determinism test: `hash2i(x,y,seed)` returns same value across multiple calls with same inputs.
+**Visual design consistency:**
 
-**E2E tests** — modify `src/tests/e2e/game.spec.js`:
+The minimap uses a parchment adventurer's map aesthetic distinct from the site's dark UI chrome: warm light parchment background (`#e8dcc4`) with subtle texture, ink-style rendering in grayscale with gold accent (`#c9a84c`) for treasure rooms only. Rooms render as solid rounded rectangles with dark ink borders — no per-cell grid appearance. Empty space outside the dungeon structure remains parchment; only walls adjacent to floors render as dark ink.
 
-- Game page loads without console errors.
-- Canvas element exists and has non-empty rendering (check via evaluating canvas toDataURL length or pixel sampling — at minimum verify MinimapRenderer instantiated without errors via console log check).
-- Pressing R key triggers regeneration (verify via console log or HUD seed value change).
-- Pressing 1, 2, 3 keys switches minimap mode (verify HUD mode indicator updates, or verify no console errors on keypress).
-- HUD displays seed, dimensions, room count, and mode.
+Font is configurable via `src/assets/config/main.json` under the `minimap` key — default is Pixelify Sans (Google Fonts) with Georgia serif fallback, fitting the retro pixel game aesthetic on parchment. The font must be loaded dynamically from config at runtime using the Font Loading API before canvas text rendering, with no hardcoded font names in renderer code. Legend text and S/E markers use the configured minimap font. Site UI chrome (headers, buttons) continues using Inter / JetBrains Mono from Task 1.
 
-Add new test file `src/tests/e2e/generator.spec.js` if needed for generator-specific E2E flows, or extend existing game.spec.js.
+### 5. Game Page Integration
 
-Update `package.json` test scripts if needed to include unit test runner: `"test:unit": "node --test tests/unit/*.test.js"` (should already exist from Task 1).
+Update the game page JavaScript to replace Task 1's static placeholder canvas drawing with live minimap functionality:
 
-### 9. Running Instructions Update
+On page load, fetch both main configuration and generator configuration assets via the unified asset API, invoke the dungeon generator with merged configuration, create minimap renderer instance bound to the game canvas element, and render the initial dungeon view. The HUD status pill is hidden — the minimap is self-contained with its legend providing all necessary context.
 
-Update repo root `README.md` Tasks table to mark Task 2 as in progress or link to task folder. Add note to game page usage section about R/1/2/3 key controls for minimap interaction.
+Add keyboard event handling for R (regenerate), 1/2/3 (mode toggle), and +/- (zoom) as described in minimap interaction requirements. On regeneration, fetch fresh config (in case editor changes were saved), generate new dungeon, update minimap renderer with new data, and log dungeon summary to browser console for debugging visibility.
 
----
+Handle configuration fetch or generation failures gracefully while keeping canvas in a safe state — no uncaught exceptions breaking the page.
 
-## Acceptance Criteria
+### 6. Configuration Asset Structure
 
-- [ ] `src/world/dungeon/generator.js` exists exporting `generateDungeon(config, seedOverride)` implementing 10-stage pipeline
-- [ ] `src/world/dungeon/themes.js` exists with `zoneForDepth()`, theme definitions, `hash2i()` deterministic hash, weighted pool picker
-- [ ] `src/world/dungeon/atlas.js` exists with material ID constants and lookup helpers (stub acceptable for Task 2)
+Create `src/assets/config/generator.json` as described in section 2 above with all required fields and sensible defaults tuned for intentional linear dungeon feel. The existing editor file system explorer automatically provides editing UI — no additional editor code required beyond ensuring the file exists with valid JSON schema and is discoverable via the asset API.
+
+Extend the client-side configuration module to export dedicated loader functions for the generator configuration asset, following the same caching pattern established for main configuration in Task 1.
+
+Update the existing `src/assets/config/main.json` to remove generator-related fields now housed in the dedicated file, keeping it focused on core engine settings (renderer resolution, player movement parameters, version). Add a `minimap` section with configurable font settings: `fontFamily` (display name for canvas, e.g. "Pixelify Sans"), `fontFallback` (CSS fallback stack, e.g. "monospace"), and `fontGoogleName` (URL-encoded Google Fonts name with weights, e.g. "Pixelify+Sans:wght@400;600;700"). The game page must load the font dynamically from config at runtime — no hardcoded font names in HTML or renderer code.
+
+### 7. Tests
+
+**Unit tests** using Node.js built-in test runner at `src/tests/unit/generator.test.js`:
+
+- Determinism: same configuration + same seed produces bit-identical output across multiple invocations — compare grid arrays, room arrays deeply for equality
+- Connectivity: entrance room and exit room must be connected via traversable corridor path (core story requirement). Most walkable floor cells should be reachable from entry — allow tolerance for minor edge-case isolated cells as long as main path is fully connected.
+- Role assignment: generated dungeon contains exactly one entrance room and exactly one exit room, with at least some special-role rooms (guardian, treasure, or hub) distributed along main path
+- Start-exit separation: Manhattan or Euclidean distance between entrance and exit room centers substantial relative to map dimensions — dungeon should feel like a journey not adjacent chambers
+- Bounds respect: all room coordinates within grid bounds with safe margins, no out-of-bounds array access during generation
+- Material validity: all wall, floor, and ceiling material IDs referenced in output arrays correspond to valid entries in respective material JSON asset files
+- Deterministic hash: hash utility function returns identical values across repeated calls with same inputs, and different values for different inputs, normalized to expected range
+
+**End-to-end tests** updating `src/tests/e2e/game.spec.js`:
+
+- Game page loads without console errors and canvas element renders with non-empty content
+- Canvas renders dungeon on load (verify via absence of console errors and successful page load — visual content is canvas-based)
+- Pressing R key triggers regeneration without console errors
+- Pressing number keys 1, 2, 3 switches visualization modes and triggers re-render without console errors
+- Back to home navigation link functions correctly
+
+Extend existing editor E2E tests to account for new generator.json asset appearing in file tree — adjust selectors to explicitly target intended files rather than assuming first file in tree order.
+
+### 8. Acceptance Criteria
+
+- [ ] `src/world/dungeon/generator.js` exists exporting generator function accepting config and optional seed override, returning dungeon data object with required structure
+- [ ] `src/world/dungeon/themes.js` exists with zone resolution, theme definitions using single-level zone names (Entry, Antechamber, Depths, Sanctum, Exit), deterministic hash utility, and weighted selection helper
+- [ ] `src/world/dungeon/atlas.js` exists with material ID constants, grid cell type constants, and decoration bitmask definitions
 - [ ] `src/world/dungeon/index.js` exports public generator API
-- [ ] `src/world/map.js` exists with DungeonMapWrapper query helpers (`isWalkable`, `getCell`, `getRoomAt`, `getStartPos`, `getRoomsByRole`)
-- [ ] `src/world/items.js` exists with torch placement logic respecting min distance and corridor bias
-- [ ] `src/render/minimap.js` exists exporting `MinimapRenderer` class with proper component methods (`setDungeonMap`, `setMode`, `render`, `_renderGrid`, `_renderLegend`, `_renderScale`, `_renderTitle`, `_getCellColor`)
-- [ ] Minimap renders on game page canvas replacing Task 1 placeholder — visible grid showing dungeon layout on page load
-- [ ] Minimap supports 3 toggleable modes via 1/2/3 keys: role mode (default, color-coded by room role with labels), zone mode (5 theme zones with tint), material mode (wall/floor material IDs as shades)
-- [ ] Legend panel renders in corner showing current mode categories with color swatches and labels, updates on mode toggle
-- [ ] Scale bar renders showing tile scale reference
-- [ ] Title overlay renders showing seed, dimensions, room count, theme name
-- [ ] Start position marked distinctively (green circle/arrow), stairs marked distinctively (red arrow/icon)
-- [ ] R key regenerates dungeon with new random seed and re-renders minimap
-- [ ] HUD pill updated to show seed, dimensions, room count, current mode
-- [ ] `src/assets/config/main.json` expanded with full generator and items parameter sections
-- [ ] Editor has Generator tab with controls for map dimensions, room target, attempts, loop chance, seed, torch params — saves via unified asset API
-- [ ] Unit test suite at `src/tests/unit/generator.test.js` covering determinism, connectivity, role assignment, start/goal separation, bounds, material validity, hash determinism — all passing via `npm run test:unit`
-- [ ] E2E test suite updated covering minimap render, R-key regen, mode toggle keys, HUD display — all passing via `npm run test:e2e`
-- [ ] `npm test` runs both unit and E2E suites successfully
-- [ ] No console errors on game page or editor page during normal operation
-- [ ] Determinism verified: same seed produces bit-identical dungeon output across multiple generations (manual verification acceptable, unit test required)
-- [ ] Game page accessible at `http://localhost:8000/game.html` showing minimap, not placeholder
-- [ ] Editor page accessible at `http://localhost:8000/editor.html` with Generator tab functional
+- [ ] `src/world/map.js` exists providing map query facade with walkability check, cell property retrieval, room lookup, start position, and role filtering capabilities
+- [ ] `src/world/items.js` exists implementing item placement respecting configured constraints
+- [ ] `src/render/minimap.js` exists exporting renderer class with methods for setting dungeon data, switching modes, adjusting zoom/pan, and rendering complete minimap with grid and legend components
+- [ ] Game page canvas displays live minimap on load replacing Task 1 placeholder — dungeon layout clearly visible with distinguishable rooms and corridors on parchment background
+- [ ] Minimap renders a clear linear main path from entry to exit with purposeful side branches visible as short dead-end spurs — layout reads as intentional level design not random maze on visual inspection across multiple regenerations
+- [ ] Role visualization mode is default, showing rooms as solid rounded rectangles color-coded by role with dark ink borders — no text labels overlaid on rooms, legend provides identification
+- [ ] Zone mode shows 5 distinct thematic regions progressing spatially from entry side to exit side with appropriate tints and updated zone names in legend
+- [ ] Material mode shows coherent per-room wall colors and distinct floor materials validating material assignment logic
+- [ ] Legend renders below centered minimap with proper full role names (Entrance, Exit, Guardian, Treasure, Hub, Hall, Armory, Shrine, Secret — no abbreviations), updating dynamically when visualization mode changes via keyboard
+- [ ] Canvas background is warm parchment throughout; empty space outside dungeon structure shows as parchment, not dark walls — only walls adjacent to floors render as dark ink
+- [ ] Entrance and exit positions indicated solely by stair markers at their wall locations — single clear visual indicator per stair with directional glyph (upward for entrance, downward for exit), clearly visible against parchment at typical zoom levels, no separate room-center markers or text labels
+- [ ] R key regenerates dungeon and updates display
+- [ ] Number keys 1, 2, 3 switch visualization modes with immediate visual update
+- [ ] HUD status pill is hidden — minimap is self-contained
+- [ ] `src/assets/config/generator.json` exists as dedicated asset file with all required configuration fields and sensible defaults for intentional linear design (reduced room count, low loop probability, linearity bias, side branch depth limit, larger room sizes)
+- [ ] `src/assets/config/main.json` updated to remove generator-related fields, add `minimap` section with configurable font settings (`fontFamily`, `fontFallback`, `fontGoogleName`) — no hardcoded font names
+- [ ] Editor file system explorer shows `generator.json` under assets config folder — this uses the generic JSON asset editor UI provided by Task 1 (file tree sidebar with Visual Editor tab showing auto-generated form widgets, and Raw JSON tab). Task 2 does NOT add custom editor tabs; the dedicated 14-tab editor UI is Task 7 scope. The required screenshot must show the generic editor with generator.json open in the file tree, not a custom Generator tab. The generic editor provides editing via Visual Editor with appropriate form widgets and via Raw JSON tab, persisting correctly via asset API
+- [ ] Client configuration module extended with generator config loader following established caching pattern
+- [ ] Game page dynamically loads minimap font from config at runtime via Font Loading API before canvas rendering
+- [ ] MinimapRenderer accepts font configuration via constructor options, no hardcoded font names in renderer code
+- [ ] Unit test suite covers determinism, connectivity including entry-exit path guarantee, role assignment, start-exit separation, bounds, material validity, hash determinism, stair wall doorway avoidance, side branch depth limit, room size hierarchy, zone progression, and item placement constraints — all passing
+- [ ] E2E test suite covers minimap rendering with canvas pixel verification, regeneration interaction, mode toggle, and no console errors — all passing
+- [ ] Full test suite passes via npm test command without errors
+- [ ] No console errors during normal game page or editor page operation
+- [ ] Determinism property verified through unit test — same seed produces identical output
+- [ ] Main path connectivity guaranteed — entry room always reaches exit room via traversable corridor path across all tested seeds (validated by unit test flood fill check specifically asserting exit reachability)
 
 ## Out of Scope for This Task
 
-- First-person 3D rendering or WebGL — that's Task 3 renderer-gpu-core. Task 2 is strictly 2D top-down minimap.
-- Player movement or input handling beyond R/1/2/3 keys for minimap interaction — player controller is Task 4.
-- WebGL shaders, PBR materials, POM parallax — Task 3 and Task 5 respectively.
-- Lighting system, torch flicker visuals, particle effects — Task 6.
-- Character sprites or NPCs — Task 8.
-- RPG trinity gameplay mechanics (tank/heal/DPS roles, aggro, equipment) — Task 9.
-- Full editor parity with prototype's 14 subsystem tabs — Task 7 editor-complete. Task 2 adds only Generator tab.
-- Live cross-tab update between editor save and game minimap refresh — game requires manual R press to pick up config changes for Task 2 simplicity. Live update via storage events can be enhancement in Task 7.
-- Procedural PBR texture generation — Task 5 materials-pbr-system. Task 2 uses solid colors derived from material JSON base RGB values for minimap visualization.
-- Audio system — much later in development timeline.
-- Mobile/responsive polish beyond basic functional layout — refinements deferred.
-- Performance optimization beyond basic functionality — generator runs once per R press, ~100ms acceptable for Task 2 scope.
+- First-person 3D rendering or WebGL — Task 3 scope. Task 2 strictly top-down 2D minimap visualization.
+- Player movement, collision, or input beyond minimap interaction keys — player controller is Task 4.
+- WebGL shaders, procedural PBR materials, parallax occlusion mapping — Tasks 3 and 5.
+- Dynamic lighting, torch flicker visuals, particle effects — Task 6.
+- Character sprites, NPCs, billboard rendering — Task 8.
+- RPG gameplay mechanics including trinity roles, aggro/threat, equipment, boons, run loop — Task 9.
+- Full editor with 14 subsystem-specific tabs — Task 7. Task 2 relies on generic JSON asset editor via file system explorer for generator configuration.
+- Live cross-tab synchronization between editor saves and game minimap — manual R-key refresh sufficient for Task 2.
+- Procedural texture generation — Task 5. Task 2 minimap uses solid colors from material definitions.
+- Audio, mobile responsiveness polish, performance optimization beyond functional correctness.

@@ -7,6 +7,8 @@ test("editor page loads", async ({ page }) => {
 test("config displayed", async ({ page }) => {
   await page.goto("/editor.html");
   await expect(page.locator(".field-input").first()).toBeVisible({ timeout: 5000 });
+  // Click main.json explicitly (generator.json is now first alphabetically)
+  await page.click("text=main.json");
   await page.click("#tab-raw"); await expect(page.locator("#json-ta")).toBeVisible();
   const txt = await page.locator("#json-ta").inputValue();
   expect(txt).toContain("version"); expect(txt).toContain("renderer");
@@ -18,6 +20,7 @@ test("asset list populated", async ({ page }) => {
 });
 test("save config flow", async ({ page }) => {
   await page.goto("/editor.html"); await expect(page.locator(".field-input").first()).toBeVisible({ timeout: 5000 });
+  await page.click("text=main.json"); await page.waitForTimeout(200);
   await page.click("#btn-save"); await expect(page.locator("#status-area")).toContainText("Saved", { timeout: 2000 });
 });
 test("asset edit flow", async ({ page }) => {

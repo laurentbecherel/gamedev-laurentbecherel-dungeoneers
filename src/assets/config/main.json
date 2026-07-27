@@ -8,9 +8,9 @@
     "moveSpeed": 3,
     "mouseSensitivity": 0.0022
   },
-  "generator": {
-    "mapW": 32,
-    "mapH": 32,
-    "seed": null
+  "minimap": {
+    "fontFamily": "Pixelify Sans",
+    "fontFallback": "monospace",
+    "fontGoogleName": "Pixelify+Sans:wght@400;600;700"
   }
 }
