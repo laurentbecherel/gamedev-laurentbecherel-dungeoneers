@@ -1,0 +1,14 @@
+name = "Dungeoneers: Dungeon Generator"
+instruction = "./instruction.md"
+
+[game]
+tags = ["RPG/adventure/story", "Arcade/action", "3D/VR scene-like"]
+tech-stack-tags = ["Web JS/DOM", "Vanilla JS canvas"]
+assets-used = ["primitives", "procedural"]
+harness = "Metacode"
+screenshots = ["./screenshots/minimap-roles.png", "./screenshots/minimap-zones.png", "./screenshots/minimap-materials.png", "./screenshots/editor-generator.png"]
+videos = []
+teaser = ""
+base-commit-hash = ""
+commit-hash = ""
+avocado-model = "Muse Spark 1.1"
