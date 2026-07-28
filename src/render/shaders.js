@@ -278,17 +278,9 @@ void main() {
         if (dist < 0.001) dist = 0.001;
         floorWorld = u_playerPos + ray * dist;
         vec2 floorUV = fract(floorWorld);
-        // grid debug: floor green, wall red, ceiling blue — or normal grid lines
-        vec2 fw = fract(floorWorld);
-        float grid = (fw.x > 0.97 || fw.y > 0.97 || fw.x < 0.03 || fw.y < 0.03) ? 1.0 : 0.25;
-        vec3 albedo;
-        if (u_gridDebug == 1) albedo = vec3(0.0, grid * 0.9, 0.0);
-        else albedo = vec3(grid * 0.8, grid * 0.8, grid);
-        vec3 normalTS = vec3(0.5,0.5,1.0);
-        vec3 N = vec3(0,0,1);
-        vec4 rma = vec4(0.9,0,0,1);
-        float ao = 1.0;
-        vec3 emissive = vec3(0);
+        vec2 fuvAtlas = atlasUV(1.0, floorUV, u_atlasFloors, u_texSize);
+        vec3 albedo; vec3 normalTS; vec3 N; vec4 rma; float ao; vec3 emissive;
+        if (u_gridDebug == 1) { vec2 fw = fract(floorWorld); float grid = (fw.x > 0.97 || fw.y > 0.97 || fw.x < 0.03 || fw.y < 0.03) ? 1.0 : 0.25; albedo = vec3(0.0, grid * 0.9, 0.0); normalTS = vec3(0.5,0.5,1.0); N = vec3(0,0,1); rma = vec4(0.9,0,0,1); ao = 1.0; emissive = vec3(0); } else { if (u_pomEnabled == 1) { vec3 viewDirTS = normalize(vec3(-ray, 0.8)); vec2 fpo = pomOffset(u_floorHeight, fuvAtlas, viewDirTS, u_pomFloor, u_pomSteps); fuvAtlas += fpo; } albedo = texture(u_floorAlbedo, fuvAtlas).rgb * 0.7; normalTS = decodeNormal(texture(u_floorNormal, fuvAtlas).rgb); N = normalize(vec3(normalTS.xy, normalTS.z)); rma = texture(u_floorRoughMetal, fuvAtlas); ao = rma.a; emissive = albedo * 0.8 * rma.b * 2.5; }
         vec3 worldPos = vec3(floorWorld, floorH_atRay);
         vec3 viewDir = normalize(vec3(u_playerPos, eyeZ) - worldPos);
         finalColor = pbrShade(albedo, N, rma.r, rma.g, ao, emissive, worldPos, viewDir);
@@ -303,16 +295,8 @@ void main() {
         ceilWorld = u_playerPos + ray * dist;
         vec2 ceilUV = fract(ceilWorld);
         vec2 cuvAtlas = atlasUV(1.0, ceilUV, u_atlasCeils, u_texSize);
-        vec2 cw = fract(ceilWorld);
-        float grid = (cw.x > 0.97 || cw.y > 0.97 || cw.x < 0.03 || cw.y < 0.03) ? 1.0 : 0.25;
-        vec3 albedo;
-        if (u_gridDebug == 1) albedo = vec3(0.0, 0.0, grid * 0.9);
-        else albedo = vec3(grid * 0.8, grid * 0.8, grid);
-        vec3 normalTS = vec3(0.5,0.5,1.0);
-        vec3 N = vec3(0,0,-1);
-        vec4 rma = vec4(0.9,0,0,1);
-        float ao = 1.0;
-        vec3 emissive = vec3(0);
+        vec3 albedo; vec3 normalTS; vec3 N; vec4 rma; float ao; vec3 emissive;
+        if (u_gridDebug == 1) { vec2 cw = fract(ceilWorld); float grid = (cw.x > 0.97 || cw.y > 0.97 || cw.x < 0.03 || cw.y < 0.03) ? 1.0 : 0.25; albedo = vec3(0.0, 0.0, grid * 0.9); normalTS = vec3(0.5,0.5,1.0); N = vec3(0,0,-1); rma = vec4(0.9,0,0,1); ao = 1.0; emissive = vec3(0); } else { if (u_pomEnabled == 1) { vec3 viewDirTS_ceil = normalize(vec3(-ray, 0.5)); vec2 cpo = pomOffset(u_ceilHeight, cuvAtlas, viewDirTS_ceil, u_pomCeil, u_pomSteps); cuvAtlas += cpo; } albedo = texture(u_ceilAlbedo, cuvAtlas).rgb * 0.8; normalTS = decodeNormal(texture(u_ceilNormal, cuvAtlas).rgb); N = normalize(vec3(normalTS.xy, -normalTS.z)); rma = texture(u_ceilRoughMetal, cuvAtlas); ao = rma.a; emissive = albedo * 0.8 * rma.b * 2.5; }
         vec3 worldPos = vec3(ceilWorld, ceilH_atRay);
         vec3 viewDir = normalize(vec3(u_playerPos, eyeZ) - worldPos);
         finalColor = pbrShade(albedo, N, rma.r, rma.g, ao, emissive, worldPos, viewDir);
@@ -322,16 +306,9 @@ void main() {
       float wallV = clamp(wallV_raw, 0.0, 1.0);
       float matId = max(1.0, cellType);
       vec2 uv = vec2(wallU, wallV);
-      // DEBUG GRID on walls - show 1 world unit squares
-      float wallH = ceilH - floorH;
-      vec2 wuv = vec2(fract(wallU), fract(wallV * wallH));
-      float grid = (wuv.x > 0.95 || wuv.y > 0.95 || wuv.x < 0.05 || wuv.y < 0.05) ? 1.0 : 0.25;
-      vec3 albedo;
-      if (u_gridDebug == 1) albedo = vec3(grid * 0.9, 0.0, 0.0);
-      else albedo = vec3(grid * 0.8, grid * 0.8, grid);
-      vec3 normal = vec3(0,0,1);
-      float rough = 0.9; float metal = 0.0; float ao = 1.0;
-      vec3 emissive = vec3(0);
+      vec2 uvAtlas = atlasUV(matId, uv, u_atlasWalls, u_texSize);
+      vec3 albedo; vec3 normal; float rough; float metal; float ao; vec3 emissive;
+      if (u_gridDebug == 1) { float wallH = ceilH - floorH; vec2 wuv = vec2(fract(wallU), fract(wallV * wallH)); float grid = (wuv.x > 0.95 || wuv.y > 0.95 || wuv.x < 0.05 || wuv.y < 0.05) ? 1.0 : 0.25; albedo = vec3(grid * 0.9, 0.0, 0.0); normal = vec3(0,0,1); rough = 0.9; metal = 0.0; ao = 1.0; emissive = vec3(0); } else { if (u_pomEnabled == 1) { vec3 viewTS = vec3(0.0, 0.0, 1.0); vec2 po = pomOffset(u_wallHeight, uvAtlas, viewTS, u_pomWall, u_pomSteps); uvAtlas += po; } albedo = texture(u_wallAlbedo, uvAtlas).rgb; normal = decodeNormal(texture(u_wallNormal, uvAtlas).rgb); vec4 rma = texture(u_wallRoughMetal, uvAtlas); rough = rma.r; metal = rma.g; ao = rma.a; emissive = albedo * 0.8 * rma.b * 2.5; }
 
       vec3 worldPos = vec3(hitPos.x, hitPos.y, u_playerHeight + (wallV - 0.5));
       vec3 viewDir = normalize(vec3(u_playerPos, u_playerHeight) - worldPos);
@@ -371,14 +348,8 @@ void main() {
       }
       vec2 floorUV = fract(floorWorld);
       vec2 fuvAtlas = atlasUV(1.0, floorUV, u_atlasFloors, u_texSize);
-        vec2 fw = fract(floorWorld);
-        float grid = (fw.x > 0.97 || fw.y > 0.97 || fw.x < 0.03 || fw.y < 0.03) ? 1.0 : 0.25;
-        vec3 albedo = vec3(grid * 0.8, grid * 0.8, grid);
-        vec3 normalTS = vec3(0.5,0.5,1.0);
-        vec3 N = vec3(0,0,1);
-        vec4 rma = vec4(0.9,0,0,1);
-        float ao = 1.0;
-        vec3 emissive = vec3(0);
+      vec3 albedo; vec3 normalTS; vec3 N; vec4 rma; float ao; vec3 emissive;
+      if (u_gridDebug == 1) { vec2 fw = fract(floorWorld); float grid = (fw.x > 0.97 || fw.y > 0.97 || fw.x < 0.03 || fw.y < 0.03) ? 1.0 : 0.25; albedo = vec3(0.0, grid * 0.9, 0.0); normalTS = vec3(0.5,0.5,1.0); N = vec3(0,0,1); rma = vec4(0.9,0,0,1); ao = 1.0; emissive = vec3(0); } else { if (u_pomEnabled == 1) { vec3 viewDirTS2 = normalize(vec3(-ray, 0.8)); vec2 fpo = pomOffset(u_floorHeight, fuvAtlas, viewDirTS2, u_pomFloor, u_pomSteps); fuvAtlas += fpo; } albedo = texture(u_floorAlbedo, fuvAtlas).rgb * 0.7; normalTS = decodeNormal(texture(u_floorNormal, fuvAtlas).rgb); N = normalize(vec3(normalTS.xy, normalTS.z)); rma = texture(u_floorRoughMetal, fuvAtlas); ao = rma.a; emissive = albedo * 0.8 * rma.b * 2.5; }
       vec3 worldPos = vec3(floorWorld, floorH);
       vec3 viewDir = normalize(vec3(u_playerPos, eyeZ2) - worldPos);
       finalColor = pbrShade(albedo, N, rma.r, rma.g, ao, emissive, worldPos, viewDir);
@@ -405,14 +376,8 @@ void main() {
       }
       vec2 ceilUV = fract(ceilWorld);
       vec2 cuvAtlas = atlasUV(1.0, ceilUV, u_atlasCeils, u_texSize);
-        vec2 cw = fract(ceilWorld);
-        float grid = (cw.x > 0.97 || cw.y > 0.97 || cw.x < 0.03 || cw.y < 0.03) ? 1.0 : 0.2;
-        vec3 albedo = vec3(grid * 0.8, grid * 0.8, grid);
-        vec3 normalTS = vec3(0.5,0.5,1.0);
-        vec3 N = vec3(0,0,-1);
-        vec4 rma = vec4(0.9,0,0,1);
-        float ao = 1.0;
-        vec3 emissive = vec3(0);
+      vec3 albedo; vec3 normalTS; vec3 N; vec4 rma; float ao; vec3 emissive;
+      if (u_gridDebug == 1) { vec2 cw = fract(ceilWorld); float grid = (cw.x > 0.97 || cw.y > 0.97 || cw.x < 0.03 || cw.y < 0.03) ? 1.0 : 0.2; albedo = vec3(0.0, 0.0, grid * 0.9); normalTS = vec3(0.5,0.5,1.0); N = vec3(0,0,-1); rma = vec4(0.9,0,0,1); ao = 1.0; emissive = vec3(0); } else { if (u_pomEnabled == 1) { vec3 viewDirTS_ceil2 = normalize(vec3(-ray, 0.5)); vec2 cpo2 = pomOffset(u_ceilHeight, cuvAtlas, viewDirTS_ceil2, u_pomCeil, u_pomSteps); cuvAtlas += cpo2; } albedo = texture(u_ceilAlbedo, cuvAtlas).rgb * 0.8; normalTS = decodeNormal(texture(u_ceilNormal, cuvAtlas).rgb); N = normalize(vec3(normalTS.xy, -normalTS.z)); rma = texture(u_ceilRoughMetal, cuvAtlas); ao = rma.a; emissive = albedo * 0.8 * rma.b * 2.5; }
       vec3 worldPos = vec3(ceilWorld, ceilH);
       vec3 viewDir = normalize(vec3(u_playerPos, eyeZ2) - worldPos);
       finalColor = pbrShade(albedo, N, rma.r, rma.g, ao, emissive, worldPos, viewDir);
