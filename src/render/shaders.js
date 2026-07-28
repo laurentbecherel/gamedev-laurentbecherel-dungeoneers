@@ -266,7 +266,7 @@ void main() {
     float drawEnd = u_resolution.y * 0.5 + (eyeZ - floorH) * wallH_full;
     float wallV_raw = (fragCoord.y - drawStart) / max(drawEnd - drawStart, 0.001);
 
-    if (wallV_raw < -0.03 || wallV_raw > 1.03) {
+    if (wallV_raw < 0.0 || wallV_raw > 1.0) {
       float horizon = 0.5;
       float vNorm = 1.0 - v_uv.y;
       if (vNorm > horizon) {
