@@ -48,6 +48,7 @@ uniform vec3  u_sunColor;
 uniform float u_fogBase;
 uniform float u_fogSquared;
 uniform vec3  u_fogColor;
+uniform int   u_fogEnabled;
 
 uniform float u_pomWall;
 uniform float u_pomFloor;
@@ -386,9 +387,11 @@ void main() {
   }
 
   // Squared exponential fog matching prototype
-  float fog = 1.0 / (1.0 + perpDist * u_fogBase + perpDist * perpDist * u_fogSquared);
-  finalColor *= fog;
-  finalColor += u_fogColor * (1.0 - fog);
+  if (u_fogEnabled == 1) {
+    float fog = 1.0 / (1.0 + perpDist * u_fogBase + perpDist * perpDist * u_fogSquared);
+    finalColor *= fog;
+    finalColor += u_fogColor * (1.0 - fog);
+  }
 
   // Authentic banding if enabled
   if (u_authentic == 1) {

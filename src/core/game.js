@@ -1,7 +1,7 @@
 // Game — top-level orchestration owning all subsystems.
 // Adapted from prototype architecture but simplified for Task 3 scope.
 
-import { getConfig, getGeneratorConfig } from "../config/config.js";
+import { getConfig, getGeneratorConfig, getFogConfig } from "../config/config.js";
 import { generateDungeon } from "../world/dungeon/index.js";
 import { GPURenderer, isWebGL2Supported } from "../render/renderer-gpu.js";
 import { Player } from "../entities/player.js";
@@ -27,7 +27,8 @@ export class Game {
   async init() {
     const baseCfg = await getConfig();
     const genCfg = await getGeneratorConfig();
-    this.cfg = { ...baseCfg, generator: genCfg, items: genCfg.items, torchColors: genCfg.torchColors, boundaryWallId: genCfg.boundaryWallId };
+    const fogCfg = await getFogConfig();
+    this.cfg = { ...baseCfg, generator: genCfg, fog: fogCfg, items: genCfg.items, torchColors: genCfg.torchColors, boundaryWallId: genCfg.boundaryWallId };
 
     if (!isWebGL2Supported()) {
       this.hud.textContent = "WebGL2 not supported";
@@ -66,8 +67,9 @@ export class Game {
     while (attempts < 3) {
       try {
         const baseCfg = await getConfig();
-        const genCfg = await getGeneratorConfig();
-        this.cfg = { ...baseCfg, generator: genCfg, items: genCfg.items, torchColors: genCfg.torchColors, boundaryWallId: genCfg.boundaryWallId };
+    const genCfg = await getGeneratorConfig();
+    const fogCfg = await getFogConfig();
+    this.cfg = { ...baseCfg, generator: genCfg, fog: fogCfg, items: genCfg.items, torchColors: genCfg.torchColors, boundaryWallId: genCfg.boundaryWallId };
         const seedToUse = seedOverride !== null ? seedOverride : (attempts === 0 ? null : Math.floor(Math.random() * 1000000));
         this.dungeon = await generateDungeon(this.cfg, seedToUse);
         console.log("Dungeon regenerated:", this.dungeon.seed);
@@ -109,6 +111,7 @@ export class Game {
     else if (k === "2") { const v = this.renderer.toggleLighting(); this._showHud(`Lighting: ${v ? 'ON' : 'OFF (flat albedo)'}`); }
     else if (k === "3") { const v = this.renderer.togglePBR(); this._showHud(`PBR: ${v ? 'ON' : 'OFF (diffuse only)'}`); }
     else if (k === "4") { const v = this.renderer.togglePOM(); this._showHud(`POM: ${v ? 'ON' : 'OFF'}`); }
+    else if (k === "5") { const v = this.renderer.toggleFog(); this._showHud(`Fog: ${v ? 'ON' : 'OFF'}`); }
   }
 
   _showHud(msg) {

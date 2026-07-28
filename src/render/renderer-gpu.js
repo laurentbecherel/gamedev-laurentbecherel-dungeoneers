@@ -44,6 +44,7 @@ export class GPURenderer {
     this.lightingEnabled = 1;
     this.pbrEnabled = 1;
     this.pomEnabled = 0;
+    this.fogEnabled = 1;
   }
 
   async init(dungeon, config) {
@@ -154,7 +155,7 @@ export class GPURenderer {
       'u_lightPos','u_lightColor','u_lightIntensity','u_lightRadius',
       'u_ambientColor','u_ambientLevel','u_worldAmbientMul',
       'u_sunDir','u_sunDirZ','u_sunIntensity','u_sunColor',
-      'u_fogBase','u_fogSquared','u_fogColor',
+      'u_fogBase','u_fogSquared','u_fogColor','u_fogEnabled',
       'u_pomWall','u_pomFloor','u_pomCeil','u_pomSteps','u_authentic','u_bandLevels','u_time',
       'u_gridDebug','u_lightingEnabled','u_pbrEnabled','u_pomEnabled'];
     names.forEach(n => ul[n] = gl.getUniformLocation(p, n));
@@ -190,6 +191,7 @@ export class GPURenderer {
     this.bandLevels = rc.bandLevels || 32;
     this.rebuildPalette();
 
+    const fogCfgInit = config.fog || {}; this.fogEnabled = (fogCfgInit.enabled !== false) ? 1 : 0;
     this.ready = true;
   }
 
@@ -220,10 +222,12 @@ export class GPURenderer {
   setLightingEnabled(v) { this.lightingEnabled = v ? 1 : 0; }
   setPBREnabled(v) { this.pbrEnabled = v ? 1 : 0; }
   setPOMEnabled(v) { this.pomEnabled = v ? 1 : 0; }
+  setFogEnabled(v) { this.fogEnabled = v ? 1 : 0; }
   toggleGridDebug() { this.gridDebug ^= 1; return this.gridDebug; }
   toggleLighting() { this.lightingEnabled ^= 1; return this.lightingEnabled; }
   togglePBR() { this.pbrEnabled ^= 1; return this.pbrEnabled; }
   togglePOM() { this.pomEnabled ^= 1; return this.pomEnabled; }
+  toggleFog() { this.fogEnabled ^= 1; return this.fogEnabled; }
 
   uploadMap(dungeon) {
     if (this.mapTex && this.matMapTex) updateMapTexture(this.gl, this.mapTex, this.matMapTex, dungeon);
@@ -343,10 +347,12 @@ export class GPURenderer {
     if (ul.u_sunIntensity) gl.uniform1f(ul.u_sunIntensity, lc.sunIntensity ?? 1.5);
     const sunC = lc.sunColor || [1, 1, 1];
     if (ul.u_sunColor) gl.uniform3f(ul.u_sunColor, sunC[0], sunC[1], sunC[2]);
-    gl.uniform1f(ul.u_fogBase, lc.fogBase ?? 0.18);
-    gl.uniform1f(ul.u_fogSquared, lc.fogSquared ?? 0.025);
-    const fogC = lc.fogColor || [0.05, 0.05, 0.08];
+    const fogCfg = cfg.fog || {};
+    gl.uniform1f(ul.u_fogBase, fogCfg.base ?? 0.06);
+    gl.uniform1f(ul.u_fogSquared, fogCfg.squared ?? 0.005);
+    const fogC = fogCfg.color || [0.05, 0.05, 0.08];
     gl.uniform3f(ul.u_fogColor, fogC[0], fogC[1], fogC[2]);
+    if (ul.u_fogEnabled) gl.uniform1i(ul.u_fogEnabled, this.fogEnabled ? 1 : 0);
 
     const pom = cfg.renderer?.pom || {};
     const pomOn = this.pomEnabled ? 1 : 0;
