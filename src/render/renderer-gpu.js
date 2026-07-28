@@ -394,4 +394,17 @@ export class GPURenderer {
   }
   isReady() { return this.ready; }
   rebuildMaterials() { /* TODO */ }
+
+  renderMapOnly(dungeon, player) {
+    if (!this.ready) return;
+    const gl = this.gl;
+    // Generate map texture data via UI path — called from game loop after ui.drawMap sets _pendingMapUI
+    // Clear to black then draw fullscreen map quad
+    gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+    gl.viewport(0, 0, this.canvas.width, this.canvas.height);
+    gl.clearColor(0, 0, 0, 1);
+    gl.clear(gl.COLOR_BUFFER_BIT);
+    // _renderUIPass expects _pendingMapUI to be set by renderMapUI beforehand
+    this._renderUIPass();
+  }
 }

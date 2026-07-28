@@ -91,8 +91,12 @@ export class Game {
     if (this.renderer && this.renderer.isReady() && this.player && this.input && this.dungeon) {
       const inp = this.input.update();
       this.player.update(dt, inp, this.dungeon);
-      this.renderer.render(this.dungeon, this.player, time / 1000);
-      if (this.showMap) this.ui.drawMap(this.dungeon, this.player, this.renderer);
+      if (this.showMap) {
+        this.ui.drawMap(this.dungeon, this.player, this.renderer);
+        this.renderer.renderMapOnly(this.dungeon, this.player);
+      } else {
+        this.renderer.render(this.dungeon, this.player, time / 1000);
+      }
     }
     requestAnimationFrame(this._loop);
   }

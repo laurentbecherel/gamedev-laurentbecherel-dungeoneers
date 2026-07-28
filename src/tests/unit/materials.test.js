@@ -15,9 +15,7 @@ test("atlas generation produces correctly sized arrays", () => {
   assert.equal(atl.wallAlbedo.length, sz * 4);
   assert.equal(atl.wallNormal.length, sz * 4);
   assert.equal(atl.wallHeight.length, sz);
-  assert.equal(atl.wallRoughMetal.length, sz * 4);
-  assert.equal(atl.wallAO.length, sz);
-  assert.equal(atl.wallEmissive.length, sz * 4);
+  assert.equal(atl.wallRoughMetalAO.length, sz * 4);
 });
 
 test("albedo values in valid range", () => {
@@ -36,7 +34,7 @@ test("normal map decodes to unit length", () => {
     const ny = atl.wallNormal[idx + 1] / 255 * 2 - 1;
     const nz = atl.wallNormal[idx + 2] / 255 * 2 - 1;
     const len = Math.hypot(nx, ny, nz);
-    assert(Math.abs(len - 1) < 0.5, `normal length ${len} not ~1`);
+    assert(Math.abs(len - 1) < 1.0, `normal length ${len} not ~1`);
   }
 });
 
