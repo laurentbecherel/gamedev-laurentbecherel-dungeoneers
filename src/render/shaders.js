@@ -547,7 +547,10 @@ void main() {
 
     if (wallV_raw < 0.0 || wallV_raw > 1.0) {
       float horizon = 0.5;
-      float vNorm = 1.0 - v_uv.y;
+      // Task 4 fix: floor/ceiling must follow bob — use fragCoord with bobPixels like prototype
+      // Prototype uses y = fragCoord (with bob) and floorScreen = y - halfH, ceilScreen = halfH - y
+      // So vNorm with bob = fragCoord.y / u_resolution.y
+      float vNorm = fragCoord.y / u_resolution.y;
       if (vNorm > horizon) {
         float floorH_atRay = 0.0;
         float dist = (eyeZ - floorH_atRay) / max(0.0001, (vNorm - horizon)) * u_resolution.x / u_resolution.y * 0.5 / tan(u_fov * 0.5);
