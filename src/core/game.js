@@ -139,8 +139,24 @@ export class Game {
     // Load parchment map font before first render — fixes wrong font regression
     await this._loadMapFont(this.cfg?.map);
 
-    this.dungeon = await generateDungeon(this.cfg, null);
-    console.log("Dungeon generated:", this.dungeon.seed, this.dungeon.w + "x" + this.dungeon.h, this.dungeon.rooms.length + " rooms");
+    // Retry loop like regen() — generator can fail on unlucky random seed (room overlap)
+    // Previous version called generateDungeon once and crashed init on failure
+    const debugCfg = this.cfg?.debug || {};
+    const maxAttempts = debugCfg.init?.maxAttempts ?? 5;
+    let lastErr = null;
+    for (let attempt = 0; attempt < maxAttempts; attempt++) {
+      try {
+        const seedToUse = attempt === 0 ? null : Math.floor(Math.random() * 1000000);
+        this.dungeon = await generateDungeon(this.cfg, seedToUse);
+        console.log("Dungeon generated:", this.dungeon.seed, this.dungeon.w + "x" + this.dungeon.h, this.dungeon.rooms.length + " rooms");
+        lastErr = null;
+        break;
+      } catch (e) {
+        lastErr = e;
+        console.warn(`Dungeon gen attempt ${attempt+1} failed, retrying`, e.message);
+      }
+    }
+    if (lastErr) throw lastErr;
 
     this.renderer = new GPURenderer(this.canvas);
     await this.renderer.init(this.dungeon, this.cfg);

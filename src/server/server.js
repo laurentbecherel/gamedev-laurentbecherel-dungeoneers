@@ -121,6 +121,11 @@ async function handleApi(req, res, pathname) {
 const server = http.createServer(async (req, res) => {
   try {
     const url = new URL(req.url, 'http://' + req.headers.host); const pathname = url.pathname;
+    // Favicon is requested by browsers automatically — return 204 to avoid console 404 noise
+    if (pathname === '/favicon.ico' || pathname === '/favicon.png') {
+      if (!res.headersSent) { res.writeHead(204); res.end(); }
+      return;
+    }
     if (pathname.startsWith('/api/')) { const h = await handleApi(req, res, pathname); if (h) return; if (!res.headersSent) { res.writeHead(404, { 'Content-Type': 'application/json' }); res.end(JSON.stringify({ error: 'Not found' })); } return; }
     let fp = path.join(SRC_DIR, pathname === '/' ? 'index.html' : pathname.slice(1)); const sp = path.normalize(fp);
     if (!sp.startsWith(path.normalize(SRC_DIR))) { if (!res.headersSent) { res.writeHead(403); res.end('Forbidden'); } return; }

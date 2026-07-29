@@ -40,20 +40,22 @@ export async function generateDungeon(config, seedOverride = null) {
   const rooms = [];
   const mainPathIndices = [];
 
-  // Place main path rooms in sequence along axis
+  // Place main path rooms in sequence along axis — robust version
   for (let i = 0; i < mainPathRooms; i++) {
     const progress = i / Math.max(1, mainPathRooms - 1);
-    const isMainPathRoom = true;
-    const sizeBonus = isMainPathRoom ? mainPathRoomSizeBonus : 0;
+    const sizeBonus = mainPathRoomSizeBonus;
     let placed = false;
-    // Try progressively smaller room sizes if placement fails
-    for (let sizeTry = 0; sizeTry < 3 && !placed; sizeTry++) {
+    // Use configured roomAttempts, fallback 200, and more size variants
+    const outerAttempts = Math.max(5, Math.floor(roomAttempts / 30)); // e.g. 200/30 ≈ 6 size variants
+    const innerAttempts = Math.max(50, roomAttempts); // use full roomAttempts for position jitter
+    for (let sizeTry = 0; sizeTry < outerAttempts && !placed; sizeTry++) {
       const sizeReduce = sizeTry * 2;
       const rw = Math.max(4, roomSizeMin + sizeBonus - sizeReduce + Math.floor(rng() * Math.max(1, roomSizeMax - roomSizeMin + 1 - sizeBonus)));
       const rh = Math.max(4, roomSizeMin + sizeBonus - sizeReduce + Math.floor(rng() * Math.max(1, roomSizeMax - roomSizeMin + 1 - sizeBonus)));
-      const mainCenter = 2 + progress * (mainAxisLen - Math.max(rw, rh) - 4);
-      const crossWander = crossLen * 0.25 * (1 - linearity * 0.3);
-      const mainJitter = mainAxisLen * 0.08 * (1 - linearity * 0.5);
+      // Spread rooms further apart to avoid overlap — was (mainAxisLen - max(rw,rh) -4), use -8 for more margin
+      const mainCenter = 2 + progress * (mainAxisLen - Math.max(rw, rh) - 8);
+      const crossWander = crossLen * 0.3 * (1 - linearity * 0.2);
+      const mainJitter = mainAxisLen * 0.12 * (1 - linearity * 0.3);
       let mainPos = mainCenter + (rng() - 0.5) * mainJitter * 2;
       let crossPos = crossLen/2 + (rng() - 0.5) * crossWander * 2 - Math.max(rw, rh)/2;
       mainPos = Math.max(1, Math.min(mainAxisLen - Math.max(rw, rh) - 1, mainPos));
@@ -61,9 +63,11 @@ export async function generateDungeon(config, seedOverride = null) {
       const rx = axis === 0 ? Math.floor(mainPos) : Math.floor(crossPos);
       const ry = axis === 0 ? Math.floor(crossPos) : Math.floor(mainPos);
 
-      for (let tryN = 0; tryN < 30 && !placed; tryN++) {
-        const ox = Math.max(1, Math.min(w - rw - 1, rx + Math.floor((rng()-0.5)*10)));
-        const oy = Math.max(1, Math.min(h - rh - 1, ry + Math.floor((rng()-0.5)*10)));
+      // Wider search radius for main path rooms to avoid overlap on large rooms
+      const searchRadius = 14 + sizeTry * 3;
+      for (let tryN = 0; tryN < innerAttempts && !placed; tryN++) {
+        const ox = Math.max(1, Math.min(w - rw - 1, rx + Math.floor((rng()-0.5)*searchRadius)));
+        const oy = Math.max(1, Math.min(h - rh - 1, ry + Math.floor((rng()-0.5)*searchRadius)));
         let overlap = false;
         for (const r of rooms) {
           if (!(ox + rw + 1 <= r.x || r.x + r.w + 1 <= ox || oy + rh + 1 <= r.y || r.y + r.h + 1 <= oy)) { overlap = true; break; }
@@ -72,8 +76,8 @@ export async function generateDungeon(config, seedOverride = null) {
       }
     }
     if (!placed) {
-      // Skip this main path slot rather than throwing — maintain at least 4 rooms total
-      if (mainPathIndices.length < 2) throw new Error("Failed to place main path room "+i);
+      // More tolerant: only throw if we have <4 total main rooms, otherwise skip slot (maintains story but handles unlucky seed)
+      if (mainPathIndices.length < 4) throw new Error("Failed to place main path room "+i);
       continue;
     }
   }
