@@ -112,6 +112,7 @@ export class Game {
     else if (k === "3") { const v = this.renderer.togglePBR(); this._showHud(`PBR: ${v ? 'ON' : 'OFF (diffuse only)'}`); }
     else if (k === "4") { const v = this.renderer.togglePOM(); this._showHud(`POM: ${v ? 'ON' : 'OFF'}`); }
     else if (k === "5") { const v = this.renderer.toggleFog(); this._showHud(`Fog: ${v ? 'ON' : 'OFF'}`); }
+    else if (k === "6") { const v = this.renderer.cyclePBRDebug(); const names=['OFF','Albedo','Normal raw','World Normal','Height','Rough','Metal','AO','Emissive']; this._showHud(`PBR Debug: ${names[v]} (${v})`); }
   }
 
   _showHud(msg) {

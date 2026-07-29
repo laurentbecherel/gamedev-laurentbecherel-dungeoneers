@@ -45,6 +45,7 @@ export class GPURenderer {
     this.pbrEnabled = 1;
     this.pomEnabled = 0;
     this.fogEnabled = 1;
+    this.pbrDebugMode = 0;
   }
 
   async init(dungeon, config) {
@@ -157,7 +158,7 @@ export class GPURenderer {
       'u_sunDir','u_sunDirZ','u_sunIntensity','u_sunColor',
       'u_fogBase','u_fogSquared','u_fogColor','u_fogEnabled',
       'u_pomWall','u_pomFloor','u_pomCeil','u_pomSteps','u_authentic','u_bandLevels','u_time',
-      'u_gridDebug','u_lightingEnabled','u_pbrEnabled','u_pomEnabled'];
+      'u_gridDebug','u_lightingEnabled','u_pbrEnabled','u_pomEnabled','u_pbrDebugMode'];
     names.forEach(n => ul[n] = gl.getUniformLocation(p, n));
 
     // quantize uniforms
@@ -223,11 +224,13 @@ export class GPURenderer {
   setPBREnabled(v) { this.pbrEnabled = v ? 1 : 0; }
   setPOMEnabled(v) { this.pomEnabled = v ? 1 : 0; }
   setFogEnabled(v) { this.fogEnabled = v ? 1 : 0; }
+  setPBRDebugMode(v) { this.pbrDebugMode = Math.max(0, Math.min(8, v | 0)); }
   toggleGridDebug() { this.gridDebug ^= 1; return this.gridDebug; }
   toggleLighting() { this.lightingEnabled ^= 1; return this.lightingEnabled; }
   togglePBR() { this.pbrEnabled ^= 1; return this.pbrEnabled; }
   togglePOM() { this.pomEnabled ^= 1; return this.pomEnabled; }
   toggleFog() { this.fogEnabled ^= 1; return this.fogEnabled; }
+  cyclePBRDebug() { this.pbrDebugMode = (this.pbrDebugMode + 1) % 9; return this.pbrDebugMode; }
 
   uploadMap(dungeon) {
     if (this.mapTex && this.matMapTex) updateMapTexture(this.gl, this.mapTex, this.matMapTex, dungeon);
@@ -364,6 +367,7 @@ export class GPURenderer {
     if (ul.u_lightingEnabled) gl.uniform1i(ul.u_lightingEnabled, this.lightingEnabled ? 1 : 0);
     if (ul.u_pbrEnabled) gl.uniform1i(ul.u_pbrEnabled, this.pbrEnabled ? 1 : 0);
     if (ul.u_pomEnabled) gl.uniform1i(ul.u_pomEnabled, this.pomEnabled ? 1 : 0);
+    if (ul.u_pbrDebugMode) gl.uniform1i(ul.u_pbrDebugMode, this.pbrDebugMode);
     gl.uniform1i(ul.u_authentic, this.authentic ? 1 : 0);
     if (ul.u_bandLevels) gl.uniform1i(ul.u_bandLevels, this.bandLevels);
     gl.uniform1f(ul.u_time, timeSec);

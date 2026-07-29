@@ -81,6 +81,7 @@ function genSlabTile(size, baseRGB, proc, seed, isCeil) {
   const aoB = proc.aoBoost ?? 1.1;
   const bs = proc.blockSize ?? 8;
   const gw = proc.groutWidth ?? 1;
+  const ds = proc.domeStrength ?? 1.1;
   const albedo = new Uint8Array(size * size * 4);
   const height = new Float32Array(size * size);
   const ao = new Float32Array(size * size);
@@ -92,16 +93,23 @@ function genSlabTile(size, baseRGB, proc, seed, isCeil) {
     const bx = Math.floor(x / bs), by = Math.floor(y / bs);
     const lx = x % bs, ly = y % bs;
     const inGrout = lx < gw || lx >= bs - gw || ly < gw || ly >= bs - gw;
+    // pillowed dome to give 4-sided bevel per tile (like brick walls)
+    const cx = bs / 2, cy = bs / 2;
+    const dx = (lx - cx) / cx;
+    const dy = (ly - cy) / cy;
+    const dist = Math.hypot(dx, dy);
+    const dome = Math.max(0, 1 - dist * dist) * 0.22 * ds;
     const hv = hash2(bx, by, seed);
     const varR = (hv - 0.5) * 20, varH = (hv - 0.5) * 0.08;
-    let h = inGrout ? 0.42 : 0.5 + varH;
+    let h = inGrout ? 0.28 : 0.5 + dome + varH;
     let r = baseRGB[0], g = baseRGB[1], b = baseRGB[2];
     if (inGrout) { r *= 0.6; g *= 0.6; b *= 0.6; }
     else { r += varR; g += varR; b += varR; }
     h = Math.max(0, Math.min(1, (h - 0.5) * hs + 0.5));
     const idx = y * size + x;
     height[idx] = h;
-    ao[idx] = inGrout ? 0.45 : 0.75;
+    const aoBase = inGrout ? 0.42 : 0.72 + dome * 0.35;
+    ao[idx] = Math.max(0, Math.min(1, (aoBase - 0.5) * aoB + 0.5));
     const ai = idx * 4;
     albedo[ai] = Math.max(0, Math.min(255, r | 0));
     albedo[ai + 1] = Math.max(0, Math.min(255, g | 0));
@@ -153,7 +161,7 @@ export function generateMaterialAtlases(wallMats, floorMats, ceilMats, procConfi
         const sai = si * 4, dai = di * 4;
         albedo[dai] = tile.albedo[sai]; albedo[dai + 1] = tile.albedo[sai + 1];
         albedo[dai + 2] = tile.albedo[sai + 2]; albedo[dai + 3] = 255;
-        const sni = si * 3, dni = di * 4;
+        const sni = si * 4, dni = di * 4;
         normal[dni] = tile.normal[sni]; normal[dni + 1] = tile.normal[sni + 1]; normal[dni + 2] = tile.normal[sni + 2]; normal[dni + 3] = 255;
         height[di] = Math.round(tile.height[si] * 255);
         roughMetalAO[dai] = tile.rough[si] || roughVal;
