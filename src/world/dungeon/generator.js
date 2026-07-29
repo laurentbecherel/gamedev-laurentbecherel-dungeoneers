@@ -8,16 +8,16 @@ function makeRng(seed) { let s = seed >>> 0 || 1; return () => { s = Math.imul(s
 
 export async function generateDungeon(config, seedOverride = null) {
   const gen = config.generator || {};
-  const w = gen.mapW ?? 64, h = gen.mapH ?? 64;
+  const w = gen.mapW ?? 40, h = gen.mapH ?? 40;
   const roomTarget = gen.roomTarget ?? 14;
   const mainPathRooms = gen.mainPathRooms ?? 8;
   const roomAttempts = gen.roomAttempts ?? 200;
   const loopExtra = gen.loopExtraChance ?? 0.02;
   const linearity = gen.linearity ?? 0.85;
   const sideBranchMaxDepth = gen.sideBranchMaxDepth ?? 1;
-  const roomSizeMin = gen.roomSizeMin ?? 6;
-  const roomSizeMax = gen.roomSizeMax ?? 14;
-  const mainPathRoomSizeBonus = gen.mainPathRoomSizeBonus ?? 2;
+  const roomSizeMin = gen.roomSizeMin ?? 4;
+  const roomSizeMax = gen.roomSizeMax ?? 8;
+  const mainPathRoomSizeBonus = gen.mainPathRoomSizeBonus ?? 1;
   const flattenRadius = gen.flattenStartRadius ?? 2;
   const levelCount = gen.levelCount ?? 1;
   const levelIndex = 0;
@@ -63,8 +63,8 @@ export async function generateDungeon(config, seedOverride = null) {
       const rx = axis === 0 ? Math.floor(mainPos) : Math.floor(crossPos);
       const ry = axis === 0 ? Math.floor(crossPos) : Math.floor(mainPos);
 
-      // Wider search radius for main path rooms to avoid overlap on large rooms
-      const searchRadius = 14 + sizeTry * 3;
+      // Wider search radius for main path rooms — reduced to ~60% for compact layout
+      const searchRadius = 8 + sizeTry * 2;
       for (let tryN = 0; tryN < innerAttempts && !placed; tryN++) {
         const ox = Math.max(1, Math.min(w - rw - 1, rx + Math.floor((rng()-0.5)*searchRadius)));
         const oy = Math.max(1, Math.min(h - rh - 1, ry + Math.floor((rng()-0.5)*searchRadius)));
@@ -97,7 +97,7 @@ export async function generateDungeon(config, seedOverride = null) {
       let placed = false;
       for (let attempt = 0; attempt < 20 && !placed; attempt++) {
         const sideDir = rng() < 0.5 ? -1 : 1;
-        const dist = 6 + Math.floor(rng() * 6); // 6-11 tiles from hub center
+        const dist = 4 + Math.floor(rng() * 3); // ~60%: 4-6 tiles from hub center (was 6-11)
         let sx, sy;
         if (axis === 0) { sx = Math.floor(hub.cx + sideDir * dist - srw/2); sy = Math.floor(hub.cy + (rng()-0.5)*8 - srh/2); }
         else { sy = Math.floor(hub.cy + sideDir * dist - srh/2); sx = Math.floor(hub.cx + (rng()-0.5)*8 - srw/2); }
@@ -113,7 +113,7 @@ export async function generateDungeon(config, seedOverride = null) {
         const srh2 = roomSizeMin + Math.floor(rng() * 5);
         for (let attempt = 0; attempt < 15; attempt++) {
           const ang = rng() * Math.PI * 2;
-          const dist = 5 + rng()*4;
+          const dist = 3 + rng()*2; // ~60%: 3-5 tiles (was 5-9)
           const sx = Math.max(1, Math.min(w-srw2-1, Math.floor(parent.cx + Math.cos(ang)*dist - srw2/2)));
           const sy = Math.max(1, Math.min(h-srh2-1, Math.floor(parent.cy + Math.sin(ang)*dist - srh2/2)));
           let overlap = false;
