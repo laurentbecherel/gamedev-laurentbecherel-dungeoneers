@@ -141,7 +141,10 @@ export class Game {
     if (lastErr) throw lastErr;
     this.renderer = new GPURenderer(this.canvas);
     await this.renderer.init(this.dungeon, this.cfg);
-    this.player = new Player(this.dungeon.startX + 0.5, this.dungeon.startY + 0.5, -Math.PI / 2);
+    // Always spawn at center of start tile — floor+0.5 ensures middle even if generator cx is .0 or .5 (even/odd room width)
+    const sx = Math.floor(this.dungeon.startX) + 0.5;
+    const sy = Math.floor(this.dungeon.startY) + 0.5;
+    this.player = new Player(sx, sy, -Math.PI / 2);
     this.player.setConfig(this.cfg);
     this.input = new Input(this.canvas);
     this.ui = new UI(this.cfg);
@@ -173,7 +176,9 @@ export class Game {
         this.dungeon = await generateDungeon(this.cfg, seedToUse);
         console.log("Dungeon regenerated:", this.dungeon.seed);
         this.renderer.uploadMap(this.dungeon);
-        this.player.setPosition(this.dungeon.startX + 0.5, this.dungeon.startY + 0.5, -Math.PI / 2);
+        const rsx = Math.floor(this.dungeon.startX) + 0.5;
+        const rsy = Math.floor(this.dungeon.startY) + 0.5;
+        this.player.setPosition(rsx, rsy, -Math.PI / 2);
         this.player.setConfig(this.cfg);
         this.ui.setDungeon(this.dungeon);
         return;

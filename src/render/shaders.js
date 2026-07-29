@@ -26,6 +26,7 @@ uniform vec2  u_playerPos;
 uniform float u_playerAngle;
 uniform float u_fov;
 uniform float u_playerHeight;
+uniform float u_bobPixels;
 
 uniform sampler2D u_mapTex;
 uniform sampler2D u_matMap;
@@ -364,7 +365,8 @@ vec3 pbrShade(vec3 albedo, vec3 N, float rough, float metal, float ao, vec3 emis
 }
 
 void main() {
-  vec2 fragCoord = vec2(v_uv.x * u_resolution.x, (1.0 - v_uv.y) * u_resolution.y);
+  // Task 4: vertical bob as screen-space pixel offset like mygame — u_bobPixels = viewBobOffset * h * 0.8
+  vec2 fragCoord = vec2(v_uv.x * u_resolution.x, (1.0 - v_uv.y) * u_resolution.y + u_bobPixels);
   float cameraX = 2.0 * fragCoord.x / u_resolution.x - 1.0;
   float planeLen = tan(u_fov * 0.5);
   vec2 rayDir = vec2(cos(u_playerAngle), sin(u_playerAngle));
