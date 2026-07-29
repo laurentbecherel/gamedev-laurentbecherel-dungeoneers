@@ -1,0 +1,22 @@
+{
+  "version": 1,
+  "affect": {
+    "sun": 0.25,
+    "point": 0.35,
+    "ambient": 1,
+    "note": "0 = AO ignores this light, 1 = full AO darkening. mix(1,ao,affect). Low sun/point values prevent dark corners losing all light"
+  },
+  "material": {
+    "globalStrength": 0.6,
+    "groutFactor": 0.78,
+    "faceFactor": 0.92,
+    "domeBoost": 0.08,
+    "min": 0.7,
+    "note": "Per-brick AO stored in RoughMetal.A. Values above tweak final mix: mix(1,ao,affect)"
+  },
+  "sampling": {
+    "note": "AO currently baked into material atlases via genBrickTile/genSlabTile, not screen-space",
+    "microJitter": 0.04,
+    "perBrickJitter": 0.04
+  }
+}

@@ -1,0 +1,28 @@
+{
+  "version": 1,
+  "enabled": true,
+  "bias": {
+    "traceNormalOffset": 0.1,
+    "dirOffset": 0.06,
+    "note": "shadowOrigin = worldPos.xy + traceN*normalOffset + dir*dirOffset. Prevents self-shadowing acne"
+  },
+  "traceNormal": {
+    "threshold": 0.02,
+    "note": "If N.xy length < threshold, traceN = (0,0,1) else dominant axis"
+  },
+  "sun": {
+    "shadowFactor": 0.25,
+    "maxDist": 20,
+    "note": "Multiplier when sun ray hits wall: final *= shadowFactor (0.25 = 75% dark). maxDist caps DDA steps"
+  },
+  "point": {
+    "shadowFactor": 0.15,
+    "distEpsilon": 0.1,
+    "note": "Point light shadow: traceRay(dist - epsilon). factor 0.15 = stronger shadow than sun"
+  },
+  "dda": {
+    "maxSteps": 64,
+    "shadowSteps": 64,
+    "note": "Max DDA iterations for wall hit and shadow trace"
+  }
+}

@@ -1,16 +1,15 @@
 {
-  "version": 1,
+  "version": 3,
+  "_readme": "MASTER CONFIG. Dedicated configs live in subfolders under config/: rendering/ contains POM/PBR/AO/palette/raymarch/materials-proc, lighting/ contains lighting/shadows/fog, geometry/ contains chamfer/corners, gameplay/ contains generator/player, ui/ contains map/debug. Edit those files directly in editor — tree on left shows nested folders. This main.json only holds minimal fallback overrides.",
   "renderer": {
     "resolution": "640x360",
-    "authentic": true
+    "fov": 1,
+    "textureFilter": "nearest"
   },
   "player": {
     "moveSpeed": 3,
-    "mouseSensitivity": 0.0022
-  },
-  "minimap": {
-    "fontFamily": "Pixelify Sans",
-    "fontFallback": "monospace",
-    "fontGoogleName": "Pixelify+Sans:wght@400;600;700"
+    "turnSpeed": 2.2,
+    "radius": 0.28,
+    "height": 0.5
   }
 }

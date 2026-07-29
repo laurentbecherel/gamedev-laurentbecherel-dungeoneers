@@ -1,0 +1,64 @@
+{
+  "version": 1,
+  "ambient": {
+    "level": 0.36,
+    "color": [
+      1,
+      1,
+      1
+    ],
+    "worldMul": 0.38,
+    "note": "ambient = ambientColor * albedo * ambientLevel * worldAmbientMul * aoAmbient"
+  },
+  "sun": {
+    "intensity": 1.5,
+    "color": [
+      1,
+      1,
+      1
+    ],
+    "dir": [
+      -0.55,
+      -0.45,
+      -0.7
+    ],
+    "note": "dir normalized, Z negative = sun below horizon? Used as Lsun = -normalize(dir). X,Y primary for 2D shadow trace"
+  },
+  "player": {
+    "intensity": 1.8,
+    "radius": 4.5,
+    "color": [
+      1,
+      0.9,
+      0.7
+    ],
+    "height": 0.45,
+    "note": "Player torch. Radius = world units where atten goes 0. quadratic falloff"
+  },
+  "torchColors": [
+    {
+      "r": 1,
+      "g": 0.6,
+      "b": 0.2,
+      "name": "warm"
+    },
+    {
+      "r": 0.4,
+      "g": 0.7,
+      "b": 1,
+      "name": "cool"
+    },
+    {
+      "r": 0.3,
+      "g": 1,
+      "b": 0.4,
+      "name": "green"
+    },
+    {
+      "r": 0.8,
+      "g": 0.3,
+      "b": 1,
+      "name": "purple"
+    }
+  ]
+}

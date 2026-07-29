@@ -1,0 +1,23 @@
+{
+  "version": 1,
+  "moveSpeed": 3,
+  "turnSpeed": 2.2,
+  "radius": 0.28,
+  "height": 0.5,
+  "mouseSensitivity": 0.0022,
+  "collision": {
+    "slide": true,
+    "radius": 0.28,
+    "note": "Circle vs AABB per wall cell"
+  },
+  "light": {
+    "intensity": 1.8,
+    "radius": 4.5,
+    "color": [
+      1,
+      0.9,
+      0.7
+    ],
+    "height": 0.45
+  }
+}

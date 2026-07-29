@@ -1,0 +1,35 @@
+{
+  "version": 1,
+  "enabled": true,
+  "base": 0.06,
+  "squared": 0.005,
+  "color": [
+    0.05,
+    0.05,
+    0.08
+  ],
+  "formula": "fog = 1.0 / (1.0 + dist*base + dist*dist*squared); final *= fog + fogColor*(1-fog)",
+  "note": "Exponential squared fog. base linear, squared quadratic. Increase both for denser fog.",
+  "presets": {
+    "off": {
+      "base": 0,
+      "squared": 0
+    },
+    "light": {
+      "base": 0.04,
+      "squared": 0.003
+    },
+    "default": {
+      "base": 0.06,
+      "squared": 0.005
+    },
+    "heavy": {
+      "base": 0.18,
+      "squared": 0.025
+    }
+  },
+  "debug": {
+    "toggle": "Key 5",
+    "note": "u_fogEnabled uniform"
+  }
+}

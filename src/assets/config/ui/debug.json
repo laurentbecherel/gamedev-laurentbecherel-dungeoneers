@@ -1,0 +1,25 @@
+{
+  "version": 1,
+  "keys": {
+    "1": "toggle grid debug (floor green / wall red / ceil blue)",
+    "2": "toggle lighting",
+    "3": "toggle PBR (diffuse-only vs full GGX)",
+    "4": "toggle POM",
+    "5": "toggle Fog",
+    "6": "cycle PBR debug: OFF, Albedo, Normal raw, World Normal, Height, Rough, Metal, AO, Emissive",
+    "7": "toggle Chamfer (baseboard + vertical edge bevels)",
+    "8": "toggle Corner geometry (true intruding rounded corners)",
+    "R": "regen dungeon",
+    "M": "toggle fullscreen map"
+  },
+  "hud": {
+    "timeoutMs": 1500
+  },
+  "regen": {
+    "maxAttempts": 3
+  },
+  "overlay": {
+    "scaleRefW": 640,
+    "scaleRefH": 360
+  }
+}

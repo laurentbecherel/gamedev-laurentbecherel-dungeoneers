@@ -6,7 +6,45 @@ tags = ["RPG/adventure/story", "Arcade/action", "3D/VR scene-like"]
 tech-stack-tags = ["Web JS/DOM", "WebGL2", "GLSL", "Vanilla JS canvas"]
 assets-used = ["primitives", "procedural"]
 harness = "Metacode"
-screenshots = ["./screenshots/game-3d.png", "./screenshots/game-minimap-overlay.png", "./screenshots/editor-renderer-config.png"]
+screenshots = [
+  "./screenshots/game-3d.png",
+  "./screenshots/game-minimap-overlay.png",
+  "./screenshots/game-grid-debug.png",
+  "./screenshots/game-debug-lighting-off.png",
+  "./screenshots/game-debug-lighting-on.png",
+  "./screenshots/game-debug-pbr-off.png",
+  "./screenshots/game-debug-pbr-on.png",
+  "./screenshots/game-debug-pom-off.png",
+  "./screenshots/game-debug-pom-on.png",
+  "./screenshots/game-debug-fog-off.png",
+  "./screenshots/game-debug-fog-on.png",
+  "./screenshots/game-debug-chamfer-off.png",
+  "./screenshots/game-debug-chamfer-on.png",
+  "./screenshots/game-debug-corner-off.png",
+  "./screenshots/game-debug-corner-on.png",
+  "./screenshots/game-debug-sharp-90.png",
+  "./screenshots/game-debug-pbr-debug-off.png",
+  "./screenshots/game-debug-pbr-albedo.png",
+  "./screenshots/game-debug-pbr-normal-raw.png",
+  "./screenshots/game-debug-pbr-world-normal.png",
+  "./screenshots/game-debug-pbr-height.png",
+  "./screenshots/game-debug-pbr-rough.png",
+  "./screenshots/game-debug-pbr-metal.png",
+  "./screenshots/game-debug-pbr-ao.png",
+  "./screenshots/game-debug-pbr-emissive.png",
+  "./screenshots/editor-renderer-config.png",
+  "./screenshots/editor-rendering-config.png",
+  "./screenshots/editor-pom-config.png",
+  "./screenshots/editor-fog-config.png",
+  "./screenshots/editor-shadows-config.png",
+  "./screenshots/editor-pbr-config.png",
+  "./screenshots/editor-ao-config.png",
+  "./screenshots/editor-chamfer-config.png",
+  "./screenshots/editor-corners-config.png",
+  "./screenshots/editor-palette-config.png",
+  "./screenshots/editor-map-config.png",
+  "./screenshots/editor-debug-config.png"
+]
 videos = []
 teaser = ""
 base-commit-hash = "257c6e289e0558bb40963326673d1f2ad25c1e4d"

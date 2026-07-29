@@ -1,0 +1,46 @@
+{
+  "version": 1,
+  "enabled": true,
+  "roughness": {
+    "clampMin": 0.2,
+    "clampMax": 0.95,
+    "note": "Clamped after texture sampling. Prevents 0=perfect mirror and 1=pure diffuse extremes"
+  },
+  "metal": {
+    "default": 0,
+    "clampMin": 0,
+    "clampMax": 1
+  },
+  "emissive": {
+    "albedoMul": 0.8,
+    "strengthMul": 2.5,
+    "note": "emissive = albedo * albedoMul * metal.b * strengthMul. b channel of roughMetal tex = emissive"
+  },
+  "ggx": {
+    "epsilon": 0.0001,
+    "pi": 3.14159265,
+    "note": "Denominator epsilon to avoid divide-by-zero in NDF"
+  },
+  "fresnel": {
+    "f0Dielectric": 0.04,
+    "note": "F0 for non-metals. Mix with albedo by metalness"
+  },
+  "pointAttenuation": {
+    "quadraticFactor": 0.25,
+    "note": "atten = (1-d)^2 / (1+d^2*0.25)"
+  },
+  "debug": {
+    "modes": [
+      "OFF",
+      "Albedo",
+      "Normal raw",
+      "World Normal",
+      "Height",
+      "Rough",
+      "Metal",
+      "AO",
+      "Emissive"
+    ],
+    "note": "Key 6 cycles"
+  }
+}

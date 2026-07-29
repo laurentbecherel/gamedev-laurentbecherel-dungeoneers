@@ -40,20 +40,22 @@ export async function generateDungeon(config, seedOverride = null) {
   const rooms = [];
   const mainPathIndices = [];
 
-  // Place main path rooms in sequence along axis
+  // Place main path rooms in sequence along axis — robust version
   for (let i = 0; i < mainPathRooms; i++) {
     const progress = i / Math.max(1, mainPathRooms - 1);
-    const isMainPathRoom = true;
-    const sizeBonus = isMainPathRoom ? mainPathRoomSizeBonus : 0;
+    const sizeBonus = mainPathRoomSizeBonus;
     let placed = false;
-    // Try progressively smaller room sizes if placement fails
-    for (let sizeTry = 0; sizeTry < 3 && !placed; sizeTry++) {
+    // Use configured roomAttempts, fallback 200, and more size variants
+    const outerAttempts = Math.max(5, Math.floor(roomAttempts / 30)); // e.g. 200/30 ≈ 6 size variants
+    const innerAttempts = Math.max(50, roomAttempts); // use full roomAttempts for position jitter
+    for (let sizeTry = 0; sizeTry < outerAttempts && !placed; sizeTry++) {
       const sizeReduce = sizeTry * 2;
       const rw = Math.max(4, roomSizeMin + sizeBonus - sizeReduce + Math.floor(rng() * Math.max(1, roomSizeMax - roomSizeMin + 1 - sizeBonus)));
       const rh = Math.max(4, roomSizeMin + sizeBonus - sizeReduce + Math.floor(rng() * Math.max(1, roomSizeMax - roomSizeMin + 1 - sizeBonus)));
-      const mainCenter = 2 + progress * (mainAxisLen - Math.max(rw, rh) - 4);
-      const crossWander = crossLen * 0.25 * (1 - linearity * 0.3);
-      const mainJitter = mainAxisLen * 0.08 * (1 - linearity * 0.5);
+      // Spread rooms further apart to avoid overlap — was (mainAxisLen - max(rw,rh) -4), use -8 for more margin
+      const mainCenter = 2 + progress * (mainAxisLen - Math.max(rw, rh) - 8);
+      const crossWander = crossLen * 0.3 * (1 - linearity * 0.2);
+      const mainJitter = mainAxisLen * 0.12 * (1 - linearity * 0.3);
       let mainPos = mainCenter + (rng() - 0.5) * mainJitter * 2;
       let crossPos = crossLen/2 + (rng() - 0.5) * crossWander * 2 - Math.max(rw, rh)/2;
       mainPos = Math.max(1, Math.min(mainAxisLen - Math.max(rw, rh) - 1, mainPos));
@@ -61,9 +63,11 @@ export async function generateDungeon(config, seedOverride = null) {
       const rx = axis === 0 ? Math.floor(mainPos) : Math.floor(crossPos);
       const ry = axis === 0 ? Math.floor(crossPos) : Math.floor(mainPos);
 
-      for (let tryN = 0; tryN < 30 && !placed; tryN++) {
-        const ox = Math.max(1, Math.min(w - rw - 1, rx + Math.floor((rng()-0.5)*10)));
-        const oy = Math.max(1, Math.min(h - rh - 1, ry + Math.floor((rng()-0.5)*10)));
+      // Wider search radius for main path rooms to avoid overlap on large rooms
+      const searchRadius = 14 + sizeTry * 3;
+      for (let tryN = 0; tryN < innerAttempts && !placed; tryN++) {
+        const ox = Math.max(1, Math.min(w - rw - 1, rx + Math.floor((rng()-0.5)*searchRadius)));
+        const oy = Math.max(1, Math.min(h - rh - 1, ry + Math.floor((rng()-0.5)*searchRadius)));
         let overlap = false;
         for (const r of rooms) {
           if (!(ox + rw + 1 <= r.x || r.x + r.w + 1 <= ox || oy + rh + 1 <= r.y || r.y + r.h + 1 <= oy)) { overlap = true; break; }
@@ -72,8 +76,8 @@ export async function generateDungeon(config, seedOverride = null) {
       }
     }
     if (!placed) {
-      // Skip this main path slot rather than throwing — maintain at least 4 rooms total
-      if (mainPathIndices.length < 2) throw new Error("Failed to place main path room "+i);
+      // More tolerant: only throw if we have <4 total main rooms, otherwise skip slot (maintains story but handles unlucky seed)
+      if (mainPathIndices.length < 4) throw new Error("Failed to place main path room "+i);
       continue;
     }
   }
@@ -308,12 +312,11 @@ export async function generateDungeon(config, seedOverride = null) {
     if (ri === entryRoomIdx && entryStairWall) r.stairWall = entryStairWall;
     if (ri === exitRoomIdx && exitStairWall) r.stairWall = exitStairWall;
     const hx = Math.floor(r.cx), hy = Math.floor(r.cy);
-    let wallMat = pickWeighted(zone.wallPool, hx, hy, seed);
-    let floorMat = pickWeighted(zone.floorPool, hx+100, hy+100, seed);
-    let ceilMat = pickWeighted(zone.ceilPool, hx+200, hy+200, seed);
-    if (role === "entrance") wallMat = zone.wallPool[0].id;
-    if (role === "exit") wallMat = STAIRS_MATERIAL_ID;
-    if (role === "treasure") floorMat = 2;
+    // Task 3: single material only — lock to ID 1 = dungeon_brick / stone_slab / stone_ceiling
+    // Even if zones list ID 2, we force 1 to keep atlas 64x64 and avoid CLAMP_TO_EDGE streaks.
+    const wallMat = 1;
+    const floorMat = 1;
+    const ceilMat = 1;
     r.wallMat = wallMat; r.floorMat = floorMat; r.ceilMat = ceilMat;
     const archW = zone.architectureWeights || {dungeon:1};
     const archKeys = Object.keys(archW); const archTotal = archKeys.reduce((s,k)=>s+archW[k],0);
@@ -431,10 +434,10 @@ export async function generateDungeon(config, seedOverride = null) {
       const x=r.x+dx, y=r.y+dy; if(x<0||y<0||x>=w||y>=h)continue; const i=idx(x,y);
       if(grid[i]!==GRID_FLOOR) grid[i]=r.wallMat;
     }
-    // Paint stair wall segments for entrance and exit rooms using stored stairWall metadata
+    // Paint stair wall segments - Task 3 single material: force 1 to avoid atlas overflow streaks
     if(r.stairWall){
       const sw = r.stairWall;
-      const stairMat = r.role === "exit" ? STAIRS_MATERIAL_ID : 1; // exit uses distinct material, entrance uses standard (or could differentiate further in future)
+      const stairMat = 1; // was STAIRS_MATERIAL_ID=2 which caused CLAMP_TO_EDGE streaks at exit
       if (sw.edge === "north" || sw.edge === "south") {
         const y = sw.y1;
         for (let x = sw.x1; x <= sw.x2; x++) { if (x>0 && x<w-1 && y>0 && y<h-1) { const ii=idx(x,y); if(grid[ii]!==GRID_FLOOR) grid[ii]=stairMat; } }

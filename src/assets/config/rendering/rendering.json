@@ -1,0 +1,45 @@
+{
+  "version": 1,
+  "resolution": "640x360",
+  "fov": 1,
+  "textureFilter": "nearest",
+  "eye": {
+    "height": 0.5,
+    "playerHeightFactor": 0.15,
+    "horizon": 0.5,
+    "note": "eye.height = camera Z above floor. playerHeightFactor blends floor height: eyeZ = height + floorH*playerHeightFactor"
+  },
+  "surface": {
+    "floorAlbedoMul": 0.7,
+    "ceilAlbedoMul": 0.8,
+    "wallDarkenSide": 0.85,
+    "note": "wallDarkenSide multiplies albedo for Y-facing walls (side==1) for ambient directionality"
+  },
+  "geometry": {
+    "floorBaseline": 0,
+    "ceilBaseline": 1,
+    "wallThreshold": 0.5,
+    "heightClamp": {
+      "min": -0.6,
+      "max": 0.6,
+      "ceilMin": 0.4,
+      "ceilMax": 2.2
+    },
+    "note": "floorBaseline/ceilBaseline fallback when map tex missing"
+  },
+  "canvas": {
+    "baseWidth": 640,
+    "baseHeight": 360,
+    "scaleMode": "contain"
+  },
+  "toggles": {
+    "gridDebugDefault": false,
+    "lightingDefault": true,
+    "pbrDefault": true,
+    "pomDefault": true,
+    "fogDefault": true,
+    "chamferDefault": true,
+    "cornerDefault": true,
+    "note": "Runtime defaults, toggled with keys 1-8"
+  }
+}

@@ -1,0 +1,23 @@
+{
+  "version": 1,
+  "maxSteps": 64,
+  "shadowSteps": 64,
+  "epsilon": 0.0001,
+  "nearClip": 0.0001,
+  "farClip": 100,
+  "wallThreshold": 0.5,
+  "encoding": {
+    "floorOffset": 0.5,
+    "ceilOffset": 0.7,
+    "note": "Map texture G = floorH + floorOffset *255, B = (ceilH - ceilOffset)*255. Decode: fh = G-0.5, ch = B/255+0.7"
+  },
+  "fallback": {
+    "floorHeight": 0,
+    "ceilHeight": 1.15,
+    "note": "When DDA misses (out of bounds), use fallback heights for floor/ceiling plane intersect"
+  },
+  "refinement": {
+    "steps": 3,
+    "note": "Floor/ceiling height refined by sampling mapTex 3 times along ray"
+  }
+}
