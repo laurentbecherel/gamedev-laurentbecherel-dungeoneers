@@ -108,12 +108,18 @@ float GeometrySmith(vec3 N, vec3 V, vec3 L, float roughness){
 vec3 fresnelSchlick(float cosTheta, vec3 F0){ return F0 + (1.0-F0)*pow(clamp(1.0-cosTheta,0.0,1.0),5.0); }
 
 vec2 pomOffset(sampler2D heightMap, vec2 uv, vec3 viewTS, float strength, int steps) {
-  // Fix: height = elevation (grout low ~0.08-0.28, brick/pavé high ~0.6-0.8).
-  // Adding delta along viewTS extrudes pavé outward (correct), subtracting inverts.
+  // Centered reference plane: 0.5 / 128 = 0 displacement.
+  // <0.5 = intrude (grout/crack), >0.5 = extrude (brick/pavé).
+  // This fixes "floating floor": previously a flat grey 0.5 tex would march 50%
+  // of max parallax and make the whole floor look elevated.
+  if (strength <= 0.00001) return vec2(0.0);
   float layerDepth = 1.0 / float(steps);
+  float vz = max(viewTS.z, 0.0001);
+  vec2 fullOffset = viewTS.xy * strength / vz;
+  vec2 delta = fullOffset / float(steps);
+  // Start half-strength behind so that height=0.5 (flat) lands at 0 offset
+  vec2 curUV = uv - fullOffset * 0.5;
   float curDepth = 0.0;
-  vec2 delta = viewTS.xy * strength / float(steps) / max(viewTS.z,0.0001);
-  vec2 curUV = uv;
   float height = texture(heightMap, curUV).r;
   for (int i = 0; i < 32; i++) {
     if (i >= steps) break;
