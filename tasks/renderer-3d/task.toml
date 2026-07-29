@@ -48,5 +48,5 @@ screenshots = [
 videos = []
 teaser = ""
 base-commit-hash = "257c6e289e0558bb40963326673d1f2ad25c1e4d"
-commit-hash = "e6f6abcbb6b2c45005219f215c26066a11d198e1"
+commit-hash = "c2e768d67d55a8ce6fc6df7916070c8be23885ec"
 avocado-model = "Muse Spark 1.1"
