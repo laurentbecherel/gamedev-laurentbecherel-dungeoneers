@@ -7,7 +7,7 @@
   "radius": 0.28,
   "height": 0.5,
   "gridMode": true,
-  "gridMoveSpeed": 5.0,
+  "gridMoveSpeed": 5,
   "gridTurnSpeed": 6.5,
   "gridHoldInitialDelay": 0.18,
   "gridHoldRepeatDelay": 0.06,
@@ -16,13 +16,33 @@
     "ampY": 0.025,
     "ampX": 0.015,
     "ampRollDeg": 0.6,
-    "freq": 9.0,
-    "speedScale": 1.0,
+    "freq": 9,
+    "speedScale": 1,
     "presets": {
-      "subtle": { "ampY": 0.012, "ampX": 0.008, "ampRollDeg": 0.3, "freq": 7.5 },
-      "default": { "ampY": 0.025, "ampX": 0.015, "ampRollDeg": 0.6, "freq": 9.0 },
-      "heavy": { "ampY": 0.045, "ampX": 0.028, "ampRollDeg": 1.2, "freq": 10.5 },
-      "disabled": { "ampY": 0, "ampX": 0, "ampRollDeg": 0, "freq": 0 }
+      "subtle": {
+        "ampY": 0.012,
+        "ampX": 0.008,
+        "ampRollDeg": 0.3,
+        "freq": 7.5
+      },
+      "default": {
+        "ampY": 0.025,
+        "ampX": 0.015,
+        "ampRollDeg": 0.6,
+        "freq": 9
+      },
+      "heavy": {
+        "ampY": 0.045,
+        "ampX": 0.028,
+        "ampRollDeg": 1.2,
+        "freq": 10.5
+      },
+      "disabled": {
+        "ampY": 0,
+        "ampX": 0,
+        "ampRollDeg": 0,
+        "freq": 0
+      }
     }
   },
   "collision": {
@@ -31,9 +51,19 @@
     "note": "Circle 8-point vs AABB per wall cell, grid mode checks target tile only"
   },
   "light": {
-    "intensity": 1.8,
-    "radius": 4.5,
-    "color": [1, 0.9, 0.7],
-    "height": 0.45
+    "enabled": true,
+    "intensity": 1,
+    "radius": 5,
+    "color": [
+      1,
+      1,
+      1
+    ],
+    "height": 0.5,
+    "noShadow": true,
+    "breatheSpeed": 0.1,
+    "breatheAmount": 0.1,
+    "breatheSpeed2": 0.11,
+    "breatheAmount2": 0.02
   }
 }
