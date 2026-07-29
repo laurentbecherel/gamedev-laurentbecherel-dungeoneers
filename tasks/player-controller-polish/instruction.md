@@ -104,18 +104,65 @@ Config must include `bob.presets` map:
 
 Editor loads generic JSON, so presets are editable without code. Player must have `setBobParams(p)` merging and `setViewBobEnabled(v)`.
 
-## 5. Input System — Keyboard + Mouse + Hold/Repeat + Buffer
+## 5. Input System — Keyboard + Mouse + Hold/Repeat + Buffer + Layout-Agnostic Best Practice
 
-Rewrite `systems/input.js` to match prototype `mygame/src/systems/input.js`:
+Rewrite `systems/input.js` to match prototype `mygame/src/systems/input.js` but fix its AZERTY bug — Task 3 used `e.key.toLowerCase()` which breaks on French keyboards. **Must use `event.code` (physical key position), not `event.key` (layout-dependent char).**
+
+### 5a. Keyboard Layout Agnostic — Why `code` not `key`
+
+Problem observed:
+
+- French AZERTY: W position = Z key, A position = Q key, numbers 1-8 produce `&é"'(-è_ç` without Shift, need Shift for digits. Task 3 checks `key==='w'` / `key==='1'` fails for AZERTY users who must press Z for forward and Shift+1 for debug toggle 1.
+- Best practice for games: **muscle memory is positional, not character-based**. A French player expects ZQSD to behave like WASD because fingers sit on same physical keys. Using `code` achieves this automatically: physical W key reports `code="KeyW"` on both QWERTY (char 'w') and AZERTY (char 'z'). Checking `code` makes ZQSD work natively without special casing.
+
+Rules for all keybinds in this task (and retroactively for 1-8/R/M/G/V/B):
+
+- Listen to `keydown/keyup` and store `e.code` strings, not `e.key`. Keep `Set` / map of active codes e.g. `pressedCodes`.
+- For gameplay actions, map to physical codes:
+  - Forward: `KeyW` (covers W QWERTY + Z AZERTY) — **do not** check `key==='w'` only
+  - Back: `KeyS` (same char in both layouts) — code `KeyS`
+  - Strafe Left: `KeyA` (covers A QWERTY + Q AZERTY)
+  - Strafe Right: `KeyD` (same)
+  - Turn Left / Right: `KeyQ` (covers Q QWERTY + A AZERTY? actually QWERTY Q = AZERTY A) + `KeyE`, plus `ArrowLeft` / `ArrowRight` as fallback, plus `KeyA`/`KeyD` duplicates? Keep Q/E primary as turn to avoid conflict with strafe, but support both QWERTY and AZERTY by checking both `KeyQ` and `KeyA` for turn-left.
+  - To be robust, accept **both layouts explicitly**: `forward = KeyW OR KeyZ ?` No — best dual approach: accept physical position AND French logical position by checking both `KeyW` and `KeyZ`? Actually `KeyZ` physical is W? Let's define: On AZERTY, physical `KeyW` is Z key, but physical `KeyZ` is W key? Wait QWERTY bottom row X C V B... top row QWERTYUIOP, second row ASDF. AZERTY top row AZERTYUIOP, second row QSDF. So mapping: QWERTY W <=> AZERTY Z (both `KeyW`), QWERTY A <=> AZERTY Q (both `KeyA`), QWERTY Z <=> AZERTY W (both `KeyZ`), QWERTY Q <=> AZERTY A (both `KeyQ`). So if French player expects ZQSD = W forward is `KeyW` (Z), Q left is `KeyA` (Q), S back is `KeyS` (S), D right is `KeyD` (D) — that's already ZQSD via `KeyWASD` codes. So checking `KeyW/A/S/D` alone satisfies ZQSD natively. **But** some French players mentally remap to ZQSD letters, they might press physical `KeyZ` (W) expecting forward? That would be confusion. Safest: accept **both** physical WASD and physical ZQSD positions as same action. That is: forward = `KeyW` OR `KeyZ`? No that double counts. Let's specify: implement helper `isForward()` that returns true if `code===KeyW` (W position = Z on AZERTY) OR `code===ArrowUp`. But also accept `code===KeyZ` as courtesy for QWERTY player on AZERTY keyboard who presses W physical (which is `KeyZ`) ? Actually that case is QWERTY player looking for W char but keyboard is AZERTY — they'd press physical `KeyZ` (W char). If we only accept `KeyW`, they'd fail. So accept **both** `KeyW` and `KeyZ` for forward? Then forward = `KeyW` or `KeyZ`. Let's define explicit mapping table and require it in code.
+
+Recommended mapping to cover QWERTY + AZERTY + arrows with no extra config:
+
+```
+forward:  KeyW, KeyZ, ArrowUp
+back:     KeyS, ArrowDown
+strafeLeft: KeyA, KeyQ
+strafeRight: KeyD
+turnLeft: KeyQ, KeyA? careful conflict — decide: turn left = KeyQ (QWERTY Q = AZERTY A) OR ArrowLeft
+turnRight: KeyE, ArrowRight
+action keys: KeyR, KeyM, KeyG, KeyV, KeyB, Digit0-8 — via code
+```
+
+Because strafeLeft already uses KeyA/KeyQ, turn should **not** reuse same codes in same mode to avoid double action. Resolution: In grid mode, A/D = strafe left/right, Q/E = turn left/right. So turn left = `KeyQ` OR `KeyA`? That conflicts with strafe left = KeyA. So keep distinct: strafe = A/D (`KeyA`/`KeyD`), turn = Q/E (`KeyQ`/`KeyE`). For AZERTY coverage, also accept: strafe left alternative = `KeyQ` (physical Q position = A on AZERTY already covered? Actually physical Q = `KeyQ` = A char on AZERTY, physical A = `KeyA` = Q char. So A position has two codes `KeyA` (Q char) and Q position has `KeyQ` (A char). If we want to support both mental models, accept both `KeyA` and `KeyQ` for strafe-left, but then turn-left conflicts. Trade-off: in grid mode, keep strafe = A/D only (codes `KeyA`/`KeyD`), turn = Q/E (`KeyQ`/`KeyE`). On AZERTY, that means strafe left = physical A position (Q char) = `KeyA`, strafe right = `KeyD`, turn left = physical Q position (A char) = `KeyQ`, turn right = `KeyE`. So player uses QAD E? That's QSDE on AZERTY physically? Let's think: AZERTY keyboard labeling: row2: Q S D F... So physical positions: `KeyA` is Q label, `KeyS` is S, `KeyD` is D, `KeyQ` is A label. So our assignment results in: AZERTY user presses Q(=KeyA) to strafe left, S to back, D to strafe right, A(=KeyQ) to turn left, E to turn right. That's not ZQSD but QSD + A/E. Acceptable but confusing. Better to also add `KeyW`/`KeyZ` dual.
+
+To simplify and satisfy prompt "ZQSD works": **Accept both `KeyW` and `KeyZ` as forward, both `KeyA` and `KeyQ` as left**. Implementation must have a central `CODE_MAP` from logical action to array of codes, checked via `some(code in pressedSet)`. Comment mapping in code explaining AZERTY.
+
+For number row 1-8 debug: Use `Digit1`...`Digit8` codes, not `key==='1'`. Must also accept `Numpad1`... fallback. On AZERTY, Digit1 physical produces `&` char but code still `Digit1`, so toggle works without Shift. Playwright tests should use `page.keyboard.press('Digit1')` not `'1'`.
+
+For +/- zoom (if implemented): use `Equal`, `Minus`, `NumpadAdd`, `NumpadSubtract` codes, plus `Digit` with shift variants?
+
+General best practice to document:
+
+- Use `code` for all gameplay, never `key` for actions. `key` only for text input in editor or chat.
+- Normalize to uppercase codes (`KeyW`) — not locale strings.
+- Store active codes in Set, clear on blur/visibility change to avoid stuck keys.
+- Provide `isDown(codeOrArray)` helper that checks Set.
+- Provide mapping config future-proof: action -> codes array, persisted as codes.
+- Tests must simulate `code` presses.
 
 - Constructor takes `canvas` element for pointer-lock binding.
-- Tracks `keys` map code->bool, `prevKeys` for `justPressed`, `mouseDX/DY` accumulated while pointerLocked.
+- Tracks `pressedCodes` Set of `code` strings, `prevCodes` Set for `justPressed`, `mouseDX/DY` accumulated while pointerLocked.
 - Bindings:
   - `click` on canvas -> `canvas.requestPointerLock()`
   - `pointerlockchange` -> update `pointerLocked` bool
   - `mousemove` -> if locked, accumulate movementX/Y
   - `contextmenu` preventDefault, `Escape` exits pointer lock.
-  - `keydown/keyup` listening to `code` (KeyW/A/S/D/Q/E + ArrowUp/Down/Left/Right).
+  - `keydown/keyup` listening to `e.code` (KeyW/A/S/D/Z/Q, KeyQ/E, Digit1-8, KeyR/M/G/V/B, Arrow keys, Equal/Minus/Numpad).
 - Hold-to-repeat for grid mode:
   - `_hold = {f,b,ls,rs,tl,tr}` timers seconds key held.
   - `_holdInitial` 0.18s first repeat, `_holdRepeat` 0.06s subsequent, overridable from player config `gridHoldInitialDelay/Repeat`.
@@ -124,7 +171,7 @@ Rewrite `systems/input.js` to match prototype `mygame/src/systems/input.js`:
   - Determine gridMode from `player.gridMode` (not DOM element). Optionally still support legacy checkbox id gridMode if present.
   - Consume `mouseDX` reset to 0 each frame.
   - If gridMode:
-    - Compute down states: W/ArrowUp=F, S/ArrowDown=B, A=LS, D=RS, Q/ArrowLeft=TL, E/ArrowRight=TR. Compute justPressed via edge.
+    - Compute down states via `isCodeDown(['KeyW','KeyZ','ArrowUp']) = F`, `KeyS/ArrowDown = B`, `KeyA,KeyQ = LS`, `KeyD = RS`, `KeyQ,ArrowLeft = TL` (note conflict handling — if LS already uses KeyQ, disambiguate: allow both but prioritize move vs turn via order check; or make TL = KeyQ only when not pressing strafe modifier; simplest: TL = KeyQ AND ArrowLeft, LS = KeyA only, document that on AZERTY TL = A label (KeyQ) and LS = Q label (KeyA)). Propose final non-conflicting mapping that works both layouts: F=`KeyW|KeyZ|ArrowUp`, B=`KeyS|ArrowDown`, LS=`KeyA`, RS=`KeyD`, TL=`KeyQ|ArrowLeft`, TR=`KeyE|ArrowRight`. This maps AZERTY to: Z forward, S back, Q strafe left (KeyA), D strafe right, A turn left (KeyQ), E turn right — matches ZQSD + AE for turn. Acceptable compromise, comment in code why. Compute justPressed via edge.
     - Immediate edge actions: on justPressed, try corresponding `player.tryGridMoveWithMap` / `tryGridTurn`. If succeeds set hold=0 clear buffer act=true. If fails because busy (lerp<1), queue buffer.
     - Increment hold timers for down keys.
     - Expire buffer after 0.3s.
@@ -132,10 +179,16 @@ Rewrite `systems/input.js` to match prototype `mygame/src/systems/input.js`:
     - If idle and no buffer and no edge act, try hold repeat: if down duration >= holdInitial, attempt move/turn, on success set timer to `initial - repeat` to cadence tile-by-tile.
     - Call `player.setInput(0,0,0,0)` then `player.update(dt,map)`.
   - Else free mode:
-    - forward = (W/Up)-(S/Down), strafe = D-A, turn = E-Q (+ arrows fallback).
+    - forward = (W/Z/Up)-(S/Down), strafe = D-(A/Q), turn = (E/Right)-(Q/Left) with separate turn vs strafe as per mode? In free mode Q/E turn, A/D strafe; keep same as grid for consistency but allow both.
     - Normalize forward+strafe diagonal <=1.
     - `player.setInput(forward, strafe, turn, mouseDX)` then `player.update(dt,map)`.
-  - Store prevKeys copy for next edge detection.
+  - Store prevCodes copy for next edge detection. Handle blur: on `visibilitychange` or `blur` clear pressed set to avoid stuck.
+
+Include in code comment header explaining `code` vs `key` best practice and AZERTY mapping.
+
+### 5b. Playwright + E2E Layout Safety
+
+E2E tests should press codes, not characters: `await page.keyboard.press('KeyW')` not `'w'`, and `Digit1` not `'1'`. Document that.
 
 ## 6. Config — player.json Schema Expansion
 
@@ -219,25 +272,27 @@ All `npm run test:unit` + `test:e2e` must pass.
 
 ## 10. Acceptance Criteria
 
-- [ ] `src/entities/player.js` implements dual mode: `gridMode`, `gridTargetX/Y/Angle`, `gridFacing`, `moveLerp/turnLerp`, `gridMoveSpeed/TurnSpeed`, `tryGridMoveWithMap` + `tryGridTurn` with wall check blocking and busy rejection, free mode WASD/QE+mouse delta, slide collision 8-point, `setGridMode` snapping, `setPosition` resetting lerp+phase, view bob figure-8 with `ampY/ampX/ampRoll/freq` + `bobAmount` decay + presets + `setViewBobEnabled`/`setBobParams`/`getViewBobState`.
-- [ ] `src/systems/input.js` rewrites to accept canvas, tracks keys + prevKeys, `mouseDX/DY` accumulate only when pointerLocked, `pointerLock` click handler, `isDown`/`justPressed`, hold timers `_hold` initial 0.18 repeat 0.06 overridable, buffer `_buffer` age 0.3s timeout for early tap chaining, `update(dt,player,map)` implements grid edge->immediate + buffer->hold-repeat logic and free continuous normalized input plus mouseDX passing.
+- [ ] `src/entities/player.js` implements dual mode: `gridMode`, `gridTargetX/Y/Angle`, `gridFacing`, `moveLerp/turnLerp`, `gridMoveSpeed/TurnSpeed`, `tryGridMoveWithMap` + `tryGridTurn` with wall check blocking and busy rejection, free mode WASD/ZQSD + QE + mouse delta, slide collision 8-point, `setGridMode` snapping, `setPosition` resetting lerp+phase, view bob figure-8 with `ampY/ampX/ampRoll/freq` + `bobAmount` decay + presets + `setViewBobEnabled`/`setBobParams`/`getViewBobState`.
+- [ ] `src/systems/input.js` rewrites to accept canvas, tracks **codes** (`pressedCodes` Set of `e.code`) + prevCodes, not `e.key`, `mouseDX/DY` accumulate only when pointerLocked, `pointerLock` click handler, `isDown(codesArray)` / `justPressed`, hold timers `_hold` initial 0.18 repeat 0.06 overridable, buffer `_buffer` age 0.3s timeout for early tap chaining, `update(dt,player,map)` implements grid edge->immediate + buffer->hold-repeat logic and free continuous normalized input plus mouseDX passing, blur/visibilitychange clears stuck keys.
+- [ ] Keyboard layout agnostic: movement uses `code` — forward = `KeyW` OR `KeyZ` OR `ArrowUp`, back = `KeyS` OR `ArrowDown`, left strafe = `KeyA` OR `KeyQ`, right = `KeyD`, turn left = `KeyQ` OR `ArrowLeft`, turn right = `KeyE` OR `ArrowRight`. Debug toggles use `Digit1`-`Digit8` codes (not key '1'), G/V/B/R/M use `KeyG` etc. This makes ZQSD work on AZERTY and 1-8 work without Shift. Header comment explains `code` vs `key` best practice and AZERTY mapping table.
 - [ ] `src/assets/config/gameplay/player.json` version 2 with fields: moveSpeed, strafeSpeed, turnSpeed, mouseSensitivity, radius, height, gridMode, gridMoveSpeed, gridTurnSpeed, gridHoldInitialDelay, gridHoldRepeatDelay, viewBobEnabled, bob{ampY,ampX,ampRollDeg,freq,speedScale,presets{subtle,default,heavy,disabled}}, collision, light. Loaded via `getPlayerConfig()`/`getAllRenderConfigs()`.
-- [ ] `src/core/game.js` wires `new Input(canvas)`, `input.update(dt,player,dungeon)`, handles G grid toggle and V/B bob toggle with HUD timeout, passes bob offsets to renderer (at least offset applied, observable canvas change walking ON vs OFF).
+- [ ] `src/core/game.js` wires `new Input(canvas)`, `input.update(dt,player,dungeon)`, handles G grid toggle and V/B bob toggle with HUD timeout, passes bob offsets to renderer (at least offset applied, observable canvas change walking ON vs OFF). Game keys use `code` (e.g. `e.code==='KeyG'`) not `key==='g'`, to avoid AZERTY mismatch.
 - [ ] Mouse look works: click canvas requests pointer lock (no error), mouse movement rotates view in free mode only, ESC exits lock (browser default).
-- [ ] No console errors on load, WebGL2 path still works, existing toggles R/M/1-8 preserved.
+- [ ] No console errors on load, WebGL2 path still works, existing toggles R/M/1-8 preserved and work on AZERTY (pressing `&` position = `Digit1` code still triggers toggle 1).
 - [ ] No hardcoded movement numbers in player.js — all resolved from config with fallbacks.
-- [ ] Tests pass: `player.test.js` covers spawn, grid move/block/lerp/facing, free slide, mode toggle snap, bob enabled/disabled/figure-8, 8-point collision, config alias. E2E verifies movement, G/V toggles + HUD, pointer-lock click no error, editor persistence.
+- [ ] Tests pass: `player.test.js` covers spawn, grid move/block/lerp/facing, free slide, mode toggle snap, bob enabled/disabled/figure-8, 8-point collision, config alias. E2E verifies movement via `KeyW`/`KeyZ` both, G/V toggles + HUD, pointer-lock click no error, editor persistence. E2E uses code presses (`Digit1`, `KeyW`) not character presses.
 - [ ] ES modules only, no emoji, no new runtime deps beyond Node built-ins.
 
 ## 11. Out of Scope
 
 - Full RPG trinity loop, characters/sprites, inventory — future tasks.
 - Chair bobbing head height animation for jumping/crouching — no jump yet.
-- Gamepad support, touch joystick.
+- Gamepad support, touch joystick, full rebindable key config UI (just document code-based mapping for now — rebind UI is Task 5 editor-complete).
 - Custom editor tabs per subsystem — editor-complete Task 5.
 - Rendering changes beyond applying bob offset; POM/chamfer/corner/palette debug remain Task 3.
 - Audio footstep sync (could play tick on bob phase in future but not now).
 - Multiplayer networking.
+- Text input fields (editor) still use `key` — only gameplay shortcuts must use `code`. This note avoids over-applying code rule to text entry.
 
 ## 12. Running Instructions
 
