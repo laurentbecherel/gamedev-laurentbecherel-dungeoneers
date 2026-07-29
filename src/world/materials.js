@@ -15,13 +15,20 @@ function heightToNormal(hL, hR, hU, hD, strength) {
   return [(nx * ilen * 0.5 + 0.5) * 255, (ny * ilen * 0.5 + 0.5) * 255, (nz * ilen * 0.5 + 0.5) * 255];
 }
 
-function genBrickTile(size, baseRGB, proc, seed) {
+function genBrickTile(size, baseRGB, proc, seed, matRough) {
   const hs = proc.heightScale ?? 1.15;
   const ns = proc.normalStrength ?? 1.15;
-  const aoB = proc.aoBoost ?? 1.1;
+  const aoB = proc.aoBoost ?? proc.aoStrength ?? 0.6;
+  const aoGrout = proc.aoGrout ?? 0.78;
+  const aoFace = proc.aoFace ?? 0.92;
+  const aoDomeAdd = proc.aoDomeBoost ?? proc.domeAOBoost ?? proc.domeAdd ?? 0.08;
+  const aoMin = proc.aoMin ?? 0.70;
   const gw = proc.groutWidth ?? 1;
   const ds = proc.domeStrength ?? 1.1;
   const ca = proc.crackAmount ?? 0.6;
+  const baseRough = matRough ?? proc.roughness ?? 0.72;
+  const roughVar = proc.roughnessVariation ?? proc.roughVar ?? 0.10;
+  const groutRoughAdd = proc.groutRoughAdd ?? 0.15;
   const brickW = 8, brickH = 8;
   const albedo = new Uint8Array(size * size * 4);
   const height = new Float32Array(size * size);
@@ -51,14 +58,26 @@ function genBrickTile(size, baseRGB, proc, seed) {
     h = Math.max(0, Math.min(1, (h - 0.5) * hs + 0.5));
     const idx = y * size + x;
     height[idx] = h;
-    const aobase = inGrout ? 0.42 : 0.72 + dome * 0.3;
-    ao[idx] = Math.max(0, Math.min(1, (aobase - 0.5) * aoB + 0.5));
+    // AO softened: 0.78 grout, 0.92 face -> 0.70 min, 1.0 max, contrast 0.6
+    const perBrickAOJitter = (hv - 0.5) * 0.04;
+    const microAO = (hash2(x + 17, y + 29, seed + 7) - 0.5) * 0.04;
+    const aobase = inGrout ? aoGrout : aoFace + dome * aoDomeAdd + perBrickAOJitter + microAO * 0.5;
+    ao[idx] = Math.max(aoMin, Math.min(1, (aobase - 0.5) * aoB + 0.5));
     const ai = idx * 4;
     albedo[ai] = Math.max(0, Math.min(255, r | 0));
     albedo[ai + 1] = Math.max(0, Math.min(255, g | 0));
     albedo[ai + 2] = Math.max(0, Math.min(255, b | 0));
     albedo[ai + 3] = 255;
-    rough[idx] = 217; // 0.85 * 255
+    // Roughness with variation
+    const perBrickRoughJitter = (hv - 0.5) * roughVar;
+    const microRough = (hash2(x, y, seed + 1337) - 0.5) * 0.06;
+    const microRough2 = (hash2(x * 2, y * 3, seed + 101) - 0.5) * 0.03;
+    const edgeRough = onEdge ? 0.03 : 0;
+    let roughV;
+    if (inGrout) roughV = baseRough + groutRoughAdd + microRough * 0.6 + edgeRough;
+    else roughV = baseRough + perBrickRoughJitter + microRough + microRough2 - dome * 0.18 + edgeRough;
+    roughV = Math.max(0.2, Math.min(0.95, roughV));
+    rough[idx] = Math.round(roughV * 255);
     metal[idx] = 0;
     const ei=idx*4; emiss[ei]=0; emiss[ei+1]=0; emiss[ei+2]=0; emiss[ei+3]=255;
   }
@@ -75,13 +94,20 @@ function genBrickTile(size, baseRGB, proc, seed) {
   return { albedo, normal, height, rough, metal, ao, emiss };
 }
 
-function genSlabTile(size, baseRGB, proc, seed, isCeil) {
+function genSlabTile(size, baseRGB, proc, seed, isCeil, matRough) {
   const hs = proc.heightScale ?? 1.15;
   const ns = proc.normalStrength ?? 1.15;
-  const aoB = proc.aoBoost ?? 1.1;
+  const aoB = proc.aoBoost ?? proc.aoStrength ?? 0.6;
+  const aoGrout = proc.aoGrout ?? 0.78;
+  const aoFace = proc.aoFace ?? (isCeil ? 0.94 : 0.92);
+  const aoDomeAdd = proc.aoDomeBoost ?? proc.domeAOBoost ?? 0.08;
+  const aoMin = proc.aoMin ?? 0.70;
   const bs = proc.blockSize ?? 8;
   const gw = proc.groutWidth ?? 1;
   const ds = proc.domeStrength ?? 1.1;
+  const baseRough = matRough ?? proc.roughness ?? (isCeil ? 0.82 : 0.78);
+  const roughVar = proc.roughnessVariation ?? proc.roughVar ?? 0.09;
+  const groutRoughAdd = proc.groutRoughAdd ?? 0.12;
   const albedo = new Uint8Array(size * size * 4);
   const height = new Float32Array(size * size);
   const ao = new Float32Array(size * size);
@@ -93,7 +119,6 @@ function genSlabTile(size, baseRGB, proc, seed, isCeil) {
     const bx = Math.floor(x / bs), by = Math.floor(y / bs);
     const lx = x % bs, ly = y % bs;
     const inGrout = lx < gw || lx >= bs - gw || ly < gw || ly >= bs - gw;
-    // pillowed dome to give 4-sided bevel per tile (like brick walls)
     const cx = bs / 2, cy = bs / 2;
     const dx = (lx - cx) / cx;
     const dy = (ly - cy) / cy;
@@ -108,14 +133,27 @@ function genSlabTile(size, baseRGB, proc, seed, isCeil) {
     h = Math.max(0, Math.min(1, (h - 0.5) * hs + 0.5));
     const idx = y * size + x;
     height[idx] = h;
-    const aoBase = inGrout ? 0.42 : 0.72 + dome * 0.35;
-    ao[idx] = Math.max(0, Math.min(1, (aoBase - 0.5) * aoB + 0.5));
+    const perBlockAOJitter = (hv - 0.5) * 0.03;
+    const microAO = (hash2(x + 11, y + 19, seed + 13) - 0.5) * 0.04;
+    const aoBase = inGrout ? aoGrout : aoFace + dome * aoDomeAdd + perBlockAOJitter + microAO * 0.5;
+    ao[idx] = Math.max(aoMin, Math.min(1, (aoBase - 0.5) * aoB + 0.5));
     const ai = idx * 4;
     albedo[ai] = Math.max(0, Math.min(255, r | 0));
     albedo[ai + 1] = Math.max(0, Math.min(255, g | 0));
     albedo[ai + 2] = Math.max(0, Math.min(255, b | 0));
     albedo[ai + 3] = 255;
-    rough[idx] = isCeil ? 230 : 224;
+    // Roughness variation per tile + micro
+    const perBlockRoughJitter = (hv - 0.5) * roughVar;
+    const microRough = (hash2(x, y, seed + 2041) - 0.5) * 0.07;
+    let roughV;
+    if (inGrout) roughV = baseRough + groutRoughAdd + microRough * 0.5;
+    else {
+      // center more polished, edges rougher
+      const edgeDist = Math.max(Math.abs(dx), Math.abs(dy));
+      roughV = baseRough + perBlockRoughJitter + microRough + edgeDist * 0.08 - dome * 0.15;
+    }
+    roughV = Math.max(0.25, Math.min(0.95, roughV));
+    rough[idx] = Math.round(roughV * 255);
     metal[idx] = 0;
     const ei=idx*4; emiss[ei]=0; emiss[ei+1]=0; emiss[ei+2]=0; emiss[ei+3]=255;
   }
@@ -150,12 +188,14 @@ export function generateMaterialAtlases(wallMats, floorMats, ceilMats, procConfi
       const mat = mats[mi];
       const seed = mat.variationSeed ?? (101 + mi);
       const base = mat.base ?? [128, 128, 128];
-      const roughVal = Math.round((mat.roughness ?? 0.85) * 255);
+      const roughValRaw = (mat.roughness ?? proc.roughness ?? 0.72);
+      const roughVal = Math.round((typeof roughValRaw === 'number' ? roughValRaw : 0.72) * 255);
       const metalVal = Math.round((mat.metal ?? 0) * 255);
       const emissStr = Math.round((mat.emissiveStrength ?? 0) * 255);
       const emissCol = mat.emissiveColor ?? [0, 0, 0];
-      const tile = type === 'brick' ? genBrickTile(texSize, base, proc, seed)
-        : genSlabTile(texSize, base, proc, seed, type === 'ceils');
+      const tile = type === 'brick'
+        ? genBrickTile(texSize, base, proc, seed, roughValRaw)
+        : genSlabTile(texSize, base, proc, seed, type === 'ceils', roughValRaw);
       const ox = mi * texSize;
       for (let y = 0; y < texSize; y++) for (let x = 0; x < texSize; x++) {
         const si = y * texSize + x;
@@ -166,8 +206,11 @@ export function generateMaterialAtlases(wallMats, floorMats, ceilMats, procConfi
         const sni = si * 4, dni = di * 4;
         normal[dni] = tile.normal[sni]; normal[dni + 1] = tile.normal[sni + 1]; normal[dni + 2] = tile.normal[sni + 2]; normal[dni + 3] = 255;
         height[di] = Math.round(tile.height[si] * 255);
-        roughMetalAO[dai] = tile.rough[si] || roughVal;
-        roughMetalAO[dai + 1] = tile.metal[si] || metalVal;
+        // FIX: old "|| roughVal" caused 217 to always win, ignoring JSON config
+        const sr = tile.rough[si];
+        roughMetalAO[dai] = (sr !== undefined && sr !== 0) ? sr : roughVal;
+        const sm = tile.metal[si];
+        roughMetalAO[dai + 1] = (sm !== undefined) ? sm : metalVal;
         roughMetalAO[dai + 2] = emissStr;
         roughMetalAO[dai + 3] = Math.round(tile.ao[si] * 255);
       }

@@ -51,6 +51,18 @@
       -0.7
     ]
   },
+  "pbr": {
+    "ao": {
+      "affectSun": 0.25,
+      "affectPoint": 0.35,
+      "affectAmbient": 1,
+      "note": "0 = AO ignores this light, 1 = full AO darkness. Mix: mix(1, ao, affect)"
+    },
+    "roughness": {
+      "clampMin": 0.2,
+      "clampMax": 0.95
+    }
+  },
   "ui": {
     "map": {
       "position": "fullscreen",
@@ -64,25 +76,55 @@
     "walls": {
       "heightScale": 1.15,
       "normalStrength": 1.15,
-      "roughness": 0.85,
+      "roughness": 0.72,
+      "roughnessVariation": 0.1,
+      "groutRoughAdd": 0.15,
       "metal": 0,
-      "aoStrength": 0.7,
+      "aoStrength": 0.6,
+      "aoBoost": 0.6,
+      "aoGrout": 0.78,
+      "aoFace": 0.92,
+      "aoDomeBoost": 0.08,
+      "aoMin": 0.7,
+      "groutWidth": 1,
+      "domeStrength": 1.1,
+      "crackAmount": 0.6,
       "emissive": 0
     },
     "floors": {
       "heightScale": 0.8,
       "normalStrength": 0.9,
-      "roughness": 0.88,
+      "roughness": 0.78,
+      "roughnessVariation": 0.09,
+      "groutRoughAdd": 0.12,
       "metal": 0,
       "aoStrength": 0.6,
+      "aoBoost": 0.6,
+      "aoGrout": 0.8,
+      "aoFace": 0.93,
+      "aoDomeBoost": 0.07,
+      "aoMin": 0.72,
+      "blockSize": 8,
+      "groutWidth": 1,
+      "domeStrength": 1.1,
       "emissive": 0
     },
     "ceils": {
       "heightScale": 0.6,
       "normalStrength": 0.8,
-      "roughness": 0.9,
+      "roughness": 0.82,
+      "roughnessVariation": 0.08,
+      "groutRoughAdd": 0.1,
       "metal": 0,
-      "aoStrength": 0.5,
+      "aoStrength": 0.55,
+      "aoBoost": 0.55,
+      "aoGrout": 0.82,
+      "aoFace": 0.95,
+      "aoDomeBoost": 0.05,
+      "aoMin": 0.75,
+      "blockSize": 8,
+      "groutWidth": 1,
+      "domeStrength": 1,
       "emissive": 0
     }
   },

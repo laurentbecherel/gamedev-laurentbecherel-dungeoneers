@@ -64,6 +64,10 @@ uniform int   u_pbrEnabled;
 uniform int   u_pomEnabled;
 uniform int   u_pbrDebugMode; // 0=off,1=albedo,2=normal raw,3=world normal,4=height,5=rough,6=metal,7=AO,8=emissive
 
+uniform float u_aoSun;
+uniform float u_aoPoint;
+uniform float u_aoAmbient;
+
 const float PI = 3.14159265;
 
 vec2 atlasUV(float matId, vec2 uv, float atlasW, float texS) {
@@ -162,6 +166,11 @@ vec3 pbrShade(vec3 albedo, vec3 N, float rough, float metal, float ao, vec3 emis
   if (u_lightingEnabled == 0) {
     return albedo;
   }
+  // AO influence factors from config pbr.ao.{affectSun,affectPoint,affectAmbient}
+  // mix(1, ao, affect) => 0=ignore AO, 1=full AO
+  float aoSunEff = mix(1.0, ao, clamp(u_aoSun, 0.0, 1.0));
+  float aoPointEff = mix(1.0, ao, clamp(u_aoPoint, 0.0, 1.0));
+  float aoAmbEff = mix(1.0, ao, clamp(u_aoAmbient, 0.0, 1.0));
   // --- Shadow bias fix for acne artifacts ---
   // Use a snapped geometric normal for the bias origin so brick normal-map jitter
   // does not cause per-pixel DDA path changes (the black brick-grid speckles).
@@ -185,7 +194,7 @@ vec3 pbrShade(vec3 albedo, vec3 N, float rough, float metal, float ao, vec3 emis
     vec2 shadowOriginSun = worldPos.xy + traceN.xy * 0.10 + shadowDirSun * 0.06;
     if (length(shadowDirSun) > 0.01 && traceRay(shadowOriginSun, shadowDirSun, 20.0)) sunShadow = 0.25;
     float NdotLsun = max(dot(N, Lsun), 0.0);
-    vec3 sunContrib = albedo * u_sunColor * u_sunIntensity * NdotLsun * sunShadow;
+    vec3 sunContrib = albedo * u_sunColor * u_sunIntensity * NdotLsun * sunShadow * aoSunEff;
 
     vec3 Lp = u_lightPos - worldPos;
     float distp = length(Lp);
@@ -198,9 +207,9 @@ vec3 pbrShade(vec3 albedo, vec3 N, float rough, float metal, float ao, vec3 emis
       vec2 so = worldPos.xy + traceN.xy * 0.10 + sd * 0.06;
       if (length(sd) > 0.01 && traceRay(so, sd, distp - 0.1)) shadow = 0.15;
       float NdotLp = max(dot(N, LpN), 0.0);
-      pointContrib = albedo * u_lightColor * u_lightIntensity * atten * NdotLp * shadow;
+      pointContrib = albedo * u_lightColor * u_lightIntensity * atten * NdotLp * shadow * aoPointEff;
     }
-    vec3 ambient = u_ambientColor * albedo * u_ambientLevel * u_worldAmbientMul * ao;
+    vec3 ambient = u_ambientColor * albedo * u_ambientLevel * u_worldAmbientMul * aoAmbEff;
     return ambient + sunContrib + pointContrib + emissive;
   }
   vec3 F0 = mix(vec3(0.04), albedo, metal);
@@ -224,7 +233,7 @@ vec3 pbrShade(vec3 albedo, vec3 N, float rough, float metal, float ao, vec3 emis
     vec3 specular = numerator / denominator;
     vec3 kS = F; vec3 kD = vec3(1.0) - kS; kD *= 1.0 - metal;
     float NdotL = max(dot(N, Lsun), 0.0);
-    Lo += (kD * albedo / PI + specular) * u_sunColor * u_sunIntensity * NdotL * sunShadow;
+    Lo += (kD * albedo / PI + specular) * u_sunColor * u_sunIntensity * NdotL * sunShadow * aoSunEff;
   }
   vec3 L = u_lightPos - worldPos;
   float dist = length(L);
@@ -246,9 +255,9 @@ vec3 pbrShade(vec3 albedo, vec3 N, float rough, float metal, float ao, vec3 emis
     vec3 specular = numerator / denominator;
     vec3 kS = F; vec3 kD = vec3(1.0) - kS; kD *= 1.0 - metal;
     float NdotL = max(dot(N, L), 0.0);
-    Lo += (kD * albedo / PI + specular) * u_lightColor * u_lightIntensity * atten * NdotL * shadow * ao;
+    Lo += (kD * albedo / PI + specular) * u_lightColor * u_lightIntensity * atten * NdotL * shadow * aoPointEff;
   }
-  vec3 ambient = u_ambientColor * albedo * u_ambientLevel * u_worldAmbientMul * ao;
+  vec3 ambient = u_ambientColor * albedo * u_ambientLevel * u_worldAmbientMul * aoAmbEff;
   vec3 color = ambient + Lo + emissive;
   return color;
 }

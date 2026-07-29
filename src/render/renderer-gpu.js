@@ -159,7 +159,8 @@ export class GPURenderer {
       'u_sunDir','u_sunDirZ','u_sunIntensity','u_sunColor',
       'u_fogBase','u_fogSquared','u_fogColor','u_fogEnabled',
       'u_pomWall','u_pomFloor','u_pomCeil','u_pomSteps','u_authentic','u_bandLevels','u_time',
-      'u_gridDebug','u_lightingEnabled','u_pbrEnabled','u_pomEnabled','u_pbrDebugMode'];
+      'u_gridDebug','u_lightingEnabled','u_pbrEnabled','u_pomEnabled','u_pbrDebugMode',
+      'u_aoSun','u_aoPoint','u_aoAmbient'];
     names.forEach(n => ul[n] = gl.getUniformLocation(p, n));
 
     // quantize uniforms
@@ -370,6 +371,12 @@ export class GPURenderer {
     if (ul.u_pbrEnabled) gl.uniform1i(ul.u_pbrEnabled, this.pbrEnabled ? 1 : 0);
     if (ul.u_pomEnabled) gl.uniform1i(ul.u_pomEnabled, this.pomEnabled ? 1 : 0);
     if (ul.u_pbrDebugMode) gl.uniform1i(ul.u_pbrDebugMode, this.pbrDebugMode);
+    // AO influence config: pbr.ao { affectSun, affectPoint, affectAmbient }
+    const pbrCfg = cfg.pbr || {};
+    const aoCfg = pbrCfg.ao || {};
+    if (ul.u_aoSun) gl.uniform1f(ul.u_aoSun, aoCfg.affectSun ?? 0.25);
+    if (ul.u_aoPoint) gl.uniform1f(ul.u_aoPoint, aoCfg.affectPoint ?? 0.35);
+    if (ul.u_aoAmbient) gl.uniform1f(ul.u_aoAmbient, aoCfg.affectAmbient ?? 1.0);
     gl.uniform1i(ul.u_authentic, this.authentic ? 1 : 0);
     if (ul.u_bandLevels) gl.uniform1i(ul.u_bandLevels, this.bandLevels);
     gl.uniform1f(ul.u_time, timeSec);
