@@ -95,7 +95,8 @@ export class GPURenderer {
     gl.vertexAttribPointer(locUIUV, 2, gl.FLOAT, false, 16, 8);
     gl.bindVertexArray(null);
 
-    // load materials
+    // Task 3: single material only - 1 wall + 1 floor + 1 ceil (64x64, 18 textures)
+    // Use first material from JSON (ID 1). Generator must also only pick ID 1 (see themes.js)
     const walls = await getAsset('materials', 'walls');
     const floors = await getAsset('materials', 'floors');
     const ceils = await getAsset('materials', 'ceils');

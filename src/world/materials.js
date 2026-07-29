@@ -134,9 +134,11 @@ function genSlabTile(size, baseRGB, proc, seed, isCeil) {
 
 export function generateMaterialAtlases(wallMats, floorMats, ceilMats, procConfig) {
   const texSize = 64;
-  const wCount = Math.min(1, wallMats.length);
-  const fCount = Math.min(1, floorMats.length);
-  const cCount = Math.min(1, ceilMats.length);
+  // Task 3: single material only — 1 wall + 1 floor + 1 ceil = 64-wide atlases.
+  // Clamp to 1 to match Task 3 spec and avoid over-allocation.
+  const wCount = Math.min(1, wallMats.length || 1);
+  const fCount = Math.min(1, floorMats.length || 1);
+  const cCount = Math.min(1, ceilMats.length || 1);
 
   function packAtlas(mats, count, type, proc) {
     const w = texSize * count, h = texSize;
