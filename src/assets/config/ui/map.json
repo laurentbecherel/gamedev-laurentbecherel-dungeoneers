@@ -1,5 +1,11 @@
 {
   "version": 1,
+  "font": {
+    "family": "Pixelify Sans",
+    "fallback": "Georgia, serif",
+    "googleName": "Pixelify+Sans:wght@400;600;700",
+    "note": "Restored from Task 2 main.json minimap.font — Pixelify Sans is parchment map aesthetic, Georgia fallback"
+  },
   "display": {
     "position": "fullscreen",
     "size": 640,
@@ -77,8 +83,8 @@
       "sizeFactor": 0.5
     },
     "legend": {
-      "swatch": 14,
-      "gap": 10,
+      "swatch": 12,
+      "gap": 8,
       "itemWidth": 90,
       "panelAlpha": 220,
       "borderAlpha": 220

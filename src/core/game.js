@@ -92,6 +92,41 @@ export class Game {
     return this._mergeConfigs(baseCfg, renderCfgs);
   }
 
+  async _loadMapFont(mapCfg) {
+    // Restore Task 2 font loading — Pixelify Sans for parchment map aesthetic
+    // Config now lives in src/assets/config/ui/map.json under font {family, fallback, googleName}
+    const fontCfg = mapCfg?.font || mapCfg || {};
+    const googleName = fontCfg.googleName || fontCfg.fontGoogleName || mapCfg?.fontGoogleName || "Pixelify+Sans:wght@400;600;700";
+    const family = fontCfg.family || fontCfg.fontFamily || mapCfg?.fontFamily || "Pixelify Sans";
+    if (!googleName) return;
+    try {
+      let link = document.getElementById('map-font');
+      if (!link) {
+        link = document.createElement('link');
+        link.id = 'map-font';
+        link.rel = 'stylesheet';
+        link.href = `https://fonts.googleapis.com/css2?family=${googleName}&display=swap`;
+        document.head.appendChild(link);
+        // Wait for stylesheet to load
+        await new Promise((resolve) => { link.onload = resolve; link.onerror = resolve; setTimeout(resolve, 800); });
+      }
+      const q = `"${family}"`;
+      // Preload weights/sizes used in map overlay (12px regular for legend, bold for stairs)
+      if (document.fonts && document.fonts.load) {
+        await Promise.all([
+          document.fonts.load(`12px ${q}`),
+          document.fonts.load(`bold 12px ${q}`),
+          document.fonts.load(`10px ${q}`),
+          document.fonts.load(`bold 16px ${q}`),
+        ]);
+        await document.fonts.ready;
+        await new Promise(r => setTimeout(r, 50));
+      }
+    } catch (e) {
+      console.warn("Map font load failed, falling back", e);
+    }
+  }
+
   async init() {
     this.cfg = await this._loadAllConfigs();
 
@@ -100,6 +135,9 @@ export class Game {
       this.hud.style.display = "block";
       throw new Error("WebGL2 not supported");
     }
+
+    // Load parchment map font before first render — fixes wrong font regression
+    await this._loadMapFont(this.cfg?.map);
 
     this.dungeon = await generateDungeon(this.cfg, null);
     console.log("Dungeon generated:", this.dungeon.seed, this.dungeon.w + "x" + this.dungeon.h, this.dungeon.rooms.length + " rooms");
