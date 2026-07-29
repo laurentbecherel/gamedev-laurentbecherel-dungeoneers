@@ -74,19 +74,22 @@ vec3 decodeNormal(vec3 enc) { return normalize(enc * 2.0 - 1.0); }
 
 bool traceRay(vec2 origin, vec2 dir, float maxDist) {
   ivec2 mapPos = ivec2(floor(origin));
+  // guard against division by zero – if dir component ~0, deltaDist becomes huge but DDA still works
   vec2 deltaDist = abs(1.0 / dir);
   ivec2 iStep; vec2 sideDist;
   if(dir.x < 0.0){ iStep.x = -1; sideDist.x = (origin.x - float(mapPos.x)) * deltaDist.x; } else { iStep.x = 1; sideDist.x = (float(mapPos.x+1) - origin.x) * deltaDist.x; }
   if(dir.y < 0.0){ iStep.y = -1; sideDist.y = (origin.y - float(mapPos.y)) * deltaDist.y; } else { iStep.y = 1; sideDist.y = (float(mapPos.y+1) - origin.y) * deltaDist.y; }
-  for(int i=0;i<32;i++){
-    if(sideDist.x < sideDist.y){ sideDist.x += deltaDist.x; mapPos.x += iStep.x; }
-    else { sideDist.y += deltaDist.y; mapPos.y += iStep.y; }
+  int side = 0;
+  for(int i=0;i<64;i++){
+    if(sideDist.x < sideDist.y){ sideDist.x += deltaDist.x; mapPos.x += iStep.x; side = 0; }
+    else { sideDist.y += deltaDist.y; mapPos.y += iStep.y; side = 1; }
     if(mapPos.x <0 || mapPos.y<0 || mapPos.x >= int(u_mapSize.x) || mapPos.y >= int(u_mapSize.y)) return false;
+    float perp = (side==0) ? sideDist.x - deltaDist.x : sideDist.y - deltaDist.y;
+    if(perp > maxDist) return false;
     vec4 ms = texelFetch(u_mapTex, mapPos, 0);
     int cell = int(ms.r*255.0+0.5);
     if(cell>0){
-      float perp = min(sideDist.x - deltaDist.x, sideDist.y - deltaDist.y);
-      if(perp > maxDist) return false;
+      // wall encountered within maxDist -> in shadow
       return true;
     }
   }
@@ -145,16 +148,28 @@ vec3 pbrShade(vec3 albedo, vec3 N, float rough, float metal, float ao, vec3 emis
   if (u_lightingEnabled == 0) {
     return albedo;
   }
-  vec3 traceN = normalize(vec3(N.xy, 0.0));
-  if (length(traceN) < 0.01) traceN = vec3(0.0, 0.0, 1.0);
+  // --- Shadow bias fix for acne artifacts ---
+  // Use a snapped geometric normal for the bias origin so brick normal-map jitter
+  // does not cause per-pixel DDA path changes (the black brick-grid speckles).
+  // Walls are axis-aligned in the grid map, so snapping to dominant XY axis is stable.
+  vec3 ng = vec3(N.x, N.y, 0.0);
+  float ngLen = length(ng);
+  vec3 traceN;
+  if (ngLen < 0.02) traceN = vec3(0.0, 0.0, 1.0);
+  else {
+    ng /= ngLen;
+    if (abs(ng.x) > abs(ng.y)) traceN = vec3(sign(ng.x), 0.0, 0.0);
+    else traceN = vec3(0.0, sign(ng.y), 0.0);
+  }
 
   if (u_pbrEnabled == 0) {
     vec3 sunDir = normalize(vec3(u_sunDir.xy, u_sunDirZ));
     vec3 Lsun = -sunDir;
     float sunShadow = 1.0;
-    vec2 shadowOrigin = worldPos.xy + traceN.xy * 0.04;
-    vec2 shadowDir = normalize(Lsun.xy);
-    if (length(shadowDir) > 0.01 && traceRay(shadowOrigin, shadowDir, 20.0)) sunShadow = 0.25;
+    vec2 shadowDirSun = normalize(Lsun.xy);
+    // push off surface + forward along ray (0.08 + 0.06) – standard acne mitigation
+    vec2 shadowOriginSun = worldPos.xy + traceN.xy * 0.10 + shadowDirSun * 0.06;
+    if (length(shadowDirSun) > 0.01 && traceRay(shadowOriginSun, shadowDirSun, 20.0)) sunShadow = 0.25;
     float NdotLsun = max(dot(N, Lsun), 0.0);
     vec3 sunContrib = albedo * u_sunColor * u_sunIntensity * NdotLsun * sunShadow;
 
@@ -162,13 +177,13 @@ vec3 pbrShade(vec3 albedo, vec3 N, float rough, float metal, float ao, vec3 emis
     float distp = length(Lp);
     vec3 pointContrib = vec3(0.0);
     if (distp < u_lightRadius) {
-      Lp /= distp;
+      vec3 LpN = Lp / distp;
       float atten = clamp(1.0 - distp / u_lightRadius, 0.0, 1.0); atten *= atten;
       float shadow = 1.0;
-      vec2 so = worldPos.xy + traceN.xy * 0.04;
-      vec2 sd = normalize(Lp.xy);
+      vec2 sd = normalize(LpN.xy);
+      vec2 so = worldPos.xy + traceN.xy * 0.10 + sd * 0.06;
       if (length(sd) > 0.01 && traceRay(so, sd, distp - 0.1)) shadow = 0.15;
-      float NdotLp = max(dot(N, Lp), 0.0);
+      float NdotLp = max(dot(N, LpN), 0.0);
       pointContrib = albedo * u_lightColor * u_lightIntensity * atten * NdotLp * shadow;
     }
     vec3 ambient = u_ambientColor * albedo * u_ambientLevel * u_worldAmbientMul * ao;
@@ -181,8 +196,8 @@ vec3 pbrShade(vec3 albedo, vec3 N, float rough, float metal, float ao, vec3 emis
   vec3 Lsun = -sunDir;
   float sunShadow = 1.0;
   {
-    vec2 shadowOrigin = worldPos.xy + traceN.xy * 0.04;
     vec2 shadowDir = normalize(Lsun.xy);
+    vec2 shadowOrigin = worldPos.xy + traceN.xy * 0.10 + shadowDir * 0.06;
     if (length(shadowDir) > 0.01 && traceRay(shadowOrigin, shadowDir, 20.0)) sunShadow = 0.25;
   }
   {
@@ -205,8 +220,8 @@ vec3 pbrShade(vec3 albedo, vec3 N, float rough, float metal, float ao, vec3 emis
     float atten = clamp(1.0 - d, 0.0, 1.0); atten *= atten;
     atten = atten / (1.0 + d * d * 0.25);
     float shadow = 1.0;
-    vec2 shadowOrigin = worldPos.xy + traceN.xy * 0.04;
     vec2 shadowDir = normalize(L.xy);
+    vec2 shadowOrigin = worldPos.xy + traceN.xy * 0.10 + shadowDir * 0.06;
     if (length(shadowDir) > 0.01 && traceRay(shadowOrigin, shadowDir, dist - 0.1)) shadow = 0.15;
     vec3 H = normalize(viewDir + L);
     float NDF = DistributionGGX(N, H, rough);
