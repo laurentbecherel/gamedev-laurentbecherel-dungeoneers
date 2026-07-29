@@ -48,6 +48,8 @@ export class GPURenderer {
     this.pbrDebugMode = 0;
     this.chamferEnabled = 1;
     this._chamferConfigEnabled = true;
+    this.cornerEnabled = 1;
+    this._cornerConfigEnabled = true;
   }
 
   async init(dungeon, config) {
@@ -163,7 +165,8 @@ export class GPURenderer {
       'u_pomWall','u_pomFloor','u_pomCeil','u_pomSteps','u_authentic','u_bandLevels','u_time',
       'u_gridDebug','u_lightingEnabled','u_pbrEnabled','u_pomEnabled','u_pbrDebugMode',
       'u_aoSun','u_aoPoint','u_aoAmbient',
-      'u_chamferEnabled','u_chamferFloorSize','u_chamferCeilSize','u_chamferWallSize','u_chamferCornerRadius','u_chamferDarken','u_chamferRoundCorners','u_chamferBlendFloor','u_chamferBlendWall','u_chamferRough','u_chamferFloor','u_chamferCeil','u_chamferWall'];
+      'u_chamferEnabled','u_chamferFloorSize','u_chamferCeilSize','u_chamferWallSize','u_chamferCornerRadius','u_chamferDarken','u_chamferRoundCorners','u_chamferBlendFloor','u_chamferBlendWall','u_chamferRough','u_chamferFloor','u_chamferCeil','u_chamferWall',
+      'u_cornerEnabled','u_cornerRadius','u_cornerMode','u_cornerInner'];
     names.forEach(n => ul[n] = gl.getUniformLocation(p, n));
 
     // quantize uniforms
@@ -202,6 +205,8 @@ export class GPURenderer {
     const pbrInit = config.pbr || {};
     const chInit = pbrInit.chamfer || {};
     this.chamferEnabled = (chInit.enabled !== false) ? 1 : 0;
+    const coInit = pbrInit.corner || pbrInit.cornerGeometry || {};
+    this.cornerEnabled = (coInit.enabled !== false) ? 1 : 0;
     this.ready = true;
   }
 
@@ -234,6 +239,7 @@ export class GPURenderer {
   setPOMEnabled(v) { this.pomEnabled = v ? 1 : 0; }
   setFogEnabled(v) { this.fogEnabled = v ? 1 : 0; }
   setChamferEnabled(v) { this.chamferEnabled = v ? 1 : 0; }
+  setCornerEnabled(v) { this.cornerEnabled = v ? 1 : 0; }
   setPBRDebugMode(v) { this.pbrDebugMode = Math.max(0, Math.min(8, v | 0)); }
   toggleGridDebug() { this.gridDebug ^= 1; return this.gridDebug; }
   toggleLighting() { this.lightingEnabled ^= 1; return this.lightingEnabled; }
@@ -241,6 +247,7 @@ export class GPURenderer {
   togglePOM() { this.pomEnabled ^= 1; return this.pomEnabled; }
   toggleFog() { this.fogEnabled ^= 1; return this.fogEnabled; }
   toggleChamfer() { this.chamferEnabled ^= 1; return this.chamferEnabled; }
+  toggleCorner() { this.cornerEnabled ^= 1; return this.cornerEnabled; }
   cyclePBRDebug() { this.pbrDebugMode = (this.pbrDebugMode + 1) % 9; return this.pbrDebugMode; }
 
   uploadMap(dungeon) {
@@ -414,6 +421,17 @@ export class GPURenderer {
     if (ul.u_chamferFloor) gl.uniform1f(ul.u_chamferFloor, fSize);
     if (ul.u_chamferCeil) gl.uniform1f(ul.u_chamferCeil, cSize);
     if (ul.u_chamferWall) gl.uniform1f(ul.u_chamferWall, wSize);
+    // True geometry rounded corners (intruding)
+    const cornerCfg = pbrCfg.corner || pbrCfg.cornerGeometry || {};
+    const cfgCornerEnabled = cornerCfg.enabled !== false;
+    const cornerEnabled = cfgCornerEnabled && (this.cornerEnabled !== 0);
+    const cornerRadius = cornerCfg.radius ?? cornerCfg.cornerRadius ?? 0.15;
+    const cornerMode = cornerCfg.mode === 'bevel' ? 0 : (cornerCfg.mode === 'round' ? 1 : (cornerCfg.mode ?? 2));
+    const cornerInner = (cornerCfg.inner !== false && cornerCfg.outerOnly !== true) ? 1 : 0;
+    if (ul.u_cornerEnabled) gl.uniform1i(ul.u_cornerEnabled, cornerEnabled ? 1 : 0);
+    if (ul.u_cornerRadius) gl.uniform1f(ul.u_cornerRadius, cornerRadius);
+    if (ul.u_cornerMode) gl.uniform1i(ul.u_cornerMode, cornerMode|0);
+    if (ul.u_cornerInner) gl.uniform1i(ul.u_cornerInner, cornerInner);
     gl.uniform1i(ul.u_authentic, this.authentic ? 1 : 0);
     if (ul.u_bandLevels) gl.uniform1i(ul.u_bandLevels, this.bandLevels);
     gl.uniform1f(ul.u_time, timeSec);

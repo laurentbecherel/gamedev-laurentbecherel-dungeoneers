@@ -82,6 +82,12 @@ uniform float u_chamferFloor;
 uniform float u_chamferCeil;
 uniform float u_chamferWall;
 
+// True geometry rounded corners (intruding)
+uniform int   u_cornerEnabled;
+uniform float u_cornerRadius;
+uniform int   u_cornerMode; // 0=bevel flat, 1=round outer, 2=round all (outer+inner)
+uniform int   u_cornerInner; // 0 outer only, 1 include inner
+
 const float PI = 3.14159265;
 
 bool isWallCell(ivec2 c) {
@@ -101,6 +107,26 @@ float nearestWallDistAndNormal(vec2 world, out vec3 outNorm) {
   if (isWallCell(cell + ivec2(0,-1))) { float d = f.y; if (d < best) { best = d; n = vec3(0.0, 1.0, 0.0); } }
   outNorm = n;
   return best;
+}
+
+// --- corner geometry helpers (intruding rounded) ---
+bool isOuterConvex(ivec2 W, ivec2 E, ivec2 W2, ivec2 D) {
+  return !isWallCell(E) && !isWallCell(W2) && !isWallCell(D);
+}
+bool isInnerConcave(ivec2 W, ivec2 E, ivec2 W2, ivec2 D) {
+  return !isWallCell(E) && isWallCell(W2) && isWallCell(D);
+}
+bool rayCircleHit(vec2 O, vec2 Dir, vec2 C, float r, out float t0, out float t1) {
+  vec2 oc = O - C;
+  float a = dot(Dir, Dir);
+  float b = 2.0 * dot(oc, Dir);
+  float c_ = dot(oc, oc) - r * r;
+  float disc = b * b - 4.0 * a * c_;
+  if (disc < 0.0) return false;
+  float sd = sqrt(disc);
+  t0 = (-b - sd) / (2.0 * a);
+  t1 = (-b + sd) / (2.0 * a);
+  return true;
 }
 
 vec2 atlasUV(float matId, vec2 uv, float atlasW, float texS) {
@@ -305,6 +331,127 @@ void main() {
     else perpDist = (mapPos.y - u_playerPos.y + (1.0 - float(stepDir.y)) * 0.5) / ray.y;
     hitPos = u_playerPos + ray * perpDist;
 
+    // --- true intruding rounded corners ---
+    vec3 cornerNormal = vec3(0.0);
+    bool hasCornerRound = false;
+    float cornerRadius = clamp(u_cornerRadius, 0.02, 0.45);
+
+    if (u_cornerEnabled == 1 && cornerRadius > 0.01) {
+      // vertical wall
+      if (side == 0) {
+        ivec2 W = ivec2(mapPos);
+        float wy = float(W.y);
+        // two corners of this wall segment
+        for (int k = 0; k < 2; k++) {
+          float cornerY = (k == 0) ? wy : wy + 1.0;
+          float dy = abs(hitPos.y - cornerY);
+          if (dy > cornerRadius + 0.08) continue;
+          int off = (k == 0) ? -1 : 1;
+          ivec2 E = ivec2(W.x - stepDir.x, W.y);
+          ivec2 W2 = ivec2(W.x, W.y + off);
+          ivec2 D = ivec2(W.x - stepDir.x, W.y + off);
+          bool outer = isOuterConvex(W, E, W2, D);
+          bool inner = false;
+          if (u_cornerInner == 1) inner = isInnerConcave(W, E, W2, D);
+          if (!outer && !inner) continue;
+
+          vec2 C0 = vec2(hitPos.x, cornerY);
+          vec2 cellCenter;
+          vec2 dirSign;
+          vec2 C;
+          if (outer) {
+            cellCenter = vec2(float(W.x) + 0.5, float(W.y) + 0.5);
+            dirSign = sign(cellCenter - C0);
+            if (abs(dirSign.x) < 0.1) dirSign.x = float(stepDir.x);
+            // ensure dirSign.y matches interior direction
+            if (k == 0) { if (dirSign.y < 0.0) dirSign.y = 1.0; } else { if (dirSign.y > 0.0) dirSign.y = -1.0; }
+            C = C0 + dirSign * cornerRadius;
+          } else {
+            // inner concave: center inside diagonal D
+            cellCenter = vec2(float(D.x) + 0.5, float(D.y) + 0.5);
+            dirSign = sign(cellCenter - C0);
+            // if dirSign is zero (corner on edge), force towards D
+            if (abs(dirSign.x) < 0.1) dirSign.x = float(D.x >= int(C0.x) ? 1 : -1);
+            if (abs(dirSign.y) < 0.1) dirSign.y = float(D.y >= int(C0.y) ? 1 : -1);
+            C = C0 + dirSign * cornerRadius;
+          }
+
+          float t0, t1;
+          if (!rayCircleHit(u_playerPos, ray, C, cornerRadius, t0, t1)) continue;
+          float tCand = -1.0;
+          // pick first valid t within band around original hit
+          if (t0 > 0.01 && t0 >= perpDist - 0.08 && t0 <= perpDist + cornerRadius * 2.0 + 0.15) tCand = t0;
+          else if (t1 > 0.01 && t1 >= perpDist - 0.08 && t1 <= perpDist + cornerRadius * 2.0 + 0.15) tCand = t1;
+          if (tCand < 0.0) continue;
+          vec2 hp = u_playerPos + ray * tCand;
+          vec2 offP = hp - C;
+          // sector check: must be opposite quadrant to dirSign (facing empty)
+          if (offP.x * dirSign.x > 0.02 || offP.y * dirSign.y > 0.02) continue;
+          // additional check that hp is within wall y range extended by radius
+          // valid
+          perpDist = tCand;
+          hitPos = hp;
+          cornerNormal = vec3(normalize(offP), 0.0);
+          hasCornerRound = true;
+          break;
+        }
+      } else { // side==1 horizontal
+        ivec2 W = ivec2(mapPos);
+        float wx = float(W.x);
+        for (int k = 0; k < 2; k++) {
+          float cornerX = (k == 0) ? wx : wx + 1.0;
+          float dx = abs(hitPos.x - cornerX);
+          if (dx > cornerRadius + 0.08) continue;
+          int off = (k == 0) ? -1 : 1;
+          ivec2 E = ivec2(W.x, W.y - stepDir.y);
+          ivec2 W2 = ivec2(W.x + off, W.y);
+          ivec2 D = ivec2(W.x + off, W.y - stepDir.y);
+          bool outer = isOuterConvex(W, E, W2, D);
+          bool inner = false;
+          if (u_cornerInner == 1) inner = isInnerConcave(W, E, W2, D);
+          if (!outer && !inner) continue;
+
+          vec2 C0 = vec2(cornerX, hitPos.y);
+          vec2 cellCenter;
+          vec2 dirSign;
+          vec2 C;
+          if (outer) {
+            cellCenter = vec2(float(W.x) + 0.5, float(W.y) + 0.5);
+            dirSign = sign(cellCenter - C0);
+            if (abs(dirSign.y) < 0.1) dirSign.y = float(stepDir.y);
+            if (k == 0) { if (dirSign.x < 0.0) dirSign.x = 1.0; } else { if (dirSign.x > 0.0) dirSign.x = -1.0; }
+            C = C0 + dirSign * cornerRadius;
+          } else {
+            cellCenter = vec2(float(D.x) + 0.5, float(D.y) + 0.5);
+            dirSign = sign(cellCenter - C0);
+            if (abs(dirSign.x) < 0.1) dirSign.x = float(D.x >= int(C0.x) ? 1 : -1);
+            if (abs(dirSign.y) < 0.1) dirSign.y = float(D.y >= int(C0.y) ? 1 : -1);
+            C = C0 + dirSign * cornerRadius;
+          }
+
+          float t0, t1;
+          if (!rayCircleHit(u_playerPos, ray, C, cornerRadius, t0, t1)) continue;
+          float tCand = -1.0;
+          if (t0 > 0.01 && t0 >= perpDist - 0.08 && t0 <= perpDist + cornerRadius * 2.0 + 0.15) tCand = t0;
+          else if (t1 > 0.01 && t1 >= perpDist - 0.08 && t1 <= perpDist + cornerRadius * 2.0 + 0.15) tCand = t1;
+          if (tCand < 0.0) continue;
+          vec2 hp = u_playerPos + ray * tCand;
+          vec2 offP = hp - C;
+          if (offP.x * dirSign.x > 0.02 || offP.y * dirSign.y > 0.02) continue;
+          perpDist = tCand;
+          hitPos = hp;
+          cornerNormal = vec3(normalize(offP), 0.0);
+          hasCornerRound = true;
+          break;
+        }
+      }
+      // optional flat bevel mode (0): if mode==0, push hitPos outward along bevel normal by radius
+      if (u_cornerMode == 0 && hasCornerRound) {
+        // keep same t but flatten normal to 45°
+        // cornerNormal already 45°ish, but we will later override to diagonal
+      }
+    }
+
     float floorH = 0.0;
     float ceilH = 1.0;
 
@@ -456,6 +603,19 @@ void main() {
       vec3 emissiveW = albedoRaw * 0.8 * rmaW.b * 2.5;
       vec3 Nw = normalize(tangent * normalTSw.x + bitangent * normalTSw.y + Ngeom * normalTSw.z);
 
+      // true geometry rounded corners override
+      if (hasCornerRound && u_pbrDebugMode == 0 && u_gridDebug == 0) {
+        vec3 cn = cornerNormal;
+        if (u_cornerMode == 0) {
+          vec3 n2 = (side == 0) ? vec3(0.0, (wallU < 0.5 ? -1.0 : 1.0), 0.0) : vec3((wallU < 0.5 ? -1.0 : 1.0), 0.0, 0.0);
+          cn = normalize(Ngeom + n2);
+        }
+        Nw = normalize(mix(Nw, cn, 0.92));
+        albedoRaw += vec3(0.05);
+        rmaW.r *= 0.82;
+        rmaW.a *= 0.96;
+      }
+
       if (u_chamferEnabled == 1 && u_pbrDebugMode == 0 && u_gridDebug == 0) {
         // Horizontal floor-wall and ceil-wall bevel - now visible: up to 30% wall height with highlight
         {
@@ -492,7 +652,8 @@ void main() {
           }
         }
         // Vertical wall-wall: every cell edge gets a 45° bevel, visible spec highlight, no skip for concave
-        {
+        // skip when true geometry corner already handled
+        if (!hasCornerRound) {
           float vS = max(u_chamferWallSize, 0.04);
           float e = min(wallU, 1.0 - wallU);
           if (e < vS) {

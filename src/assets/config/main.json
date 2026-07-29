@@ -74,6 +74,13 @@
       "wallToWallBlend": 0.88,
       "affectRoughness": 0.35,
       "note": "floorSize/ceilSize world meters baseboard/cove, wallSize UV fraction vertical edges. darken AO in crevice, toggle with key 7"
+    },
+    "corner": {
+      "enabled": true,
+      "radius": 0.15,
+      "mode": 2,
+      "inner": true,
+      "note": "true geometry rounded corners intruding: 0=bevel flat, 1=round outer, 2=round all (outer+inner). radius 0.12-0.18 slight rounding. intruding cuts into wall mass. toggle with key 8"
     }
   },
   "ui": {
