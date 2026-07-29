@@ -382,16 +382,34 @@ export class GPURenderer {
     gl.bindVertexArray(this.vao);
 
     const ul = this.uLoc;
-    const pos = player.getPosition();
+    // Task 4: Apply view bob — lateral offset on right vector, roll added to angle, vertical to height
+    // getPosition returns base + vertical bob, but we compute explicit bob offsets from player properties
+    // to keep figure-8 visible and allow renderer to apply right-vector shift.
+    const rawPos = player.getPosition();
+    let camX = rawPos.x;
+    let camY = rawPos.y;
+    const bobOffsetX = player.viewBobOffsetX || 0;
+    const bobRoll = player.viewBobRoll || 0;
+    const bobOffsetY = player.viewBobOffset || 0;
+    // raw angle without roll for correct right vector, then add roll for final render angle
+    const baseAngle = (typeof player.getRawAngle === 'function') ? player.getRawAngle() : player.angle;
+    if (bobOffsetX !== 0) {
+      const rx = -Math.sin(baseAngle);
+      const ry = Math.cos(baseAngle);
+      camX += rx * bobOffsetX;
+      camY += ry * bobOffsetX;
+    }
+    const renderAngle = baseAngle + bobRoll;
     gl.uniform2f(ul.u_resolution, this.canvas.width, this.canvas.height);
-    gl.uniform2f(ul.u_playerPos, pos.x, pos.y);
-    gl.uniform1f(ul.u_playerAngle, player.getAngle());
+    gl.uniform2f(ul.u_playerPos, camX, camY);
+    gl.uniform1f(ul.u_playerAngle, renderAngle);
 
     // --- Rendering / FOV / Eye ---
     const rendering = cfg.rendering || {};
     const legacyRenderer = cfg.renderer || {};
     const fov = this._resolveConfigValue(cfg, ['rendering.fov','renderer.fov'], 1.0);
-    const playerHeight = this._resolveConfigValue(cfg, ['player.height','rendering.eye.height','renderer.eyeHeight'], 0.5);
+    const baseHeight = this._resolveConfigValue(cfg, ['player.height','rendering.eye.height','renderer.eyeHeight'], 0.5);
+    const playerHeight = baseHeight + bobOffsetY;
     const eyeFactor = this._resolveConfigValue(cfg, ['rendering.eye.playerHeightFactor','rendering.eyeFactor','debug.overlay.eyeFactor'], 0.15);
     gl.uniform1f(ul.u_fov, fov);
     gl.uniform1f(ul.u_playerHeight, playerHeight);

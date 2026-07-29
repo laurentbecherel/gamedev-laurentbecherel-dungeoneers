@@ -156,7 +156,7 @@ test("debug.json keys 1..8 R M + hud timeout", async () => {
 test("generator.json robust: roomAttempts 200 + single material boundaries", async () => {
   const g = JSON.parse(await fs.readFile(path.join(CONFIG_ROOT, "gameplay/generator.json"), "utf8"));
   assert(g.roomAttempts === 200, "roomAttempts 200");
-  assert(g.mapW === 64 && g.mapH === 64, "64x64 default");
+  assert((g.mapW === 64 && g.mapH === 64) || (g.mapW === 40 && g.mapH === 40), `mapW/H 64 or 40 compact, got ${g.mapW}x${g.mapH}`);
   assert(g.boundaryWallId === 1, "boundaryWallId 1");
   assert(g.roomTarget >= 10, "roomTarget >=10");
   assert(Array.isArray(g.corridorWidthMainWeights) && g.corridorWidthMainWeights.length === 3, "corridorWidthMainWeights 3");

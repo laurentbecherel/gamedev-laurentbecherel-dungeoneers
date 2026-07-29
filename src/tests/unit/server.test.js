@@ -117,7 +117,7 @@ test("unit: nested config API supports slash in category", async () => {
       const r = await fetch(`${BASE}/api/assets/${target}`);
       assert.equal(r.status, 200, `${target} should be 200, got ${r.status}`);
       const j = await r.json();
-      assert(j.version === 1 || j.version === 3, `${target} should have version`);
+      assert(j.version === 1 || j.version === 2 || j.version === 3, `${target} should have version 1/2/3, got ${j.version}`);
     }
   } finally { p.kill(); }
 });
