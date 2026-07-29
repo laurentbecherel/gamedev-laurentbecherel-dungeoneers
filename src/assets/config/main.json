@@ -8,6 +8,7 @@
     "textureFilter": "nearest",
     "fov": 1,
     "pom": {
+      "enabled": true,
       "wall": 0.06,
       "floor": 0.07,
       "ceil": 0.035

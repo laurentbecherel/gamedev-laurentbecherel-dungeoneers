@@ -43,7 +43,7 @@ export class GPURenderer {
     this.gridDebug = 0;
     this.lightingEnabled = 1;
     this.pbrEnabled = 1;
-    this.pomEnabled = 0;
+    this.pomEnabled = 1;
     this.fogEnabled = 1;
     this.pbrDebugMode = 0;
   }
@@ -194,6 +194,7 @@ export class GPURenderer {
     this.rebuildPalette();
 
     const fogCfgInit = config.fog || {}; this.fogEnabled = (fogCfgInit.enabled !== false) ? 1 : 0;
+    const pomCfgInit = rc.pom || {}; this.pomEnabled = (pomCfgInit.enabled !== false) ? 1 : 0;
     this.ready = true;
   }
 
