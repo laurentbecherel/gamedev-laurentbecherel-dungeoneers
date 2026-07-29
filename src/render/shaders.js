@@ -111,16 +111,30 @@ float GeometrySmith(vec3 N, vec3 V, vec3 L, float roughness){
 vec3 fresnelSchlick(float cosTheta, vec3 F0){ return F0 + (1.0-F0)*pow(clamp(1.0-cosTheta,0.0,1.0),5.0); }
 
 vec2 pomOffset(sampler2D heightMap, vec2 uv, vec3 viewTS, float strength, int steps) {
-  // Centered reference plane: 0.5 / 128 = 0 displacement.
-  // <0.5 = intrude (grout/crack), >0.5 = extrude (brick/pavé).
-  // This fixes "floating floor": previously a flat grey 0.5 tex would march 50%
-  // of max parallax and make the whole floor look elevated.
+  // Centered reference plane: 0.5 == 0 displacement, <0.5 intrude, >0.5 extrude.
+  // Fixes:
+  // - floating floor (offset centered)
+  // - vertical streaks at grazing (~80° to wall). At grazing viewTS.z→0, fullOffset = viewTS.xy*strength/vz explodes.
+  //   With 8 steps the march skips whole bricks and CLAMP_TO_EDGE smears the tile edge as thin black vertical lines
+  //   (visible far down a corridor wall). Fix: impose a minimum viewing angle, fade to zero at extreme grazing, and clamp max offset.
   if (strength <= 0.00001) return vec2(0.0);
+  float vzAbs = abs(viewTS.z);
+  if (vzAbs < 0.08) return vec2(0.0); // ~<5° to surface -> no parallax (would blow up, produce vertical smeared mortar)
   float layerDepth = 1.0 / float(steps);
-  float vz = max(viewTS.z, 0.0001);
-  vec2 fullOffset = viewTS.xy * strength / vz;
+  // Effective vz clamped to avoid divergence: 10° min (~0.173) keeps offset bounded near grazing
+  float effVz = max(vzAbs, 0.18);
+  vec2 fullOffset = viewTS.xy * strength / effVz;
+  // Fade POM between 5° and ~13° (0.08-0.22) so grazing close-up still shows side but far 80° wall fades
+  float fade = 1.0;
+  if (vzAbs < 0.22) fade = (vzAbs - 0.08) / (0.22 - 0.08);
+  // Hard limit: don't let parallax cross more than ~1.5 bricks (≈0.10 UV = 6.4 texels at 64px).
+  // Beyond that we hit CLAMP_TO_EDGE and get persistent vertical mortar streaks.
+  float maxOffset = 0.10;
+  float lenOff = length(fullOffset);
+  if (lenOff > maxOffset) fullOffset *= maxOffset / lenOff;
+  fullOffset *= fade;
   vec2 delta = fullOffset / float(steps);
-  // Start half-strength behind so that height=0.5 (flat) lands at 0 offset
+  // Start half behind so height=0.5 lands at 0 offset
   vec2 curUV = uv - fullOffset * 0.5;
   float curDepth = 0.0;
   float height = texture(heightMap, curUV).r;
