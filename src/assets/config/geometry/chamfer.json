@@ -1,0 +1,42 @@
+{
+  "version": 1,
+  "enabled": true,
+  "size": {
+    "floor": 0.3,
+    "ceil": 0.24,
+    "wall": 0.28,
+    "cornerRadius": 0.22,
+    "note": "floor/ceil in world meters baseboard/cove bevel width. wall in UV fraction 0-0.5. cornerRadius reserved (legacy)"
+  },
+  "shading": {
+    "darken": 0.55,
+    "roundCorners": false,
+    "floorToWallBlend": 0.92,
+    "wallToWallBlend": 0.88,
+    "affectRoughness": 0.35,
+    "note": "darken = AO in crevice 0=black crevice 1=no darken. roundCorners = use spherical interpolation vs flat bevel. blend = normal mix strength. affectRoughness = roughness darken factor in chamfer"
+  },
+  "trim": {
+    "floorStrength": 0.22,
+    "ceilStrength": 0.18,
+    "wallStrength": 0.16,
+    "floorAltStrength": 0.18,
+    "ceilAltStrength": 0.14,
+    "note": "Trim highlight added in middle of bevel band as albedo += trimBand * strength. Simulates baseboard catching light"
+  },
+  "ranges": {
+    "creviceEnd": 0.12,
+    "creviceSmoothEnd": 0.3,
+    "trimStart": 0.08,
+    "trimMid": 0.35,
+    "trimEnd": 1,
+    "trimMid2": 0.32,
+    "wallAODarkenBlend": 0.12,
+    "wallAOSmoothEnd": 0.45,
+    "wallRoughMin": 0.58,
+    "wallRoughMid": 0.65,
+    "wallRoughCeilMid": 0.62,
+    "note": "Thresholds for smoothstep shaping: crevice AO fades, trim highlight band, roughness mix"
+  },
+  "debugToggle": "Key 7"
+}

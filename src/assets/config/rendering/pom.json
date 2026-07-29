@@ -1,0 +1,59 @@
+{
+  "version": 1,
+  "enabled": true,
+  "strength": {
+    "wall": 0.06,
+    "floor": 0.07,
+    "ceil": 0.035,
+    "note": "Parallax scale = texture-space UV offset max. Higher = deeper extrusion"
+  },
+  "steps": 8,
+  "stepsMax": 32,
+  "clamping": {
+    "maxOffset": 0.1,
+    "minViewZ": 0.08,
+    "minEffectiveVz": 0.18,
+    "note": "minViewZ = fade out at grazing (vzAbs < min). minEffectiveVz prevents division near-zero. maxOffset caps UV shift to avoid swimming"
+  },
+  "fading": {
+    "fadeStart": 0.08,
+    "fadeEnd": 0.22,
+    "note": "fade = (vzAbs - start)/(end-start) when vzAbs between start/end. Below start = invisible POM"
+  },
+  "reference": {
+    "plane": 0.5,
+    "note": "POM reference plane centered at 0.5 (height texture mid). Sampled as centered -0.5 offset"
+  },
+  "presets": {
+    "off": {
+      "wall": 0,
+      "floor": 0,
+      "ceil": 0,
+      "steps": 0
+    },
+    "subtle": {
+      "wall": 0.03,
+      "floor": 0.04,
+      "ceil": 0.02,
+      "steps": 6
+    },
+    "default": {
+      "wall": 0.06,
+      "floor": 0.07,
+      "ceil": 0.035,
+      "steps": 8
+    },
+    "deep": {
+      "wall": 0.12,
+      "floor": 0.14,
+      "ceil": 0.08,
+      "steps": 12
+    },
+    "extreme": {
+      "wall": 0.2,
+      "floor": 0.22,
+      "ceil": 0.12,
+      "steps": 16
+    }
+  }
+}

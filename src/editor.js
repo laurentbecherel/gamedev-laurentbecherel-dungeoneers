@@ -14,36 +14,69 @@ function iconFor(name, isFolder) { if (isFolder) return "ph-folder"; const ext =
 async function init() {
   const list = await getAssetList();
   const tree = $("asset-tree"); tree.innerHTML = "";
-  const byCat = {}; list.forEach(a => (byCat[a.category] = byCat[a.category] || []).push(a));
 
-  // Root assets folder node
-  const root = document.createElement("div"); root.className = "tree-node";
+  // Build hierarchical folder tree: config/rendering, config/lighting etc
+  // Structure: {name, children: Map<name, node>, files: []}
+  const root = { name: 'assets', children: new Map(), files: [] };
+  for(const a of list){
+    const parts = a.category.split('/'); // e.g. ['config','rendering']
+    let cur = root;
+    for(const part of parts){
+      if(!cur.children.has(part)){
+        cur.children.set(part, { name: part, children: new Map(), files: [], fullPath: (cur.fullPath ? cur.fullPath + '/' + part : part) });
+      }
+      cur = cur.children.get(part);
+      if(!cur.fullPath) cur.fullPath = parts.slice(0, parts.indexOf(part)+1).join('/');
+    }
+    cur.files.push(a);
+  }
+
+  // Root assets folder node UI
+  const rootEl = document.createElement("div"); rootEl.className = "tree-node";
   const rootHdr = document.createElement("div"); rootHdr.className = "tree-folder";
   rootHdr.innerHTML = `<span class="tree-chevron">▼</span><i class="ph ph-folder tree-icon"></i><span>assets</span>`;
   const rootBody = document.createElement("div"); rootBody.className = "tree-children";
   let rootOpen = true;
   rootHdr.onclick = () => { rootOpen = !rootOpen; rootHdr.querySelector(".tree-chevron").textContent = rootOpen ? "▼" : "▶"; rootBody.style.display = rootOpen ? "" : "none"; };
-  root.appendChild(rootHdr); root.appendChild(rootBody); tree.appendChild(root);
+  rootEl.appendChild(rootHdr); rootEl.appendChild(rootBody); tree.appendChild(rootEl);
 
-  Object.keys(byCat).sort().forEach(cat => {
-    const folder = document.createElement("div"); folder.className = "tree-node";
-    const hdr = document.createElement("div"); hdr.className = "tree-folder"; hdr.style.paddingLeft = "20px";
-    const isCol = collapsed.has(cat);
-    hdr.innerHTML = `<span class="tree-chevron">${isCol ? "▶" : "▼"}</span><i class="ph ph-folder tree-icon"></i><span>${formatLabel(cat)}</span>`;
-    const body = document.createElement("div"); body.className = "tree-children"; body.style.display = isCol ? "none" : "";
-    hdr.onclick = () => { const nowCol = body.style.display !== "none"; body.style.display = nowCol ? "none" : ""; hdr.querySelector(".tree-chevron").textContent = nowCol ? "▶" : "▼"; nowCol ? collapsed.add(cat) : collapsed.delete(cat); };
-    folder.appendChild(hdr); folder.appendChild(body);
+  function renderFolder(node, container, depth){
+    // depth for padding
+    const sortedFolders = [...node.children.values()].sort((a,b)=>a.name.localeCompare(b.name));
+    for(const child of sortedFolders){
+      const catPath = child.fullPath; // e.g. config/rendering
+      const folder = document.createElement("div"); folder.className = "tree-node";
+      const hdr = document.createElement("div"); hdr.className = "tree-folder";
+      hdr.style.paddingLeft = (20 + depth*12) + "px";
+      const isCol = collapsed.has(catPath);
+      hdr.innerHTML = `<span class="tree-chevron">${isCol ? "▶" : "▼"}</span><i class="ph ph-folder tree-icon"></i><span>${formatLabel(child.name)}</span>`;
+      const body = document.createElement("div"); body.className = "tree-children"; body.style.display = isCol ? "none" : "";
+      hdr.onclick = () => {
+        const nowCol = body.style.display !== "none";
+        body.style.display = nowCol ? "none" : "";
+        hdr.querySelector(".tree-chevron").textContent = nowCol ? "▶" : "▼";
+        nowCol ? collapsed.add(catPath) : collapsed.delete(catPath);
+      };
+      folder.appendChild(hdr); folder.appendChild(body);
+      // recurse subfolders first, then files
+      renderFolder(child, body, depth+1);
+      child.files.sort((a,b)=>a.name.localeCompare(b.name)).forEach(a => {
+        const item = document.createElement("div");
+        item.className = "tree-file"; item.dataset.cat = a.category; item.dataset.name = a.name;
+        item.style.paddingLeft = (40 + depth*12) + "px";
+        item.innerHTML = `<i class="ph ${iconFor(a.name + ".json")} tree-icon"></i>${a.name}.json<span style="margin-left:auto;opacity:.35;font-size:11px">${a.itemCount}</span>`;
+        item.onclick = e => { e.stopPropagation(); selectAsset(a.category, a.name, item); };
+        body.appendChild(item);
+      });
+      container.appendChild(folder);
+    }
+    // files directly under this node (should only happen for root assets children handling above, but include)
+    if(depth===0){
+      // handled in recursion for root children
+    }
+  }
 
-    byCat[cat].sort((a, b) => a.name.localeCompare(b.name)).forEach(a => {
-      const item = document.createElement("div");
-      item.className = "tree-file"; item.dataset.cat = a.category; item.dataset.name = a.name;
-      item.style.paddingLeft = "40px";
-      item.innerHTML = `<i class="ph ${iconFor(a.name + ".json")} tree-icon"></i>${a.name}.json<span style="margin-left:auto;opacity:.35;font-size:11px">${a.itemCount}</span>`;
-      item.onclick = e => { e.stopPropagation(); selectAsset(a.category, a.name, item); };
-      body.appendChild(item);
-    });
-    rootBody.appendChild(folder);
-  });
+  renderFolder(root, rootBody, 0);
 
   const first = tree.querySelector(".tree-file"); if (first) first.click();
   $("btn-save").onclick = saveCurrent;
@@ -91,6 +124,7 @@ function buildForm(container, obj, path) {
   }
   if (obj !== null && typeof obj === "object") {
     for (const key of Object.keys(obj)) {
+      if (key.startsWith('_')) continue; // skip _readme, _docs internal helpers
       const val = obj[key]; const fp = path ? `${path}.${key}` : key;
       const fg = document.createElement("div"); fg.className = "field-group";
       const lbl = document.createElement("label"); lbl.className = "field-label"; lbl.textContent = key.replace(/([A-Z])/g, ' $1').replace(/^./, s => s.toUpperCase()); fg.appendChild(lbl);
@@ -127,7 +161,16 @@ function buildForm(container, obj, path) {
         col.oninput = () => { const arr = fromHex(col.value); inputs.forEach((inp, i) => inp.value = arr[i]); setByPath(currentData, fp, arr); };
         inputs.forEach(inp => inp.oninput = update); row.appendChild(col); inputs.forEach(inp => nums.appendChild(inp)); row.appendChild(nums); fg.appendChild(row);
       } else if (Array.isArray(val)) { const sub = document.createElement("div"); sub.className = "nested-array"; buildForm(sub, val, fp); fg.appendChild(sub);
-      } else if (typeof val === "object") { const sub = document.createElement("div"); sub.className = "nested-object"; buildForm(sub, val, fp); fg.appendChild(sub); }
+      } else if (typeof val === "object") {
+        // Show nested note fields as hint, not editable forest
+        if (key === 'note' || key === 'structure' || key === 'delegation') {
+          const hint = document.createElement("div"); hint.className = "field-hint"; hint.style.whiteSpace = "pre-wrap";
+          hint.textContent = typeof val === 'string' ? val : JSON.stringify(val, null, 2);
+          fg.appendChild(hint);
+        } else {
+          const sub = document.createElement("div"); sub.className = "nested-object"; buildForm(sub, val, fp); fg.appendChild(sub);
+        }
+      }
       container.appendChild(fg);
     }
   }

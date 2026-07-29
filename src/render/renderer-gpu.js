@@ -1,11 +1,12 @@
-// WebGL2 first-person raycast renderer with PBR, palette quantization, sun lighting, shadows, and UI map overlay
+// WebGL2 first-person raycast renderer — fully configurable via dedicated JSONs
+// POM/PBR/AO/Shadows/Chamfer/Corners/Rendering/Palette/Raymarch etc are all editor-tracked JSON
 
 import { createProgram, createTexture } from './gl-utils.js';
 import { vsSource, fsSource, vsQuantize, fsQuantize, vsUI, fsUI } from './shaders.js';
 import { uploadMapTexture, updateMapTexture } from './map-upload.js';
 import { generateMaterialAtlases } from '../world/materials.js';
 import { getAsset } from '../config/config.js';
-import { genPalette, genColormap, buildRGBToPal } from './palette.js';
+import { genPalette, buildRGBToPal } from './palette.js';
 
 export function isWebGL2Supported() {
   try {
@@ -47,9 +48,8 @@ export class GPURenderer {
     this.fogEnabled = 1;
     this.pbrDebugMode = 0;
     this.chamferEnabled = 1;
-    this._chamferConfigEnabled = true;
     this.cornerEnabled = 1;
-    this._cornerConfigEnabled = true;
+    this._cfgCache = null;
   }
 
   async init(dungeon, config) {
@@ -61,7 +61,6 @@ export class GPURenderer {
     this.uiProgram = createProgram(gl, vsUI, fsUI);
     if (!this.uiProgram) throw new Error('Shader compile failed UI');
 
-    // fullscreen quad VAO for raycast
     this.vao = gl.createVertexArray();
     gl.bindVertexArray(this.vao);
     const buf = gl.createBuffer();
@@ -72,7 +71,6 @@ export class GPURenderer {
     gl.vertexAttribPointer(loc, 2, gl.FLOAT, false, 0, 0);
     gl.bindVertexArray(null);
 
-    // quantize VAO
     this.vaoQuant = gl.createVertexArray();
     gl.bindVertexArray(this.vaoQuant);
     const buf2 = gl.createBuffer();
@@ -83,13 +81,10 @@ export class GPURenderer {
     gl.vertexAttribPointer(locQ, 2, gl.FLOAT, false, 0, 0);
     gl.bindVertexArray(null);
 
-    // UI VAO with positions and UVs for corner quad
     this.vaoUI = gl.createVertexArray();
     gl.bindVertexArray(this.vaoUI);
-    // positions and UVs interleaved: x,y,u,v
     const uiBuf = gl.createBuffer();
     gl.bindBuffer(gl.ARRAY_BUFFER, uiBuf);
-    // placeholder quad, updated per frame in renderMapUI
     gl.bufferData(gl.ARRAY_BUFFER, new Float32Array(16), gl.DYNAMIC_DRAW);
     const locUIPos = gl.getAttribLocation(this.uiProgram, 'a_pos');
     const locUIUV = gl.getAttribLocation(this.uiProgram, 'a_uv');
@@ -99,19 +94,31 @@ export class GPURenderer {
     gl.vertexAttribPointer(locUIUV, 2, gl.FLOAT, false, 16, 8);
     gl.bindVertexArray(null);
 
-    // Task 3: single material only - 1 wall + 1 floor + 1 ceil (64x64, 18 textures)
-    // Use first material from JSON (ID 1). Generator must also only pick ID 1 (see themes.js)
+    // --- Materials: Task 3 single-material lock but configurable via materials-proc + proc config
     const walls = await getAsset('materials', 'walls');
     const floors = await getAsset('materials', 'floors');
     const ceils = await getAsset('materials', 'ceils');
     const wallMats = (walls?.materials || []).slice(0, 1);
     const floorMats = (floors?.materials || []).slice(0, 1);
     const ceilMats = (ceils?.materials || []).slice(0, 1);
-    const proc = config.materialProc || {};
-    const atl = generateMaterialAtlases(wallMats, floorMats, ceilMats, proc);
+    // material proc may come from dedicated config or legacy main.json materialProc
+    const proc = config.materialsProc || config['materials-proc'] || config.materialProc || {};
+    const procWalls = proc.walls || {};
+    const procFloors = proc.floors || {};
+    const procCeils = proc.ceils || {};
+    const atl = generateMaterialAtlases(wallMats, floorMats, ceilMats, {
+      walls: procWalls,
+      floors: procFloors,
+      ceils: procCeils,
+      ...proc // fallback raw
+    });
     this.atlasInfo = atl;
 
-    const tf = config.renderer?.textureFilter === 'linear' ? gl.LINEAR : gl.NEAREST;
+    // Resolve texture filter from rendering or legacy renderer
+    const renderingCfg = config.rendering || {};
+    const legacyRenderer = config.renderer || {};
+    const texFilterStr = renderingCfg.textureFilter || legacyRenderer.textureFilter || 'nearest';
+    const tf = texFilterStr === 'linear' ? gl.LINEAR : gl.NEAREST;
     const up = (arr, w, h) => createTexture(gl, w, h, arr, tf);
     const tw = atl.wallAtlasW, th = 64, fw = atl.floorAtlasW, cw = atl.ceilAtlasW;
     this.atlases.wa = up(atl.wallAlbedo, tw, th); this.atlases.wn = up(atl.wallNormal, tw, th);
@@ -125,12 +132,12 @@ export class GPURenderer {
     this.mapTex = mapTexs.mapTex;
     this.matMapTex = mapTexs.matTex;
 
-    // palette textures
     this.paletteTex = gl.createTexture();
     this.lutTex = gl.createTexture();
+    this._cfgCache = config;
+    this._applyPaletteFromConfig(config);
     this.rebuildPalette();
 
-    // scene FBO for first pass
     const cw2 = this.canvas.width || 640, ch2 = this.canvas.height || 360;
     this.sceneTex = gl.createTexture();
     gl.bindTexture(gl.TEXTURE_2D, this.sceneTex);
@@ -142,7 +149,6 @@ export class GPURenderer {
     gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.TEXTURE_2D, this.sceneTex, 0);
     gl.bindFramebuffer(gl.FRAMEBUFFER, null);
 
-    // map UI texture
     this.mapUITex = gl.createTexture();
     gl.bindTexture(gl.TEXTURE_2D, this.mapUITex);
     gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.NEAREST);
@@ -151,9 +157,11 @@ export class GPURenderer {
     gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
     gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, 160, 160, 0, gl.RGBA, gl.UNSIGNED_BYTE, null);
 
-    // cache uniform locations for raycast program
+    // cache uniforms for raycast
     const ul = this.uLoc, p = this.program;
-    const names = ['u_resolution','u_playerPos','u_playerAngle','u_fov','u_playerHeight','u_mapTex','u_matMap','u_mapSize',
+    const names = [
+      // core
+      'u_resolution','u_playerPos','u_playerAngle','u_fov','u_playerHeight','u_mapTex','u_matMap','u_mapSize',
       'u_wallAlbedo','u_wallNormal','u_wallHeight','u_wallRoughMetal',
       'u_floorAlbedo','u_floorNormal','u_floorHeight','u_floorRoughMetal',
       'u_ceilAlbedo','u_ceilNormal','u_ceilHeight','u_ceilRoughMetal',
@@ -162,14 +170,27 @@ export class GPURenderer {
       'u_ambientColor','u_ambientLevel','u_worldAmbientMul',
       'u_sunDir','u_sunDirZ','u_sunIntensity','u_sunColor',
       'u_fogBase','u_fogSquared','u_fogColor','u_fogEnabled',
-      'u_pomWall','u_pomFloor','u_pomCeil','u_pomSteps','u_authentic','u_bandLevels','u_time',
+      // pom
+      'u_pomWall','u_pomFloor','u_pomCeil','u_pomSteps','u_pomMaxOffset','u_pomMinVz','u_pomMinEffVz','u_pomFadeStart','u_pomFadeEnd',
+      // general
+      'u_authentic','u_bandLevels','u_time',
       'u_gridDebug','u_lightingEnabled','u_pbrEnabled','u_pomEnabled','u_pbrDebugMode',
       'u_aoSun','u_aoPoint','u_aoAmbient',
+      // chamfer
       'u_chamferEnabled','u_chamferFloorSize','u_chamferCeilSize','u_chamferWallSize','u_chamferCornerRadius','u_chamferDarken','u_chamferRoundCorners','u_chamferBlendFloor','u_chamferBlendWall','u_chamferRough','u_chamferFloor','u_chamferCeil','u_chamferWall',
-      'u_cornerEnabled','u_cornerRadius','u_cornerMode','u_cornerInner'];
+      'u_chamferTrimFloor','u_chamferTrimCeil','u_chamferTrimWall','u_chamferTrimFloorAlt','u_chamferTrimCeilAlt','u_chamferCreviceEnd','u_chamferCreviceSmoothEnd','u_chamferTrimStart','u_chamferTrimMid','u_chamferTrimEnd',
+      // corners
+      'u_cornerEnabled','u_cornerRadius','u_cornerMode','u_cornerInner',
+      'u_cornerBandNear','u_cornerBandFarExtra','u_cornerBandFarFactor','u_cornerSectorThresh','u_cornerNormalMix','u_cornerAlbedoBoost','u_cornerRoughMul','u_cornerAoMul',
+      // shadows
+      'u_shadowBiasN','u_shadowBiasDir','u_shadowSunFactor','u_shadowPointFactor','u_shadowSunMax','u_shadowPointEps','u_shadowNormalThresh',
+      // pbr extended
+      'u_pbrEmissiveAlbedoMul','u_pbrEmissiveStrength','u_pbrF0','u_pbrAttenQuad','u_pbrGGXEps',
+      // rendering surface
+      'u_renderFloorMul','u_renderCeilMul','u_renderWallDarken','u_renderEyeFactor'
+    ];
     names.forEach(n => ul[n] = gl.getUniformLocation(p, n));
 
-    // quantize uniforms
     gl.useProgram(this.quantProgram);
     this.uQuant.scene = gl.getUniformLocation(this.quantProgram, 'u_scene');
     this.uQuant.palette = gl.getUniformLocation(this.quantProgram, 'u_palette');
@@ -180,34 +201,62 @@ export class GPURenderer {
     gl.uniform1i(this.uQuant.palette, 1);
     gl.uniform1i(this.uQuant.lut, 2);
 
-    // UI uniforms
     gl.useProgram(this.uiProgram);
     this.uUI.mapUI = gl.getUniformLocation(this.uiProgram, 'u_mapUI');
     this.uUI.opacity = gl.getUniformLocation(this.uiProgram, 'u_opacity');
     gl.uniform1i(this.uUI.mapUI, 0);
 
-    // set texture units for raycast program
     gl.useProgram(this.program);
     gl.uniform1i(ul.u_mapTex, 0);
     gl.uniform1i(ul.u_matMap, 13);
     const texUnits = {u_wallAlbedo:1,u_wallNormal:2,u_wallHeight:3,u_wallRoughMetal:4,u_floorAlbedo:5,u_floorNormal:6,u_floorHeight:7,u_floorRoughMetal:8,u_ceilAlbedo:9,u_ceilNormal:10,u_ceilHeight:11,u_ceilRoughMetal:12};
     Object.entries(texUnits).forEach(([name, unit]) => { if (ul[name]) gl.uniform1i(ul[name], unit); });
 
-    // apply config
-    const rc = config.renderer || {};
-    this.authentic = rc.authentic !== false;
-    this.paletteStyle = rc.paletteStyle || 'doom';
-    this.bandLevels = rc.bandLevels || 32;
-    this.rebuildPalette();
-
-    const fogCfgInit = config.fog || {}; this.fogEnabled = (fogCfgInit.enabled !== false) ? 1 : 0;
-    const pomCfgInit = rc.pom || {}; this.pomEnabled = (pomCfgInit.enabled !== false) ? 1 : 0;
-    const pbrInit = config.pbr || {};
-    const chInit = pbrInit.chamfer || {};
-    this.chamferEnabled = (chInit.enabled !== false) ? 1 : 0;
-    const coInit = pbrInit.corner || pbrInit.cornerGeometry || {};
-    this.cornerEnabled = (coInit.enabled !== false) ? 1 : 0;
+    // Resolve defaults from dedicated configs with fallback to legacy
+    this._resolveToggles(config);
     this.ready = true;
+  }
+
+  _applyPaletteFromConfig(cfg){
+    const paletteCfg = cfg.palette || {};
+    const rendering = cfg.rendering || {};
+    const legacy = cfg.renderer || {};
+    const legacyPbr = cfg.pbr || {};
+    this.authentic = (paletteCfg.authentic ?? rendering.authentic ?? legacy.authentic ?? true) !== false;
+    this.paletteStyle = paletteCfg.paletteStyle || rendering.paletteStyle || legacy.paletteStyle || 'doom';
+    this.bandLevels = paletteCfg.bandLevels ?? rendering.bandLevels ?? legacy.bandLevels ?? 32;
+  }
+
+  _resolveToggles(cfg){
+    const fogCfg = cfg.fog || {};
+    this.fogEnabled = (fogCfg.enabled !== false) ? 1 : 0;
+
+    const getDeep = (obj, paths, fallback) => {
+      for(const p of paths){
+        const parts = p.split('.');
+        let cur = obj;
+        for(const part of parts){ cur = cur?.[part]; if(cur===undefined) break; }
+        if(cur !== undefined) return cur;
+      }
+      return fallback;
+    };
+
+    const pomCfg = cfg.pom || {};
+    const pomLegacy = cfg.rendering?.pom || cfg.renderer?.pom || {};
+    const pomEnabled = getDeep(cfg, ['pom.enabled', 'rendering.pom.enabled', 'renderer.pom.enabled', 'rendering.toggles.pomDefault', 'renderer.pom.enabled'], true);
+    this.pomEnabled = (pomEnabled !== false) ? 1 : 0;
+
+    const chamferCfg = cfg.chamfer || {};
+    const legacyChamfer = cfg.pbr?.chamfer || {};
+    const chamEnabled = chamferCfg.enabled ?? legacyChamfer.enabled ?? cfg.pbr?.chamfer?.enabled ?? cfg.rendering?.toggles?.chamferDefault ?? true;
+    this.chamferEnabled = (chamEnabled !== false) ? 1 : 0;
+
+    const cornersCfg = cfg.corners || {};
+    const legacyCorner = cfg.pbr?.corner || cfg.pbr?.cornerGeometry || {};
+    const cornerEnabled = cornersCfg.enabled ?? legacyCorner.enabled ?? cfg.rendering?.toggles?.cornerDefault ?? true;
+    this.cornerEnabled = (cornerEnabled !== false) ? 1 : 0;
+
+    // palette already handled
   }
 
   rebuildPalette() {
@@ -258,13 +307,14 @@ export class GPURenderer {
   renderMapUI(texData, uiCfg) {
     const gl = this.gl;
     if (!texData || !this.mapUITex) return;
-    const isFullscreen = uiCfg.position === 'fullscreen';
-    const w = isFullscreen ? 640 : (uiCfg.size || 160);
-    const h = isFullscreen ? 360 : (uiCfg.size || 160);
+    const posStr = uiCfg?.display?.position ?? uiCfg?.position ?? 'fullscreen';
+    const isFullscreen = posStr === 'fullscreen';
+    const w = isFullscreen ? 640 : (uiCfg.display?.size ?? uiCfg.size ?? 160);
+    const h = isFullscreen ? 360 : (uiCfg.display?.size ?? uiCfg.size ?? 160);
     gl.bindTexture(gl.TEXTURE_2D, this.mapUITex);
     gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, w, h, 0, gl.RGBA, gl.UNSIGNED_BYTE, texData);
-    // store for UI pass after quantize
-    this._pendingMapUI = { size: uiCfg.size || 160, opacity: uiCfg.opacity ?? 0.88, position: uiCfg.position || 'fullscreen', texW: w, texH: h };
+    const opacity = uiCfg.display?.opacity ?? uiCfg.parchment?.alpha ?? uiCfg.opacity ?? 0.88;
+    this._pendingMapUI = { size: w, opacity, position: posStr, texW: w, texH: h };
   }
 
   _renderUIPass() {
@@ -278,7 +328,6 @@ export class GPURenderer {
     gl.enable(gl.BLEND);
     gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA);
 
-    // compute quad in NDC - fullscreen or corner
     const cw = this.canvas.width, ch = this.canvas.height;
     let x0, y0, x1, y1;
     if (position === 'fullscreen') { x0 = 0; y0 = 0; x1 = cw; y1 = ch; }
@@ -292,7 +341,6 @@ export class GPURenderer {
     const ndc = (x, y) => [(x / cw) * 2 - 1, 1 - (y / ch) * 2];
     const [x0n, y0n] = ndc(x0, y0);
     const [x1n, y1n] = ndc(x1, y1);
-    // triangle strip: TL, TR, BL, BR with UVs 0,0 1,0 0,1 1,1
     const verts = new Float32Array([x0n,y0n,0,0,  x1n,y0n,1,0,  x0n,y1n,0,1,  x1n,y1n,1,1]);
     gl.bindBuffer(gl.ARRAY_BUFFER, gl.createBuffer());
     gl.bufferData(gl.ARRAY_BUFFER, verts, gl.STREAM_DRAW);
@@ -311,12 +359,21 @@ export class GPURenderer {
     gl.bindVertexArray(null);
   }
 
+  _resolveConfigValue(cfg, paths, fallback){
+    for(const p of paths){
+      const parts = p.split('.');
+      let cur = cfg;
+      for(const part of parts){ cur = cur?.[part]; if(cur===undefined) break; }
+      if(cur !== undefined) return cur;
+    }
+    return fallback;
+  }
+
   render(dungeon, player, timeSec) {
     if (!this.ready) return;
     const gl = this.gl;
-    const cfg = player._cfg || {};
+    const cfg = player._cfg || this._cfgCache || {};
 
-    // Pass 1: raycast to scene FBO
     gl.bindFramebuffer(gl.FRAMEBUFFER, this.sceneFBO);
     gl.viewport(0, 0, this.canvas.width, this.canvas.height);
     gl.clearColor(0, 0, 0, 1);
@@ -329,10 +386,18 @@ export class GPURenderer {
     gl.uniform2f(ul.u_resolution, this.canvas.width, this.canvas.height);
     gl.uniform2f(ul.u_playerPos, pos.x, pos.y);
     gl.uniform1f(ul.u_playerAngle, player.getAngle());
-    gl.uniform1f(ul.u_fov, cfg.renderer?.fov ?? 1.0);
-    gl.uniform1f(ul.u_playerHeight, cfg.player?.height ?? 0.5);
-    gl.uniform2f(ul.u_mapSize, dungeon.w, dungeon.h);
 
+    // --- Rendering / FOV / Eye ---
+    const rendering = cfg.rendering || {};
+    const legacyRenderer = cfg.renderer || {};
+    const fov = this._resolveConfigValue(cfg, ['rendering.fov','renderer.fov'], 1.0);
+    const playerHeight = this._resolveConfigValue(cfg, ['player.height','rendering.eye.height','renderer.eyeHeight'], 0.5);
+    const eyeFactor = this._resolveConfigValue(cfg, ['rendering.eye.playerHeightFactor','rendering.eyeFactor','debug.overlay.eyeFactor'], 0.15);
+    gl.uniform1f(ul.u_fov, fov);
+    gl.uniform1f(ul.u_playerHeight, playerHeight);
+    if(ul.u_renderEyeFactor) gl.uniform1f(ul.u_renderEyeFactor, eyeFactor);
+
+    gl.uniform2f(ul.u_mapSize, dungeon.w, dungeon.h);
     gl.activeTexture(gl.TEXTURE0); gl.bindTexture(gl.TEXTURE_2D, this.mapTex);
     gl.uniform1i(ul.u_mapTex, 0);
     gl.activeTexture(gl.TEXTURE0 + 13); gl.bindTexture(gl.TEXTURE_2D, this.matMapTex);
@@ -356,18 +421,26 @@ export class GPURenderer {
     gl.uniform1f(ul.u_lightIntensity, light.intensity);
     gl.uniform1f(ul.u_lightRadius, light.radius);
 
-    const lc = cfg.lights || {};
-    const ambC = lc.ambientColor || [1, 1, 1];
-    gl.uniform3f(ul.u_ambientColor, ambC[0], ambC[1], ambC[2]);
-    gl.uniform1f(ul.u_ambientLevel, lc.ambient ?? 0.36);
-    if (ul.u_worldAmbientMul) gl.uniform1f(ul.u_worldAmbientMul, lc.worldAmbientMul ?? 0.38);
-    const sunDir = lc.sunDir || [-0.55, -0.45, -0.7];
+    // --- Lighting (lighting.json) ---
+    const lightingCfg = cfg.lighting || {};
+    const lightsLegacy = cfg.lights || {};
+    const ambientLevel = this._resolveConfigValue(cfg, ['lighting.ambient.level','lights.ambient','renderer.ambient'], 0.36);
+    const ambientColor = this._resolveConfigValue(cfg, ['lighting.ambient.color','lights.ambientColor'], [1,1,1]);
+    const worldMul = this._resolveConfigValue(cfg, ['lighting.ambient.worldMul','lights.worldAmbientMul'], 0.38);
+    const sunDir = this._resolveConfigValue(cfg, ['lighting.sun.dir','lights.sunDir'], [-0.55,-0.45,-0.7]);
+    const sunColor = this._resolveConfigValue(cfg, ['lighting.sun.color','lights.sunColor'], [1,1,1]);
+    const sunIntensity = this._resolveConfigValue(cfg, ['lighting.sun.intensity','lights.sunIntensity'], 1.5);
+
+    gl.uniform3f(ul.u_ambientColor, ambientColor[0], ambientColor[1], ambientColor[2]);
+    gl.uniform1f(ul.u_ambientLevel, ambientLevel);
+    if (ul.u_worldAmbientMul) gl.uniform1f(ul.u_worldAmbientMul, worldMul);
     const sunLen = Math.hypot(sunDir[0], sunDir[1], sunDir[2]) || 1;
     if (ul.u_sunDir) gl.uniform2f(ul.u_sunDir, sunDir[0] / sunLen, sunDir[1] / sunLen);
     if (ul.u_sunDirZ) gl.uniform1f(ul.u_sunDirZ, sunDir[2] / sunLen);
-    if (ul.u_sunIntensity) gl.uniform1f(ul.u_sunIntensity, lc.sunIntensity ?? 1.5);
-    const sunC = lc.sunColor || [1, 1, 1];
-    if (ul.u_sunColor) gl.uniform3f(ul.u_sunColor, sunC[0], sunC[1], sunC[2]);
+    if (ul.u_sunIntensity) gl.uniform1f(ul.u_sunIntensity, sunIntensity);
+    if (ul.u_sunColor) gl.uniform3f(ul.u_sunColor, sunColor[0], sunColor[1], sunColor[2]);
+
+    // --- Fog ---
     const fogCfg = cfg.fog || {};
     gl.uniform1f(ul.u_fogBase, fogCfg.base ?? 0.06);
     gl.uniform1f(ul.u_fogSquared, fogCfg.squared ?? 0.005);
@@ -375,39 +448,102 @@ export class GPURenderer {
     gl.uniform3f(ul.u_fogColor, fogC[0], fogC[1], fogC[2]);
     if (ul.u_fogEnabled) gl.uniform1i(ul.u_fogEnabled, this.fogEnabled ? 1 : 0);
 
-    const pom = cfg.renderer?.pom || {};
-    const pomOn = this.pomEnabled ? 1 : 0;
-    gl.uniform1f(ul.u_pomWall, (pom.wall ?? 0.06) * pomOn);
-    gl.uniform1f(ul.u_pomFloor, (pom.floor ?? 0.07) * pomOn);
-    gl.uniform1f(ul.u_pomCeil, (pom.ceil ?? 0.035) * pomOn);
-    gl.uniform1i(ul.u_pomSteps, 8);
+    // --- POM (pom.json) with fallback to renderer.pom ---
+    const pomCfg = cfg.pom || {};
+    const pomLegacy = cfg.rendering?.pom || cfg.renderer?.pom || {};
+    const pomWall = this._resolveConfigValue(cfg, ['pom.strength.wall','pom.wall','rendering.pom.wall','renderer.pom.wall'], 0.06);
+    const pomFloor = this._resolveConfigValue(cfg, ['pom.strength.floor','pom.floor','rendering.pom.floor','renderer.pom.floor'], 0.07);
+    const pomCeil = this._resolveConfigValue(cfg, ['pom.strength.ceil','pom.ceil','rendering.pom.ceil','renderer.pom.ceil'], 0.035);
+    const pomSteps = this._resolveConfigValue(cfg, ['pom.steps','rendering.pom.steps'], 8);
+    const pomMaxOffset = this._resolveConfigValue(cfg, ['pom.clamping.maxOffset','pom.maxOffset'], 0.10);
+    const pomMinVz = this._resolveConfigValue(cfg, ['pom.clamping.minViewZ','pom.minVz'], 0.08);
+    const pomMinEff = this._resolveConfigValue(cfg, ['pom.clamping.minEffectiveVz','pom.minEffectiveVz'], 0.18);
+    const pomFadeStart = this._resolveConfigValue(cfg, ['pom.fading.fadeStart','pom.fadeStart'], 0.08);
+    const pomFadeEnd = this._resolveConfigValue(cfg, ['pom.fading.fadeEnd','pom.fadeEnd'], 0.22);
 
+    const pomOn = this.pomEnabled ? 1 : 0;
+    gl.uniform1f(ul.u_pomWall, pomWall * pomOn);
+    gl.uniform1f(ul.u_pomFloor, pomFloor * pomOn);
+    gl.uniform1f(ul.u_pomCeil, pomCeil * pomOn);
+    gl.uniform1i(ul.u_pomSteps, pomSteps | 0);
+    if (ul.u_pomMaxOffset) gl.uniform1f(ul.u_pomMaxOffset, pomMaxOffset);
+    if (ul.u_pomMinVz) gl.uniform1f(ul.u_pomMinVz, pomMinVz);
+    if (ul.u_pomMinEffVz) gl.uniform1f(ul.u_pomMinEffVz, pomMinEff);
+    if (ul.u_pomFadeStart) gl.uniform1f(ul.u_pomFadeStart, pomFadeStart);
+    if (ul.u_pomFadeEnd) gl.uniform1f(ul.u_pomFadeEnd, pomFadeEnd);
+
+    // --- Debug toggles ---
     if (ul.u_gridDebug) gl.uniform1i(ul.u_gridDebug, this.gridDebug ? 1 : 0);
     if (ul.u_lightingEnabled) gl.uniform1i(ul.u_lightingEnabled, this.lightingEnabled ? 1 : 0);
     if (ul.u_pbrEnabled) gl.uniform1i(ul.u_pbrEnabled, this.pbrEnabled ? 1 : 0);
     if (ul.u_pomEnabled) gl.uniform1i(ul.u_pomEnabled, this.pomEnabled ? 1 : 0);
     if (ul.u_pbrDebugMode) gl.uniform1i(ul.u_pbrDebugMode, this.pbrDebugMode);
-    // AO influence config: pbr.ao { affectSun, affectPoint, affectAmbient }
+
+    // --- AO (ao.json) + pbr.ao fallback ---
+    const aoCfg = cfg.ao || {};
+    const pbrAOLegacy = cfg.pbr?.ao || {};
+    const aoSun = this._resolveConfigValue(cfg, ['ao.affect.sun','pbr.ao.affectSun','ao.affectSun'], 0.25);
+    const aoPoint = this._resolveConfigValue(cfg, ['ao.affect.point','pbr.ao.affectPoint','ao.affectPoint'], 0.35);
+    const aoAmbient = this._resolveConfigValue(cfg, ['ao.affect.ambient','pbr.ao.affectAmbient','ao.affectAmbient'], 1.0);
+    if (ul.u_aoSun) gl.uniform1f(ul.u_aoSun, aoSun);
+    if (ul.u_aoPoint) gl.uniform1f(ul.u_aoPoint, aoPoint);
+    if (ul.u_aoAmbient) gl.uniform1f(ul.u_aoAmbient, aoAmbient);
+
+    // --- PBR (pbr.json) ---
     const pbrCfg = cfg.pbr || {};
-    const aoCfg = pbrCfg.ao || {};
-    if (ul.u_aoSun) gl.uniform1f(ul.u_aoSun, aoCfg.affectSun ?? 0.25);
-    if (ul.u_aoPoint) gl.uniform1f(ul.u_aoPoint, aoCfg.affectPoint ?? 0.35);
-    if (ul.u_aoAmbient) gl.uniform1f(ul.u_aoAmbient, aoCfg.affectAmbient ?? 1.0);
-    // Chamfer config: pbr.chamfer - runtime toggle flag overrides config
-    const chCfg = pbrCfg.chamfer || {};
-    const cfgChamEnabled = chCfg.enabled !== false;
+    const pbrEmissiveAlbedo = this._resolveConfigValue(cfg, ['pbr.emissive.albedoMul','pbr.emissiveAlbedoMul'], 0.8);
+    const pbrEmissiveStrength = this._resolveConfigValue(cfg, ['pbr.emissive.strengthMul','pbr.missiveStrength'], 2.5);
+    const pbrF0 = this._resolveConfigValue(cfg, ['pbr.fresnel.f0Dielectric','pbr.F0','pbr.f0Dielectric'], 0.04);
+    const pbrAtten = this._resolveConfigValue(cfg, ['pbr.pointAttenuation.quadraticFactor','pbr.attenQuad','pbr.pointAttenuation'], 0.25);
+    const pbrEps = this._resolveConfigValue(cfg, ['pbr.ggx.epsilon','pbr.epsilon'], 0.0001);
+    if (ul.u_pbrEmissiveAlbedoMul) gl.uniform1f(ul.u_pbrEmissiveAlbedoMul, pbrEmissiveAlbedo);
+    if (ul.u_pbrEmissiveStrength) gl.uniform1f(ul.u_pbrEmissiveStrength, pbrEmissiveStrength);
+    if (ul.u_pbrF0) gl.uniform1f(ul.u_pbrF0, pbrF0);
+    if (ul.u_pbrAttenQuad) gl.uniform1f(ul.u_pbrAttenQuad, pbrAtten);
+    if (ul.u_pbrGGXEps) gl.uniform1f(ul.u_pbrGGXEps, pbrEps);
+
+    // --- Rendering surface (rendering.json) ---
+    const floorMul = this._resolveConfigValue(cfg, ['rendering.surface.floorAlbedoMul','renderer.floorAlbedoMul'], 0.7);
+    const ceilMul = this._resolveConfigValue(cfg, ['rendering.surface.ceilAlbedoMul','renderer.ceilAlbedoMul'], 0.8);
+    const wallDarken = this._resolveConfigValue(cfg, ['rendering.surface.wallDarkenSide','renderer.wallDarkenSide'], 0.85);
+    if (ul.u_renderFloorMul) gl.uniform1f(ul.u_renderFloorMul, floorMul);
+    if (ul.u_renderCeilMul) gl.uniform1f(ul.u_renderCeilMul, ceilMul);
+    if (ul.u_renderWallDarken) gl.uniform1f(ul.u_renderWallDarken, wallDarken);
+
+    // --- Shadows (shadows.json) ---
+    const shCfg = cfg.shadows || {};
+    const shBiasN = this._resolveConfigValue(cfg, ['shadows.bias.traceNormalOffset','shadows.traceNormalOffset'], 0.10);
+    const shBiasDir = this._resolveConfigValue(cfg, ['shadows.bias.dirOffset','shadows.dirOffset'], 0.06);
+    const shSunFactor = this._resolveConfigValue(cfg, ['shadows.sun.shadowFactor','shadows.sunShadowFactor'], 0.25);
+    const shPointFactor = this._resolveConfigValue(cfg, ['shadows.point.shadowFactor','shadows.pointShadowFactor'], 0.15);
+    const shSunMax = this._resolveConfigValue(cfg, ['shadows.sun.maxDist','shadows.sunMaxDist'], 20.0);
+    const shPointEps = this._resolveConfigValue(cfg, ['shadows.point.distEpsilon','shadows.pointEps'], 0.10);
+    const shNormalThresh = this._resolveConfigValue(cfg, ['shadows.traceNormal.threshold','shadows.normalThresh'], 0.02);
+    if (ul.u_shadowBiasN) gl.uniform1f(ul.u_shadowBiasN, shBiasN);
+    if (ul.u_shadowBiasDir) gl.uniform1f(ul.u_shadowBiasDir, shBiasDir);
+    if (ul.u_shadowSunFactor) gl.uniform1f(ul.u_shadowSunFactor, shSunFactor);
+    if (ul.u_shadowPointFactor) gl.uniform1f(ul.u_shadowPointFactor, shPointFactor);
+    if (ul.u_shadowSunMax) gl.uniform1f(ul.u_shadowSunMax, shSunMax);
+    if (ul.u_shadowPointEps) gl.uniform1f(ul.u_shadowPointEps, shPointEps);
+    if (ul.u_shadowNormalThresh) gl.uniform1f(ul.u_shadowNormalThresh, shNormalThresh);
+
+    // --- Chamfer (chamfer.json) + pbr.chamfer fallback ---
+    const chCfg = cfg.chamfer || {};
+    const chLegacy = cfg.pbr?.chamfer || {};
+    const cfgChamEnabled = chCfg.enabled ?? chLegacy.enabled ?? true;
     const chamEnabled = cfgChamEnabled && (this.chamferEnabled !== 0);
     if (ul.u_chamferEnabled) gl.uniform1i(ul.u_chamferEnabled, chamEnabled ? 1 : 0);
-    // sizes: floorSize/ceilSize/wallSize world units, larger = visible bevel
-    const fSize = chCfg.floorSize ?? chCfg.floor ?? 0.28;
-    const cSize = chCfg.ceilSize ?? chCfg.ceil ?? 0.22;
-    const wSize = chCfg.wallSize ?? chCfg.wall ?? 0.28;
-    const cr = chCfg.cornerRadius ?? 0.22;
-    const dark = chCfg.darken ?? 0.55;
-    const round = chCfg.roundCorners ? 1 : 0;
-    const bFloor = chCfg.floorToWallBlend ?? chCfg.blendFloor ?? 0.92;
-    const bWall = chCfg.wallToWallBlend ?? chCfg.blendWall ?? 0.88;
-    const chRough = chCfg.affectRoughness ?? 0.35;
+
+    const fSize = this._resolveConfigValue(cfg, ['chamfer.size.floor','pbr.chamfer.floorSize','pbr.chamfer.floor'], 0.30);
+    const cSize = this._resolveConfigValue(cfg, ['chamfer.size.ceil','pbr.chamfer.ceilSize','pbr.chamfer.ceil'], 0.24);
+    const wSize = this._resolveConfigValue(cfg, ['chamfer.size.wall','pbr.chamfer.wallSize','pbr.chamfer.wall'], 0.28);
+    const cr = this._resolveConfigValue(cfg, ['chamfer.size.cornerRadius','pbr.chamfer.cornerRadius'], 0.22);
+    const dark = this._resolveConfigValue(cfg, ['chamfer.shading.darken','pbr.chamfer.darken'], 0.55);
+    const round = this._resolveConfigValue(cfg, ['chamfer.shading.roundCorners','pbr.chamfer.roundCorners'], false) ? 1 : 0;
+    const bFloor = this._resolveConfigValue(cfg, ['chamfer.shading.floorToWallBlend','pbr.chamfer.floorToWallBlend','pbr.chamfer.blendFloor'], 0.92);
+    const bWall = this._resolveConfigValue(cfg, ['chamfer.shading.wallToWallBlend','pbr.chamfer.wallToWallBlend','pbr.chamfer.blendWall'], 0.88);
+    const chRough = this._resolveConfigValue(cfg, ['chamfer.shading.affectRoughness','pbr.chamfer.affectRoughness'], 0.35);
+
     if (ul.u_chamferFloorSize) gl.uniform1f(ul.u_chamferFloorSize, fSize);
     if (ul.u_chamferCeilSize) gl.uniform1f(ul.u_chamferCeilSize, cSize);
     if (ul.u_chamferWallSize) gl.uniform1f(ul.u_chamferWallSize, wSize);
@@ -417,21 +553,64 @@ export class GPURenderer {
     if (ul.u_chamferBlendFloor) gl.uniform1f(ul.u_chamferBlendFloor, bFloor);
     if (ul.u_chamferBlendWall) gl.uniform1f(ul.u_chamferBlendWall, bWall);
     if (ul.u_chamferRough) gl.uniform1f(ul.u_chamferRough, chRough);
-    // legacy alias uniforms
     if (ul.u_chamferFloor) gl.uniform1f(ul.u_chamferFloor, fSize);
     if (ul.u_chamferCeil) gl.uniform1f(ul.u_chamferCeil, cSize);
     if (ul.u_chamferWall) gl.uniform1f(ul.u_chamferWall, wSize);
-    // True geometry rounded corners (intruding)
-    const cornerCfg = pbrCfg.corner || pbrCfg.cornerGeometry || {};
-    const cfgCornerEnabled = cornerCfg.enabled !== false;
+
+    // chamfer trim extended
+    const trimFloor = this._resolveConfigValue(cfg, ['chamfer.trim.floorStrength','chamfer.shading.trimFloor'], 0.22);
+    const trimCeil = this._resolveConfigValue(cfg, ['chamfer.trim.ceilStrength'], 0.18);
+    const trimWall = this._resolveConfigValue(cfg, ['chamfer.trim.wallStrength'], 0.16);
+    const trimFloorAlt = this._resolveConfigValue(cfg, ['chamfer.trim.floorAltStrength'], 0.18);
+    const trimCeilAlt = this._resolveConfigValue(cfg, ['chamfer.trim.ceilAltStrength'], 0.14);
+    const creviceEnd = this._resolveConfigValue(cfg, ['chamfer.ranges.creviceEnd'], 0.12);
+    const creviceSmooth = this._resolveConfigValue(cfg, ['chamfer.ranges.creviceSmoothEnd'], 0.30);
+    const trimStart = this._resolveConfigValue(cfg, ['chamfer.ranges.trimStart'], 0.08);
+    const trimMid = this._resolveConfigValue(cfg, ['chamfer.ranges.trimMid'], 0.35);
+    const trimEnd = this._resolveConfigValue(cfg, ['chamfer.ranges.trimEnd'], 1.0);
+    if (ul.u_chamferTrimFloor) gl.uniform1f(ul.u_chamferTrimFloor, trimFloor);
+    if (ul.u_chamferTrimCeil) gl.uniform1f(ul.u_chamferTrimCeil, trimCeil);
+    if (ul.u_chamferTrimWall) gl.uniform1f(ul.u_chamferTrimWall, trimWall);
+    if (ul.u_chamferTrimFloorAlt) gl.uniform1f(ul.u_chamferTrimFloorAlt, trimFloorAlt);
+    if (ul.u_chamferTrimCeilAlt) gl.uniform1f(ul.u_chamferTrimCeilAlt, trimCeilAlt);
+    if (ul.u_chamferCreviceEnd) gl.uniform1f(ul.u_chamferCreviceEnd, creviceEnd);
+    if (ul.u_chamferCreviceSmoothEnd) gl.uniform1f(ul.u_chamferCreviceSmoothEnd, creviceSmooth);
+    if (ul.u_chamferTrimStart) gl.uniform1f(ul.u_chamferTrimStart, trimStart);
+    if (ul.u_chamferTrimMid) gl.uniform1f(ul.u_chamferTrimMid, trimMid);
+    if (ul.u_chamferTrimEnd) gl.uniform1f(ul.u_chamferTrimEnd, trimEnd);
+
+    // --- Corners (corners.json) + pbr.corner fallback ---
+    const cornerCfg = cfg.corners || cfg.corner || {};
+    const cornerLegacy = cfg.pbr?.corner || cfg.pbr?.cornerGeometry || {};
+    const cfgCornerEnabled = cornerCfg.enabled ?? cornerLegacy.enabled ?? true;
     const cornerEnabled = cfgCornerEnabled && (this.cornerEnabled !== 0);
-    const cornerRadius = cornerCfg.radius ?? cornerCfg.cornerRadius ?? 0.15;
-    const cornerMode = cornerCfg.mode === 'bevel' ? 0 : (cornerCfg.mode === 'round' ? 1 : (cornerCfg.mode ?? 2));
-    const cornerInner = (cornerCfg.inner !== false && cornerCfg.outerOnly !== true) ? 1 : 0;
+    const cornerRadius = this._resolveConfigValue(cfg, ['corners.radius','pbr.corner.radius','pbr.corner.cornerRadius'], 0.15);
+    const cornerModeRaw = this._resolveConfigValue(cfg, ['corners.mode','pbr.corner.mode'], 2);
+    const cornerMode = (cornerModeRaw === 'bevel' ? 0 : (cornerModeRaw === 'round' ? 1 : (cornerModeRaw | 0)));
+    const cornerInner = this._resolveConfigValue(cfg, ['corners.inner','pbr.corner.inner'], true) ? 1 : 0;
+
+    const bandNear = this._resolveConfigValue(cfg, ['corners.search.bandNear','corners.bandNear'], 0.08);
+    const bandFarExtra = this._resolveConfigValue(cfg, ['corners.search.bandFarExtra','corners.bandFarExtra'], 0.15);
+    const bandFarFactor = this._resolveConfigValue(cfg, ['corners.search.bandFarFactor','corners.bandFarFactor'], 2.0);
+    const sectorThresh = this._resolveConfigValue(cfg, ['corners.search.sectorThreshold','corners.sectorThresh'], 0.02);
+    const normalMix = this._resolveConfigValue(cfg, ['corners.shading.normalMix','corners.normalMix'], 0.92);
+    const albedoBoost = this._resolveConfigValue(cfg, ['corners.shading.albedoBoost','corners.albedoBoost'], 0.05);
+    const roughMulC = this._resolveConfigValue(cfg, ['corners.shading.roughnessMul','corners.roughMul'], 0.82);
+    const aoMulC = this._resolveConfigValue(cfg, ['corners.shading.aoMul','corners.aoMul'], 0.96);
+
     if (ul.u_cornerEnabled) gl.uniform1i(ul.u_cornerEnabled, cornerEnabled ? 1 : 0);
     if (ul.u_cornerRadius) gl.uniform1f(ul.u_cornerRadius, cornerRadius);
-    if (ul.u_cornerMode) gl.uniform1i(ul.u_cornerMode, cornerMode|0);
+    if (ul.u_cornerMode) gl.uniform1i(ul.u_cornerMode, cornerMode);
     if (ul.u_cornerInner) gl.uniform1i(ul.u_cornerInner, cornerInner);
+    if (ul.u_cornerBandNear) gl.uniform1f(ul.u_cornerBandNear, bandNear);
+    if (ul.u_cornerBandFarExtra) gl.uniform1f(ul.u_cornerBandFarExtra, bandFarExtra);
+    if (ul.u_cornerBandFarFactor) gl.uniform1f(ul.u_cornerBandFarFactor, bandFarFactor);
+    if (ul.u_cornerSectorThresh) gl.uniform1f(ul.u_cornerSectorThresh, sectorThresh);
+    if (ul.u_cornerNormalMix) gl.uniform1f(ul.u_cornerNormalMix, normalMix);
+    if (ul.u_cornerAlbedoBoost) gl.uniform1f(ul.u_cornerAlbedoBoost, albedoBoost);
+    if (ul.u_cornerRoughMul) gl.uniform1f(ul.u_cornerRoughMul, roughMulC);
+    if (ul.u_cornerAoMul) gl.uniform1f(ul.u_cornerAoMul, aoMulC);
+
     gl.uniform1i(ul.u_authentic, this.authentic ? 1 : 0);
     if (ul.u_bandLevels) gl.uniform1i(ul.u_bandLevels, this.bandLevels);
     gl.uniform1f(ul.u_time, timeSec);
@@ -456,7 +635,6 @@ export class GPURenderer {
     gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
     gl.bindVertexArray(null);
 
-    // Pass 3: UI map overlay (after quantize so it stays crisp, or could be before for retro look)
     this._renderUIPass();
   }
 
@@ -467,18 +645,14 @@ export class GPURenderer {
     gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA8, w, h, 0, gl.RGBA, gl.UNSIGNED_BYTE, null);
   }
   isReady() { return this.ready; }
-  rebuildMaterials() { /* TODO */ }
 
   renderMapOnly(dungeon, player) {
     if (!this.ready) return;
     const gl = this.gl;
-    // Generate map texture data via UI path — called from game loop after ui.drawMap sets _pendingMapUI
-    // Clear to black then draw fullscreen map quad
     gl.bindFramebuffer(gl.FRAMEBUFFER, null);
     gl.viewport(0, 0, this.canvas.width, this.canvas.height);
     gl.clearColor(0, 0, 0, 1);
     gl.clear(gl.COLOR_BUFFER_BIT);
-    // _renderUIPass expects _pendingMapUI to be set by renderMapUI beforehand
     this._renderUIPass();
   }
 }

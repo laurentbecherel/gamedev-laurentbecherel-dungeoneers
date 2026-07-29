@@ -1,0 +1,110 @@
+{
+  "version": 1,
+  "texSize": 64,
+  "walls": {
+    "type": "brick",
+    "brick": {
+      "w": 8,
+      "h": 8
+    },
+    "heightScale": 1.15,
+    "normalStrength": 1.15,
+    "roughness": 0.72,
+    "roughnessVariation": 0.1,
+    "groutRoughAdd": 0.15,
+    "metal": 0,
+    "aoStrength": 0.6,
+    "aoBoost": 0.6,
+    "aoGrout": 0.78,
+    "aoFace": 0.92,
+    "aoDomeBoost": 0.08,
+    "aoMin": 0.7,
+    "groutWidth": 1,
+    "domeStrength": 1.1,
+    "crackAmount": 0.6,
+    "emissive": 0,
+    "colorJitter": 28,
+    "heightJitter": 0.12,
+    "domeHeight": 0.28,
+    "groutDarken": {
+      "r": 0.45,
+      "g": 0.4,
+      "b": 0.35
+    },
+    "normalFactor": 2.4,
+    "micro": {
+      "aoJitter": 0.04,
+      "perBrickAO": 0.04,
+      "rough": 0.06,
+      "rough2": 0.03,
+      "edgeRough": 0.03,
+      "domeRoughReduce": 0.18
+    }
+  },
+  "floors": {
+    "type": "slab",
+    "blockSize": 8,
+    "heightScale": 0.8,
+    "normalStrength": 0.9,
+    "roughness": 0.78,
+    "roughnessVariation": 0.09,
+    "groutRoughAdd": 0.12,
+    "metal": 0,
+    "aoStrength": 0.6,
+    "aoBoost": 0.6,
+    "aoGrout": 0.8,
+    "aoFace": 0.93,
+    "aoDomeBoost": 0.07,
+    "aoMin": 0.72,
+    "groutWidth": 1,
+    "domeStrength": 1.1,
+    "emissive": 0,
+    "colorJitter": 20,
+    "domeHeight": 0.22,
+    "heightJitter": 0.08,
+    "groutDarken": 0.6,
+    "normalFactor": 2,
+    "micro": {
+      "aoJitter": 0.04,
+      "perBlockAO": 0.03,
+      "rough": 0.07,
+      "edgeRoughFactor": 0.08,
+      "domeRoughReduce": 0.15
+    }
+  },
+  "ceils": {
+    "type": "slab",
+    "blockSize": 8,
+    "heightScale": 0.6,
+    "normalStrength": 0.8,
+    "roughness": 0.82,
+    "roughnessVariation": 0.08,
+    "groutRoughAdd": 0.1,
+    "metal": 0,
+    "aoStrength": 0.55,
+    "aoBoost": 0.55,
+    "aoGrout": 0.82,
+    "aoFace": 0.95,
+    "aoDomeBoost": 0.05,
+    "aoMin": 0.75,
+    "groutWidth": 1,
+    "domeStrength": 1,
+    "emissive": 0,
+    "colorJitter": 20,
+    "domeHeight": 0.22,
+    "heightJitter": 0.08,
+    "groutDarken": 0.6,
+    "normalFactor": 2,
+    "micro": {
+      "aoJitter": 0.04,
+      "perBlockAO": 0.03,
+      "rough": 0.07,
+      "edgeRoughFactor": 0.08,
+      "domeRoughReduce": 0.15
+    }
+  },
+  "packing": {
+    "note": "Task3: single material only 64x64 atlases, but engine supports N materials. Increase once atlas wrapping fixed",
+    "forcedCount": 1
+  }
+}

@@ -1,0 +1,87 @@
+{
+  "version": 1,
+  "display": {
+    "position": "fullscreen",
+    "size": 640,
+    "opacity": 0.92,
+    "note": "position: fullscreen|top-right|top-left|bottom-right|bottom-left. fullscreen = 640x360 overlay"
+  },
+  "parchment": {
+    "bg": "#e8dcc4",
+    "scan": "#ddd0b8",
+    "alpha": 0.92,
+    "scanlineEvery": 4
+  },
+  "colors": {
+    "wallDark": "#2a2a2a",
+    "gold": "#c9a84c",
+    "goldDim": "#8a7233",
+    "player": [
+      15,
+      220,
+      15
+    ],
+    "parchmentPanel": [
+      220,
+      205,
+      175
+    ],
+    "parchmentBorder": [
+      139,
+      115,
+      85
+    ],
+    "textLight": [
+      58,
+      48,
+      32
+    ],
+    "textDim": [
+      107,
+      93,
+      72
+    ],
+    "roles": {
+      "entrance": "#8a8a8a",
+      "exit": "#5a5a5a",
+      "guardian": "#6a6a6a",
+      "treasure": "#c9a84c",
+      "hub": "#7a7a7a",
+      "hall": "#9a9a9a",
+      "armory": "#7a7a7a",
+      "shrine": "#7a7a7a",
+      "secret": "#b8b8b8",
+      "corridor": "#6a6a6a"
+    },
+    "materials": {
+      "wall1": "#4a4a4a",
+      "wall2": "#5a5a5a",
+      "floor1": "#a0a0a0",
+      "floor2": "#8a8a8a"
+    }
+  },
+  "layout": {
+    "legendHeight": 60,
+    "legendGap": 16,
+    "padding": 40,
+    "grid": {
+      "minCell": 2
+    },
+    "stair": {
+      "sizeFactor": 1.2,
+      "minSize": 6,
+      "strokeFactor": 0.12
+    },
+    "playerDot": {
+      "minRad": 3,
+      "sizeFactor": 0.5
+    },
+    "legend": {
+      "swatch": 14,
+      "gap": 10,
+      "itemWidth": 90,
+      "panelAlpha": 220,
+      "borderAlpha": 220
+    }
+  }
+}

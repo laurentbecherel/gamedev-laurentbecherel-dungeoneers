@@ -7,7 +7,8 @@ export class UI {
   constructor(cfg) {
     this.cfg = cfg;
     this.dungeon = null;
-    this.uiCfg = cfg?.ui?.map || { position: "top-right", size: 160, opacity: 0.9 };
+    // New dedicated map.json takes priority, legacy ui.map and map.display fall back
+    this.uiCfg = cfg?.map || cfg?.ui?.map || { position: "top-right", size: 160, opacity: 0.9 };
   }
 
   setDungeon(dungeon) { this.dungeon = dungeon; }

@@ -10,11 +10,15 @@ export class Player {
 
   setPosition(x, y, angle) { this.x = x; this.y = y; this.angle = angle; }
 
+  _resolvePlayerCfg(){
+    // player.json is cfg.playerCfg, but also supports legacy cfg.player
+    return this._cfg?.playerCfg || this._cfg?.player || {};
+  }
   update(dt, input, dungeon) {
-    const cfg = this._cfg?.player ?? {};
+    const cfg = this._resolvePlayerCfg();
     const speed = cfg.moveSpeed ?? 3.0;
     const turnSpeed = cfg.turnSpeed ?? 2.2;
-    const radius = cfg.radius ?? 0.28;
+    const radius = cfg.radius ?? cfg.collision?.radius ?? 0.28;
 
     // turning via QE keys
     this.angle += (input.turn || 0) * turnSpeed * dt;
@@ -50,15 +54,17 @@ export class Player {
   }
 
   getPosition() {
-    const h = this._cfg?.player?.height ?? 0.5;
+    const pc = this._resolvePlayerCfg();
+    const h = pc.height ?? 0.5;
     return { x: this.x, y: this.y, z: h };
   }
 
   getAngle() { return this.angle; }
 
   getLightSource() {
-    const cfg = this._cfg?.player?.light ?? {};
-    const h = this._cfg?.player?.height ?? 0.5;
+    const pc = this._resolvePlayerCfg();
+    const cfg = pc.light ?? {};
+    const h = pc.height ?? 0.5;
     const lh = cfg.height ?? 0.15;
     const col = cfg.color ?? [1, 0.85, 0.6];
     return {

@@ -1,0 +1,31 @@
+{
+  "version": 1,
+  "enabled": true,
+  "radius": 0.15,
+  "clamp": {
+    "min": 0.02,
+    "max": 0.45
+  },
+  "mode": 2,
+  "modes": {
+    "0": "bevel flat (45° diagonal)",
+    "1": "round outer only",
+    "2": "round all outer+inner (default)"
+  },
+  "inner": true,
+  "search": {
+    "bandNear": 0.08,
+    "bandFarFactor": 2,
+    "bandFarExtra": 0.15,
+    "sectorThreshold": 0.02,
+    "note": "bandNear = hitPos within radius+0.08 of corner triggers check. bandFar = perpDist+radius*2+0.15 search range. sectorThreshold = offP*dirSign > threshold rejects wrong quadrant"
+  },
+  "shading": {
+    "normalMix": 0.92,
+    "albedoBoost": 0.05,
+    "roughnessMul": 0.82,
+    "aoMul": 0.96,
+    "note": "When corner hit, Nw = mix(Nw, cornerNormal, normalMix). Slight albedo boost and roughness reduction makes corner catch light"
+  },
+  "debugToggle": "Key 8"
+}
