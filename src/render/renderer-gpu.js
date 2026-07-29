@@ -46,6 +46,8 @@ export class GPURenderer {
     this.pomEnabled = 1;
     this.fogEnabled = 1;
     this.pbrDebugMode = 0;
+    this.chamferEnabled = 1;
+    this._chamferConfigEnabled = true;
   }
 
   async init(dungeon, config) {
@@ -160,7 +162,8 @@ export class GPURenderer {
       'u_fogBase','u_fogSquared','u_fogColor','u_fogEnabled',
       'u_pomWall','u_pomFloor','u_pomCeil','u_pomSteps','u_authentic','u_bandLevels','u_time',
       'u_gridDebug','u_lightingEnabled','u_pbrEnabled','u_pomEnabled','u_pbrDebugMode',
-      'u_aoSun','u_aoPoint','u_aoAmbient'];
+      'u_aoSun','u_aoPoint','u_aoAmbient',
+      'u_chamferEnabled','u_chamferFloorSize','u_chamferCeilSize','u_chamferWallSize','u_chamferCornerRadius','u_chamferDarken','u_chamferRoundCorners','u_chamferBlendFloor','u_chamferBlendWall','u_chamferRough','u_chamferFloor','u_chamferCeil','u_chamferWall'];
     names.forEach(n => ul[n] = gl.getUniformLocation(p, n));
 
     // quantize uniforms
@@ -196,6 +199,9 @@ export class GPURenderer {
 
     const fogCfgInit = config.fog || {}; this.fogEnabled = (fogCfgInit.enabled !== false) ? 1 : 0;
     const pomCfgInit = rc.pom || {}; this.pomEnabled = (pomCfgInit.enabled !== false) ? 1 : 0;
+    const pbrInit = config.pbr || {};
+    const chInit = pbrInit.chamfer || {};
+    this.chamferEnabled = (chInit.enabled !== false) ? 1 : 0;
     this.ready = true;
   }
 
@@ -227,12 +233,14 @@ export class GPURenderer {
   setPBREnabled(v) { this.pbrEnabled = v ? 1 : 0; }
   setPOMEnabled(v) { this.pomEnabled = v ? 1 : 0; }
   setFogEnabled(v) { this.fogEnabled = v ? 1 : 0; }
+  setChamferEnabled(v) { this.chamferEnabled = v ? 1 : 0; }
   setPBRDebugMode(v) { this.pbrDebugMode = Math.max(0, Math.min(8, v | 0)); }
   toggleGridDebug() { this.gridDebug ^= 1; return this.gridDebug; }
   toggleLighting() { this.lightingEnabled ^= 1; return this.lightingEnabled; }
   togglePBR() { this.pbrEnabled ^= 1; return this.pbrEnabled; }
   togglePOM() { this.pomEnabled ^= 1; return this.pomEnabled; }
   toggleFog() { this.fogEnabled ^= 1; return this.fogEnabled; }
+  toggleChamfer() { this.chamferEnabled ^= 1; return this.chamferEnabled; }
   cyclePBRDebug() { this.pbrDebugMode = (this.pbrDebugMode + 1) % 9; return this.pbrDebugMode; }
 
   uploadMap(dungeon) {
@@ -366,6 +374,7 @@ export class GPURenderer {
     gl.uniform1f(ul.u_pomFloor, (pom.floor ?? 0.07) * pomOn);
     gl.uniform1f(ul.u_pomCeil, (pom.ceil ?? 0.035) * pomOn);
     gl.uniform1i(ul.u_pomSteps, 8);
+
     if (ul.u_gridDebug) gl.uniform1i(ul.u_gridDebug, this.gridDebug ? 1 : 0);
     if (ul.u_lightingEnabled) gl.uniform1i(ul.u_lightingEnabled, this.lightingEnabled ? 1 : 0);
     if (ul.u_pbrEnabled) gl.uniform1i(ul.u_pbrEnabled, this.pbrEnabled ? 1 : 0);
@@ -377,6 +386,34 @@ export class GPURenderer {
     if (ul.u_aoSun) gl.uniform1f(ul.u_aoSun, aoCfg.affectSun ?? 0.25);
     if (ul.u_aoPoint) gl.uniform1f(ul.u_aoPoint, aoCfg.affectPoint ?? 0.35);
     if (ul.u_aoAmbient) gl.uniform1f(ul.u_aoAmbient, aoCfg.affectAmbient ?? 1.0);
+    // Chamfer config: pbr.chamfer - runtime toggle flag overrides config
+    const chCfg = pbrCfg.chamfer || {};
+    const cfgChamEnabled = chCfg.enabled !== false;
+    const chamEnabled = cfgChamEnabled && (this.chamferEnabled !== 0);
+    if (ul.u_chamferEnabled) gl.uniform1i(ul.u_chamferEnabled, chamEnabled ? 1 : 0);
+    // sizes: floorSize/ceilSize/wallSize world units, larger = visible bevel
+    const fSize = chCfg.floorSize ?? chCfg.floor ?? 0.28;
+    const cSize = chCfg.ceilSize ?? chCfg.ceil ?? 0.22;
+    const wSize = chCfg.wallSize ?? chCfg.wall ?? 0.28;
+    const cr = chCfg.cornerRadius ?? 0.22;
+    const dark = chCfg.darken ?? 0.55;
+    const round = chCfg.roundCorners ? 1 : 0;
+    const bFloor = chCfg.floorToWallBlend ?? chCfg.blendFloor ?? 0.92;
+    const bWall = chCfg.wallToWallBlend ?? chCfg.blendWall ?? 0.88;
+    const chRough = chCfg.affectRoughness ?? 0.35;
+    if (ul.u_chamferFloorSize) gl.uniform1f(ul.u_chamferFloorSize, fSize);
+    if (ul.u_chamferCeilSize) gl.uniform1f(ul.u_chamferCeilSize, cSize);
+    if (ul.u_chamferWallSize) gl.uniform1f(ul.u_chamferWallSize, wSize);
+    if (ul.u_chamferCornerRadius) gl.uniform1f(ul.u_chamferCornerRadius, cr);
+    if (ul.u_chamferDarken) gl.uniform1f(ul.u_chamferDarken, dark);
+    if (ul.u_chamferRoundCorners) gl.uniform1i(ul.u_chamferRoundCorners, round);
+    if (ul.u_chamferBlendFloor) gl.uniform1f(ul.u_chamferBlendFloor, bFloor);
+    if (ul.u_chamferBlendWall) gl.uniform1f(ul.u_chamferBlendWall, bWall);
+    if (ul.u_chamferRough) gl.uniform1f(ul.u_chamferRough, chRough);
+    // legacy alias uniforms
+    if (ul.u_chamferFloor) gl.uniform1f(ul.u_chamferFloor, fSize);
+    if (ul.u_chamferCeil) gl.uniform1f(ul.u_chamferCeil, cSize);
+    if (ul.u_chamferWall) gl.uniform1f(ul.u_chamferWall, wSize);
     gl.uniform1i(ul.u_authentic, this.authentic ? 1 : 0);
     if (ul.u_bandLevels) gl.uniform1i(ul.u_bandLevels, this.bandLevels);
     gl.uniform1f(ul.u_time, timeSec);

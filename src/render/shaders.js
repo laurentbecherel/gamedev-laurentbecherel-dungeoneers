@@ -1,4 +1,4 @@
-// GLSL shader sources for WebGL2 raycaster with palette quantization, sun lighting, shadows
+// GLSL shader sources for WebGL2 raycaster with palette quantization, sun lighting, shadows, chamfer
 export const vsSource = `#version 300 es
 in vec2 a_pos;
 out vec2 v_uv;
@@ -62,13 +62,46 @@ uniform int   u_gridDebug;
 uniform int   u_lightingEnabled;
 uniform int   u_pbrEnabled;
 uniform int   u_pomEnabled;
-uniform int   u_pbrDebugMode; // 0=off,1=albedo,2=normal raw,3=world normal,4=height,5=rough,6=metal,7=AO,8=emissive
+uniform int   u_pbrDebugMode;
 
 uniform float u_aoSun;
 uniform float u_aoPoint;
 uniform float u_aoAmbient;
 
+uniform int   u_chamferEnabled;
+uniform float u_chamferFloorSize;
+uniform float u_chamferCeilSize;
+uniform float u_chamferWallSize;
+uniform float u_chamferCornerRadius;
+uniform float u_chamferDarken;
+uniform int   u_chamferRoundCorners;
+uniform float u_chamferBlendFloor;
+uniform float u_chamferBlendWall;
+uniform float u_chamferRough;
+uniform float u_chamferFloor;
+uniform float u_chamferCeil;
+uniform float u_chamferWall;
+
 const float PI = 3.14159265;
+
+bool isWallCell(ivec2 c) {
+  if (c.x < 0 || c.y < 0 || c.x >= int(u_mapSize.x) || c.y >= int(u_mapSize.y)) return false;
+  vec4 m = texelFetch(u_mapTex, c, 0);
+  return (m.r * 255.0 > 0.5);
+}
+
+float nearestWallDistAndNormal(vec2 world, out vec3 outNorm) {
+  ivec2 cell = ivec2(floor(world));
+  vec2 f = fract(world);
+  float best = 100.0;
+  vec3 n = vec3(0.0);
+  if (isWallCell(cell + ivec2(1,0))) { float d = 1.0 - f.x; if (d < best) { best = d; n = vec3(-1.0, 0.0, 0.0); } }
+  if (isWallCell(cell + ivec2(-1,0))) { float d = f.x; if (d < best) { best = d; n = vec3(1.0, 0.0, 0.0); } }
+  if (isWallCell(cell + ivec2(0,1))) { float d = 1.0 - f.y; if (d < best) { best = d; n = vec3(0.0, -1.0, 0.0); } }
+  if (isWallCell(cell + ivec2(0,-1))) { float d = f.y; if (d < best) { best = d; n = vec3(0.0, 1.0, 0.0); } }
+  outNorm = n;
+  return best;
+}
 
 vec2 atlasUV(float matId, vec2 uv, float atlasW, float texS) {
   float tileU = (matId - 1.0 + uv.x) / (atlasW / texS);
@@ -78,7 +111,6 @@ vec3 decodeNormal(vec3 enc) { return normalize(enc * 2.0 - 1.0); }
 
 bool traceRay(vec2 origin, vec2 dir, float maxDist) {
   ivec2 mapPos = ivec2(floor(origin));
-  // guard against division by zero – if dir component ~0, deltaDist becomes huge but DDA still works
   vec2 deltaDist = abs(1.0 / dir);
   ivec2 iStep; vec2 sideDist;
   if(dir.x < 0.0){ iStep.x = -1; sideDist.x = (origin.x - float(mapPos.x)) * deltaDist.x; } else { iStep.x = 1; sideDist.x = (float(mapPos.x+1) - origin.x) * deltaDist.x; }
@@ -92,10 +124,7 @@ bool traceRay(vec2 origin, vec2 dir, float maxDist) {
     if(perp > maxDist) return false;
     vec4 ms = texelFetch(u_mapTex, mapPos, 0);
     int cell = int(ms.r*255.0+0.5);
-    if(cell>0){
-      // wall encountered within maxDist -> in shadow
-      return true;
-    }
+    if(cell>0){ return true; }
   }
   return false;
 }
@@ -115,30 +144,19 @@ float GeometrySmith(vec3 N, vec3 V, vec3 L, float roughness){
 vec3 fresnelSchlick(float cosTheta, vec3 F0){ return F0 + (1.0-F0)*pow(clamp(1.0-cosTheta,0.0,1.0),5.0); }
 
 vec2 pomOffset(sampler2D heightMap, vec2 uv, vec3 viewTS, float strength, int steps) {
-  // Centered reference plane: 0.5 == 0 displacement, <0.5 intrude, >0.5 extrude.
-  // Fixes:
-  // - floating floor (offset centered)
-  // - vertical streaks at grazing (~80° to wall). At grazing viewTS.z→0, fullOffset = viewTS.xy*strength/vz explodes.
-  //   With 8 steps the march skips whole bricks and CLAMP_TO_EDGE smears the tile edge as thin black vertical lines
-  //   (visible far down a corridor wall). Fix: impose a minimum viewing angle, fade to zero at extreme grazing, and clamp max offset.
   if (strength <= 0.00001) return vec2(0.0);
   float vzAbs = abs(viewTS.z);
-  if (vzAbs < 0.08) return vec2(0.0); // ~<5° to surface -> no parallax (would blow up, produce vertical smeared mortar)
+  if (vzAbs < 0.08) return vec2(0.0);
   float layerDepth = 1.0 / float(steps);
-  // Effective vz clamped to avoid divergence: 10° min (~0.173) keeps offset bounded near grazing
   float effVz = max(vzAbs, 0.18);
   vec2 fullOffset = viewTS.xy * strength / effVz;
-  // Fade POM between 5° and ~13° (0.08-0.22) so grazing close-up still shows side but far 80° wall fades
   float fade = 1.0;
   if (vzAbs < 0.22) fade = (vzAbs - 0.08) / (0.22 - 0.08);
-  // Hard limit: don't let parallax cross more than ~1.5 bricks (≈0.10 UV = 6.4 texels at 64px).
-  // Beyond that we hit CLAMP_TO_EDGE and get persistent vertical mortar streaks.
   float maxOffset = 0.10;
   float lenOff = length(fullOffset);
   if (lenOff > maxOffset) fullOffset *= maxOffset / lenOff;
   fullOffset *= fade;
   vec2 delta = fullOffset / float(steps);
-  // Start half behind so height=0.5 lands at 0 offset
   vec2 curUV = uv - fullOffset * 0.5;
   float curDepth = 0.0;
   float height = texture(heightMap, curUV).r;
@@ -163,18 +181,10 @@ vec3 debugShowPBR(int mode, vec3 albedoRaw, vec3 normalRaw, vec3 worldN, float h
   return albedoRaw;
 }
 vec3 pbrShade(vec3 albedo, vec3 N, float rough, float metal, float ao, vec3 emissive, vec3 worldPos, vec3 viewDir) {
-  if (u_lightingEnabled == 0) {
-    return albedo;
-  }
-  // AO influence factors from config pbr.ao.{affectSun,affectPoint,affectAmbient}
-  // mix(1, ao, affect) => 0=ignore AO, 1=full AO
+  if (u_lightingEnabled == 0) { return albedo; }
   float aoSunEff = mix(1.0, ao, clamp(u_aoSun, 0.0, 1.0));
   float aoPointEff = mix(1.0, ao, clamp(u_aoPoint, 0.0, 1.0));
   float aoAmbEff = mix(1.0, ao, clamp(u_aoAmbient, 0.0, 1.0));
-  // --- Shadow bias fix for acne artifacts ---
-  // Use a snapped geometric normal for the bias origin so brick normal-map jitter
-  // does not cause per-pixel DDA path changes (the black brick-grid speckles).
-  // Walls are axis-aligned in the grid map, so snapping to dominant XY axis is stable.
   vec3 ng = vec3(N.x, N.y, 0.0);
   float ngLen = length(ng);
   vec3 traceN;
@@ -190,12 +200,10 @@ vec3 pbrShade(vec3 albedo, vec3 N, float rough, float metal, float ao, vec3 emis
     vec3 Lsun = -sunDir;
     float sunShadow = 1.0;
     vec2 shadowDirSun = normalize(Lsun.xy);
-    // push off surface + forward along ray (0.08 + 0.06) – standard acne mitigation
     vec2 shadowOriginSun = worldPos.xy + traceN.xy * 0.10 + shadowDirSun * 0.06;
     if (length(shadowDirSun) > 0.01 && traceRay(shadowOriginSun, shadowDirSun, 20.0)) sunShadow = 0.25;
     float NdotLsun = max(dot(N, Lsun), 0.0);
     vec3 sunContrib = albedo * u_sunColor * u_sunIntensity * NdotLsun * sunShadow * aoSunEff;
-
     vec3 Lp = u_lightPos - worldPos;
     float distp = length(Lp);
     vec3 pointContrib = vec3(0.0);
@@ -214,7 +222,6 @@ vec3 pbrShade(vec3 albedo, vec3 N, float rough, float metal, float ao, vec3 emis
   }
   vec3 F0 = mix(vec3(0.04), albedo, metal);
   vec3 Lo = vec3(0.0);
-
   vec3 sunDir = normalize(vec3(u_sunDir.xy, u_sunDirZ));
   vec3 Lsun = -sunDir;
   float sunShadow = 1.0;
@@ -261,6 +268,7 @@ vec3 pbrShade(vec3 albedo, vec3 N, float rough, float metal, float ao, vec3 emis
   vec3 color = ambient + Lo + emissive;
   return color;
 }
+
 void main() {
   vec2 fragCoord = vec2(v_uv.x * u_resolution.x, (1.0 - v_uv.y) * u_resolution.y);
   float cameraX = 2.0 * fragCoord.x / u_resolution.x - 1.0;
@@ -341,6 +349,25 @@ void main() {
           vec3 albedo = (u_gridDebug == 1) ? vec3(0.0, (fract(floorWorld).x > 0.97 || fract(floorWorld).y > 0.97 ? 1.0 : 0.25) * 0.9, 0.0) : albedoRaw * 0.7;
           vec3 N = (u_gridDebug == 1) ? vec3(0,0,1) : Nw;
           if (u_gridDebug == 1) { rma = vec4(0.9,0,0,1); ao = 1.0; emissive = vec3(0); }
+          else {
+            if (u_chamferEnabled == 1) {
+              vec3 wN; float wd = nearestWallDistAndNormal(floorWorld, wN);
+              float fS = max(u_chamferFloorSize, 0.001);
+              if (wd < fS && length(wN) > 0.1) {
+                float t = wd / fS;
+                float bevel = 1.0 - smoothstep(0.0, 1.0, t);
+                vec3 cham = normalize(wN + vec3(0.0,0.0,1.0));
+                vec3 roundCham = normalize(mix(cham, vec3(0.0,0.0,1.0), smoothstep(0.0,1.0,t)));
+                vec3 targetN = (u_chamferRoundCorners==1) ? roundCham : cham;
+                N = normalize(mix(N, targetN, bevel * clamp(u_chamferBlendFloor,0.0,1.0)));
+                // crevice darken only very close, trim highlight in middle of band
+                ao *= mix(u_chamferDarken, 1.0, smoothstep(0.0, 0.30, t));
+                float trimBand = smoothstep(0.08, 0.35, t) * (1.0 - smoothstep(0.35, 1.0, t));
+                albedo += vec3(trimBand * 0.18);
+                rma.r = mix(rma.r * (1.0 - u_chamferRough*0.5), rma.r, t);
+              }
+            }
+          }
           vec3 worldPos = vec3(floorWorld, floorH_atRay);
           vec3 viewDir = normalize(vec3(u_playerPos, eyeZ) - worldPos);
           finalColor = pbrShade(albedo, N, rma.r, rma.g, ao, emissive, worldPos, viewDir);
@@ -372,6 +399,23 @@ void main() {
           vec3 albedo = (u_gridDebug == 1) ? vec3(0.0, 0.0, (fract(ceilWorld).x > 0.97 || fract(ceilWorld).y > 0.97 ? 1.0 : 0.25) * 0.9) : albedoRaw * 0.8;
           vec3 N = (u_gridDebug == 1) ? vec3(0,0,-1) : Nw;
           if (u_gridDebug == 1) { rma = vec4(0.9,0,0,1); ao = 1.0; emissive = vec3(0); }
+          else {
+            if (u_chamferEnabled == 1) {
+              vec3 wN; float wd = nearestWallDistAndNormal(ceilWorld, wN);
+              float cS = max(u_chamferCeilSize, 0.001);
+              if (wd < cS && length(wN) > 0.1) {
+                float t = wd / cS;
+                float bevel = 1.0 - smoothstep(0.0,1.0,t);
+                vec3 cham = normalize(wN + vec3(0.0,0.0,-1.0));
+                vec3 targetN = (u_chamferRoundCorners==1) ? normalize(mix(vec3(0.0,0.0,-1.0), cham, t)) : cham;
+                N = normalize(mix(N, targetN, bevel * clamp(u_chamferBlendFloor,0.0,1.0)));
+                ao *= mix(u_chamferDarken, 1.0, smoothstep(0.0, 0.30, t));
+                float trimBand = smoothstep(0.08, 0.35, t) * (1.0 - smoothstep(0.35, 1.0, t));
+                albedo += vec3(trimBand * 0.14);
+                rma.r = mix(rma.r * (1.0 - u_chamferRough*0.35), rma.r, t);
+              }
+            }
+          }
           vec3 worldPos = vec3(ceilWorld, ceilH_atRay);
           vec3 viewDir = normalize(vec3(u_playerPos, eyeZ) - worldPos);
           finalColor = pbrShade(albedo, N, rma.r, rma.g, ao, emissive, worldPos, viewDir);
@@ -411,6 +455,65 @@ void main() {
       vec4 rmaW = texture(u_wallRoughMetal, uvPOM);
       vec3 emissiveW = albedoRaw * 0.8 * rmaW.b * 2.5;
       vec3 Nw = normalize(tangent * normalTSw.x + bitangent * normalTSw.y + Ngeom * normalTSw.z);
+
+      if (u_chamferEnabled == 1 && u_pbrDebugMode == 0 && u_gridDebug == 0) {
+        // Horizontal floor-wall and ceil-wall bevel - now visible: up to 30% wall height with highlight
+        {
+          float fS = max(u_chamferFloorSize, 0.04);
+          float cS = max(u_chamferCeilSize, 0.04);
+          if (wallV < fS) {
+            float t = wallV / fS;
+            float bevel = 1.0 - smoothstep(0.0, 1.0, t);
+            vec3 up = vec3(0.0, 0.0, 1.0);
+            vec3 chamGeom = normalize(Ngeom + up);
+            vec3 chamRound = normalize(mix(up, chamGeom, smoothstep(0.0, 1.0, t)));
+            vec3 targetN = (u_chamferRoundCorners==1) ? chamRound : chamGeom;
+            Nw = normalize(mix(Nw, targetN, bevel * clamp(u_chamferBlendFloor,0.0,1.0)));
+            // AO: dark only in first 12% crevice, then light
+            float aoT = smoothstep(0.0, 0.12, t);
+            rmaW.a *= mix(u_chamferDarken, 1.0, aoT);
+            // trim highlight in middle of band (like baseboard catching light)
+            float trim = smoothstep(0.12, 0.32, t) * (1.0 - smoothstep(0.32, 1.0, t));
+            albedoRaw += vec3(trim * 0.22);
+            rmaW.r *= mix(0.58, 1.0, t);
+          }
+          if ((1.0 - wallV) < cS) {
+            float t = (1.0 - wallV) / cS;
+            float bevel = 1.0 - smoothstep(0.0, 1.0, t);
+            vec3 down = vec3(0.0, 0.0, -1.0);
+            vec3 chamGeom = normalize(Ngeom + down);
+            vec3 targetN = (u_chamferRoundCorners==1) ? normalize(mix(down, chamGeom, smoothstep(0.0,1.0,t))) : chamGeom;
+            Nw = normalize(mix(Nw, targetN, bevel * clamp(u_chamferBlendFloor,0.0,1.0)));
+            float aoT = smoothstep(0.0, 0.12, t);
+            rmaW.a *= mix(u_chamferDarken, 1.0, aoT);
+            float trim = smoothstep(0.12, 0.32, t) * (1.0 - smoothstep(0.32, 1.0, t));
+            albedoRaw += vec3(trim * 0.18);
+            rmaW.r *= mix(0.62, 1.0, t);
+          }
+        }
+        // Vertical wall-wall: every cell edge gets a 45° bevel, visible spec highlight, no skip for concave
+        {
+          float vS = max(u_chamferWallSize, 0.04);
+          float e = min(wallU, 1.0 - wallU);
+          if (e < vS) {
+            float t = e / vS;
+            float bevel = 1.0 - smoothstep(0.0, 1.0, t);
+            vec3 n2;
+            if (side == 0) {
+              n2 = (wallU < 0.5) ? vec3(0.0, -1.0, 0.0) : vec3(0.0, 1.0, 0.0);
+            } else {
+              n2 = (wallU < 0.5) ? vec3(-1.0, 0.0, 0.0) : vec3(1.0, 0.0, 0.0);
+            }
+            vec3 diag = normalize(Ngeom + n2);
+            Nw = normalize(mix(Nw, diag, bevel * clamp(u_chamferBlendWall,0.0,1.0)));
+            rmaW.a *= mix(u_chamferDarken*0.88 + 0.12, 1.0, smoothstep(0.0, 0.45, t));
+            rmaW.r *= mix(0.65, 1.0, smoothstep(0.0, 1.0, t));
+            float trim = smoothstep(0.0, 0.25, t) * (1.0 - smoothstep(0.25, 1.0, t));
+            // vertical edge slightly brighter catching light
+            albedoRaw += vec3(trim * 0.16);
+          }
+        }
+      }
 
       if (u_pbrDebugMode != 0 && u_gridDebug == 0) {
         finalColor = debugShowPBR(u_pbrDebugMode, albedoRaw, normalRaw, Nw, heightVal, rmaW, emissiveW);
@@ -469,6 +572,22 @@ void main() {
         vec3 albedo = (u_gridDebug == 1) ? vec3(0.0, (fract(floorWorld).x > 0.97 || fract(floorWorld).y > 0.97 ? 1.0 : 0.25) * 0.9, 0.0) : albedoRaw * 0.7;
         vec3 N = (u_gridDebug == 1) ? vec3(0,0,1) : Nw;
         if (u_gridDebug == 1) { rma = vec4(0.9,0,0,1); ao = 1.0; emissive = vec3(0); }
+        else {
+          if (u_chamferEnabled == 1) {
+            vec3 wN; float wd = nearestWallDistAndNormal(floorWorld, wN);
+            float fS = max(u_chamferFloorSize, 0.001);
+            if (wd < fS && length(wN) > 0.1) {
+              float t = wd / fS;
+              float bevel = 1.0 - smoothstep(0.0, 1.0, t);
+              vec3 cham = normalize(wN + vec3(0.0,0.0,1.0));
+              N = normalize(mix(N, cham, bevel * clamp(u_chamferBlendFloor,0.0,1.0)));
+              ao *= mix(u_chamferDarken, 1.0, smoothstep(0.0, 0.30, t));
+              float trimBand = smoothstep(0.08, 0.32, t) * (1.0 - smoothstep(0.32, 1.0, t));
+              albedo += vec3(trimBand * 0.18);
+              rma.r = mix(rma.r * (1.0 - u_chamferRough*0.5), rma.r, t);
+            }
+          }
+        }
         vec3 worldPos = vec3(floorWorld, floorH);
         vec3 viewDir = normalize(vec3(u_playerPos, eyeZ2) - worldPos);
         finalColor = pbrShade(albedo, N, rma.r, rma.g, ao, emissive, worldPos, viewDir);
@@ -510,6 +629,22 @@ void main() {
         vec3 albedo = (u_gridDebug == 1) ? vec3(0.0, 0.0, (fract(ceilWorld).x > 0.97 || fract(ceilWorld).y > 0.97 ? 1.0 : 0.2) * 0.9) : albedoRaw * 0.8;
         vec3 N = (u_gridDebug == 1) ? vec3(0,0,-1) : Nw;
         if (u_gridDebug == 1) { rma = vec4(0.9,0,0,1); ao = 1.0; emissive = vec3(0); }
+        else {
+          if (u_chamferEnabled == 1) {
+            vec3 wN; float wd = nearestWallDistAndNormal(ceilWorld, wN);
+            float cS = max(u_chamferCeilSize, 0.001);
+            if (wd < cS && length(wN) > 0.1) {
+              float t = wd / cS;
+              float bevel = 1.0 - smoothstep(0.0, 1.0, t);
+              vec3 cham = normalize(wN + vec3(0.0,0.0,-1.0));
+              N = normalize(mix(N, cham, bevel * clamp(u_chamferBlendFloor,0.0,1.0)));
+              ao *= mix(u_chamferDarken, 1.0, smoothstep(0.0, 0.30, t));
+              float trimBand = smoothstep(0.08, 0.32, t) * (1.0 - smoothstep(0.32, 1.0, t));
+              albedo += vec3(trimBand * 0.14);
+              rma.r = mix(rma.r * (1.0 - u_chamferRough*0.3), rma.r, t);
+            }
+          }
+        }
         vec3 worldPos = vec3(ceilWorld, ceilH);
         vec3 viewDir = normalize(vec3(u_playerPos, eyeZ2) - worldPos);
         finalColor = pbrShade(albedo, N, rma.r, rma.g, ao, emissive, worldPos, viewDir);

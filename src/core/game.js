@@ -113,6 +113,7 @@ export class Game {
     else if (k === "4") { const v = this.renderer.togglePOM(); this._showHud(`POM: ${v ? 'ON' : 'OFF'}`); }
     else if (k === "5") { const v = this.renderer.toggleFog(); this._showHud(`Fog: ${v ? 'ON' : 'OFF'}`); }
     else if (k === "6") { const v = this.renderer.cyclePBRDebug(); const names=['OFF','Albedo','Normal raw','World Normal','Height','Rough','Metal','AO','Emissive']; this._showHud(`PBR Debug: ${names[v]} (${v})`); }
+    else if (k === "7") { const v = this.renderer.toggleChamfer(); this._showHud(`Chamfer: ${v ? 'ON (floor/ceil baseboard + vertical edges)' : 'OFF (sharp 90°)'}`); }
   }
 
   _showHud(msg) {

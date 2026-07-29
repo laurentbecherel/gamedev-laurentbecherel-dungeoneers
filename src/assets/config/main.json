@@ -61,6 +61,19 @@
     "roughness": {
       "clampMin": 0.2,
       "clampMax": 0.95
+    },
+    "chamfer": {
+      "enabled": true,
+      "floorSize": 0.30,
+      "ceilSize": 0.24,
+      "wallSize": 0.28,
+      "cornerRadius": 0.22,
+      "darken": 0.55,
+      "roundCorners": false,
+      "floorToWallBlend": 0.92,
+      "wallToWallBlend": 0.88,
+      "affectRoughness": 0.35,
+      "note": "floorSize/ceilSize world meters baseboard/cove, wallSize UV fraction vertical edges. darken AO in crevice, toggle with key 7"
     }
   },
   "ui": {
