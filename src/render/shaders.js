@@ -734,15 +734,43 @@ void main() {
       vec2 uv = vec2(wallU, wallV);
       vec2 uvAtlas = atlasUV(matId, uv, u_atlasWalls, u_texSize);
 
-      vec3 Ngeom = vec3(0.0);
-      vec3 tangent = vec3(0.0);
+      // --- Flat basis ---
+      vec3 NgeomFlat = vec3(0.0);
+      vec3 tangentFlat = vec3(0.0);
       vec3 bitangent = vec3(0.0, 0.0, 1.0);
       if (side == 0) {
-        Ngeom = vec3(float(-stepDir.x), 0.0, 0.0);
-        tangent = vec3(0.0, 1.0, 0.0);
+        NgeomFlat = vec3(float(-stepDir.x), 0.0, 0.0);
+        tangentFlat = vec3(0.0, 1.0, 0.0);
       } else {
-        Ngeom = vec3(0.0, float(-stepDir.y), 0.0);
-        tangent = vec3(1.0, 0.0, 0.0);
+        NgeomFlat = vec3(0.0, float(-stepDir.y), 0.0);
+        tangentFlat = vec3(1.0, 0.0, 0.0);
+      }
+
+      // --- Rounded corners: compute proper geometric normal FIRST ---
+      // The old code built Nw with flat TBN then did mix(Nw, cn, nMix) which killed
+      // normal-map detail and produced wrong WORLD normals. Instead we mix the
+      // geometric normals, rebuild a valid orthonormal TBN, and then apply the
+      // normal map on top of the rounded basis. This preserves PBR detail and
+      // gives correct world normals for lighting + debug.
+      vec3 Ngeom = NgeomFlat;
+      vec3 tangent = tangentFlat;
+      vec3 cornerGeom = vec3(0.0);
+      if (hasCornerRound) {
+        cornerGeom = cornerNormal;
+        if (u_cornerMode == 0) {
+          vec3 n2 = (side == 0) ? vec3(0.0, (wallU < 0.5 ? -1.0 : 1.0), 0.0) : vec3((wallU < 0.5 ? -1.0 : 1.0), 0.0, 0.0);
+          cornerGeom = normalize(NgeomFlat + n2);
+        }
+        // Mix geometric normals per u_cornerNormalMix (default 0.92) — not final world normal
+        Ngeom = normalize(mix(NgeomFlat, cornerGeom, clamp(nMix, 0.0, 1.0)));
+        // Orthogonalize flat tangent to new Ngeom to keep texture direction stable
+        float dotTN = dot(tangentFlat, Ngeom);
+        vec3 tOrtho = tangentFlat - dotTN * Ngeom;
+        if (dot(tOrtho, tOrtho) < 0.000001) {
+          tOrtho = vec3(-Ngeom.y, Ngeom.x, 0.0);
+          if (dot(tOrtho, tangentFlat) < 0.0) tOrtho = -tOrtho;
+        }
+        tangent = normalize(tOrtho);
       }
 
       vec3 worldPos = vec3(hitPos.x, hitPos.y, u_playerHeight + (wallV - 0.5));
@@ -760,15 +788,11 @@ void main() {
       float heightVal = texture(u_wallHeight, uvPOM).r;
       vec4 rmaW = texture(u_wallRoughMetal, uvPOM);
       vec3 emissiveW = albedoRaw * emissiveAlbedoMul * rmaW.b * emissiveStrength;
+      // Proper PBR: normal map applied on top of rounded TBN, preserving detail
       vec3 Nw = normalize(tangent * normalTSw.x + bitangent * normalTSw.y + Ngeom * normalTSw.z);
 
       if (hasCornerRound && u_pbrDebugMode == 0 && u_gridDebug == 0) {
-        vec3 cn = cornerNormal;
-        if (u_cornerMode == 0) {
-          vec3 n2 = (side == 0) ? vec3(0.0, (wallU < 0.5 ? -1.0 : 1.0), 0.0) : vec3((wallU < 0.5 ? -1.0 : 1.0), 0.0, 0.0);
-          cn = normalize(Ngeom + n2);
-        }
-        Nw = normalize(mix(Nw, cn, nMix));
+        // Keep material tweaks but do NOT overwrite Nw — detail is already in Nw via TBN
         albedoRaw += vec3(albBoost);
         rmaW.r *= roughMul;
         rmaW.a *= aoMul;

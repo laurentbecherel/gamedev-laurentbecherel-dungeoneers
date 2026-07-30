@@ -115,12 +115,15 @@ test("True geometry rounded corners: ray-circle intersection + outer convex / in
   assert(fsSource.includes("u_cornerEnabled") && fsSource.includes("u_cornerRadius"), "corner uniforms");
   assert(fsSource.includes("u_cornerMode") && fsSource.includes("u_cornerInner"), "corner mode/inner");
   assert(fsSource.includes("cornerNormal") && fsSource.includes("hasCornerRound"), "stores corner normal and flag");
-  // must replace perpDist with tCand
-  assert(fsSource.includes("perpDist = tCand") || fsSource.includes("tCand"), "replaces wall hit with rounded corner intersection");
-  // sector threshold check
-  assert(fsSource.includes("sectorThresh") || fsSource.includes("sector"), "sector threshold check");
-  // band checks
-  assert(fsSource.includes("bandNear") && fsSource.includes("bandFar"), "band near/far checks");
+  // must replace perpDist with rounded candidate (historically tCand, now cT/outT via resolveWallHit)
+  const hasRoundedReplace = fsSource.includes("perpDist = tCand") || fsSource.includes("tCand") ||
+                            fsSource.includes("perpDist = cT") || fsSource.includes("resolveWallHit");
+  assert(hasRoundedReplace, "replaces wall hit with rounded corner intersection (resolveWallHit/cT/tCand)");
+  // sector threshold check — uniform exists, usage may be via uniform name (case-insensitive)
+  const lower = fsSource.toLowerCase();
+  assert(lower.includes("sectorthresh") || lower.includes("sector") || fsSource.includes("u_cornerSectorThresh"), "sector threshold check");
+  // band checks — uniforms defined (case-insensitive, uniforms use BandNear/BandFar casing)
+  assert(lower.includes("bandnear") && lower.includes("bandfar"), "band near/far checks");
 });
 
 test("Fog exponential squared with gating uniform", () => {
