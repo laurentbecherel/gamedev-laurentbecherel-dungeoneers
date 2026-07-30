@@ -1,0 +1,21 @@
+name = "Dungeoneers: Player Controller Polish"
+instruction = "./instruction.md"
+
+[game]
+tags = ["rpg", "arcade", "first-person"]
+tech-stack-tags = ["vanilla-js", "webgl", "html5"]
+assets-used = ["primitives", "procedural"]
+harness = "Metacode"
+screenshots = [
+  "./screenshots/game-grid-on.png",
+  "./screenshots/game-grid-off.png",
+  "./screenshots/game-bob-on.png",
+  "./screenshots/game-bob-off.png",
+  "./screenshots/game-mouse-look.png",
+  "./screenshots/editor-player-config.png"
+]
+videos = []
+teaser = ""
+base-commit-hash = "c2e768d67d55a8ce6fc6df7916070c8be23885ec"
+commit-hash = ""
+avocado-model = "Muse Spark 1.1"

@@ -187,7 +187,9 @@ export class GPURenderer {
       // pbr extended
       'u_pbrEmissiveAlbedoMul','u_pbrEmissiveStrength','u_pbrF0','u_pbrAttenQuad','u_pbrGGXEps',
       // rendering surface
-      'u_renderFloorMul','u_renderCeilMul','u_renderWallDarken','u_renderEyeFactor'
+      'u_renderFloorMul','u_renderCeilMul','u_renderWallDarken','u_renderEyeFactor',
+      // Task 4 bob
+      'u_bobPixels'
     ];
     names.forEach(n => ul[n] = gl.getUniformLocation(p, n));
 
@@ -382,16 +384,43 @@ export class GPURenderer {
     gl.bindVertexArray(this.vao);
 
     const ul = this.uLoc;
-    const pos = player.getPosition();
+    // Task 4: Apply view bob — prototype exact: lateral via right vector, roll via angle, vertical via screen pixel offset (bobPixels)
+    // This matches mygame: bobPixels = viewBobOffset * h * 0.8, bobX via right vector, roll added to angle.
+    // Ensures figure-8 path and centered snap when idle (bobAmount decays).
+    const rawPos = player.getPosition();
+    // Use raw xy from player (player.js returns base+vertical bob in z, but xy is world pos without lateral bob)
+    // For centering, xy should be floor+0.5 when idle in grid mode — enforced by player.js and game.js spawn using floor+0.5
+    let camX = rawPos.x;
+    let camY = rawPos.y;
+    // If player x,y are not centered due to free drift, grid mode would have snapped already; still ensure we use raw pos
+    // Remove any accidental bob from getPosition z — we use explicit offsets below
+    const bobOffsetX = player.viewBobOffsetX || 0;
+    const bobRoll = player.viewBobRoll || 0;
+    const bobOffsetY = player.viewBobOffset || 0;
+    const baseAngle = (typeof player.getRawAngle === 'function') ? player.getRawAngle() : player.angle;
+    if (bobOffsetX !== 0) {
+      const rx = -Math.sin(baseAngle);
+      const ry = Math.cos(baseAngle);
+      camX += rx * bobOffsetX;
+      camY += ry * bobOffsetX;
+    }
+    const renderAngle = baseAngle + bobRoll;
     gl.uniform2f(ul.u_resolution, this.canvas.width, this.canvas.height);
-    gl.uniform2f(ul.u_playerPos, pos.x, pos.y);
-    gl.uniform1f(ul.u_playerAngle, player.getAngle());
+    gl.uniform2f(ul.u_playerPos, camX, camY);
+    gl.uniform1f(ul.u_playerAngle, renderAngle);
+
+    // bobPixels like mygame: vertical world offset converted to screen pixels to shift fragCoord
+    // mygame factor h*0.8, dungeoneers canvas h is 360 internal, so use same
+    const renderH = this.h || this.canvas.height || 360;
+    const bobPixels = bobOffsetY * renderH * 0.8;
+    if (ul.u_bobPixels) gl.uniform1f(ul.u_bobPixels, bobPixels);
 
     // --- Rendering / FOV / Eye ---
     const rendering = cfg.rendering || {};
     const legacyRenderer = cfg.renderer || {};
     const fov = this._resolveConfigValue(cfg, ['rendering.fov','renderer.fov'], 1.0);
-    const playerHeight = this._resolveConfigValue(cfg, ['player.height','rendering.eye.height','renderer.eyeHeight'], 0.5);
+    const baseHeight = this._resolveConfigValue(cfg, ['player.height','rendering.eye.height','renderer.eyeHeight'], 0.5);
+    const playerHeight = baseHeight; // vertical bob now via u_bobPixels, not world height — matches prototype axis
     const eyeFactor = this._resolveConfigValue(cfg, ['rendering.eye.playerHeightFactor','rendering.eyeFactor','debug.overlay.eyeFactor'], 0.15);
     gl.uniform1f(ul.u_fov, fov);
     gl.uniform1f(ul.u_playerHeight, playerHeight);

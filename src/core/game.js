@@ -1,6 +1,6 @@
 // Game — top-level orchestration owning all subsystems.
-// Now loads all dedicated rendering configs (POM/PBR/AO/Chamfer/Corners/Shadows/Lighting/Rendering/Palette/Raymarch/Map/MaterialsProc/Player/Debug/Fog/Generator)
-// All configs are editor-tracked JSON in src/assets/config/
+// Loads dedicated rendering configs + player.json v2 (grid mode, bob, speeds)
+// AZERTY-safe: all shortcuts use event.code, not key, see input.js CODE_MAP
 
 import { getConfig, getAllRenderConfigs } from "../config/config.js";
 import { generateDungeon } from "../world/dungeon/index.js";
@@ -21,23 +21,20 @@ export class Game {
     this.ui = null;
     this.lastTime = 0;
     this.showMap = false;
+    this._bobPresetIdx = 1;
     this._loop = this._loop.bind(this);
     this._onKeyDown = this._onKeyDown.bind(this);
   }
 
   _mergeConfigs(baseCfg, renderCfgs){
-    // renderCfgs contains all dedicated files, may have nulls
     const merged = { ...baseCfg };
-    // Direct dedicated entries
     for(const [k,v] of Object.entries(renderCfgs)){
       if(v) merged[k] = v;
     }
-    // Backward compatibility aliases
-    // generator already in renderCfgs.generator but also top-level legacy
     merged.generator = renderCfgs.generator || baseCfg.generator || {};
     merged.fog = renderCfgs.fog || baseCfg.fog || { enabled:true, base:0.06, squared:0.005, color:[0.05,0.05,0.08] };
-    merged.rendering = renderCfgs.rendering || baseCfg.rendering || { fov:1.0, textureFilter:'nearest', resolution:'640x360' };
-    merged.palette = renderCfgs.palette || baseCfg.palette || { authentic:true, paletteStyle:'doom', bandLevels:32 };
+    merged.rendering = renderCfgs.rendering || baseCfg.rendering || { fov:1.0, textureFilter:"nearest", resolution:"640x360" };
+    merged.palette = renderCfgs.palette || baseCfg.palette || { authentic:true, paletteStyle:"doom", bandLevels:32 };
     merged.pom = renderCfgs.pom || baseCfg.pbr?.pom || baseCfg.renderer?.pom || { enabled:true, wall:0.06, floor:0.07, ceil:0.035, steps:8 };
     merged.pbr = renderCfgs.pbr || baseCfg.pbr || { ao:{affectSun:0.25,affectPoint:0.35,affectAmbient:1.0} };
     merged.ao = renderCfgs.ao || baseCfg.ao || baseCfg.pbr?.ao || { affect:{sun:0.25,point:0.35,ambient:1.0} };
@@ -46,23 +43,19 @@ export class Game {
     merged.chamfer = renderCfgs.chamfer || baseCfg.chamfer || baseCfg.pbr?.chamfer || { enabled:true, floorSize:0.30, ceilSize:0.24, wallSize:0.28 };
     merged.corners = renderCfgs.corners || baseCfg.corners || baseCfg.pbr?.corner || { enabled:true, radius:0.15, mode:2, inner:true };
     merged.raymarch = renderCfgs.raymarch || baseCfg.raymarch || { maxSteps:64 };
-    merged.map = renderCfgs.map || baseCfg.map || baseCfg.ui?.map || { display:{position:'fullscreen',size:640,opacity:0.92} };
-    merged.materialsProc = renderCfgs['materials-proc'] || baseCfg.materialsProc || baseCfg['materials-proc'] || baseCfg.materialProc || { walls:{}, floors:{}, ceils:{} };
+    merged.map = renderCfgs.map || baseCfg.map || baseCfg.ui?.map || { display:{position:"fullscreen",size:640,opacity:0.92} };
+    merged.materialsProc = renderCfgs["materials-proc"] || baseCfg.materialsProc || baseCfg["materials-proc"] || baseCfg.materialProc || { walls:{}, floors:{}, ceils:{} };
     merged.playerCfg = renderCfgs.player || baseCfg.playerCfg || baseCfg.player || { moveSpeed:3, turnSpeed:2.2, radius:0.28, height:0.5 };
     merged.debug = renderCfgs.debug || baseCfg.debug || {};
-
-    // Convenience flat accessors still used by old code paths
     merged.items = merged.generator?.items || baseCfg.items || { maxTorches:24, minTorchDist:6, corridorBias:1.5, torchOffset:0.35 };
     merged.torchColors = merged.generator?.torchColors || merged.lighting?.torchColors || baseCfg.torchColors || lightingFallbackColors();
     merged.boundaryWallId = merged.generator?.boundaryWallId ?? baseCfg.boundaryWallId ?? 1;
-
-    // Keep legacy renderer and pbr fields for renderer-gpu fallback lookup
     if(!merged.renderer) merged.renderer = {
       fov: merged.rendering?.fov ?? 1.0,
-      textureFilter: merged.rendering?.textureFilter ?? 'nearest',
-      resolution: merged.rendering?.resolution ?? '640x360',
+      textureFilter: merged.rendering?.textureFilter ?? "nearest",
+      resolution: merged.rendering?.resolution ?? "640x360",
       authentic: merged.palette?.authentic ?? true,
-      paletteStyle: merged.palette?.paletteStyle ?? 'doom',
+      paletteStyle: merged.palette?.paletteStyle ?? "doom",
       bandLevels: merged.palette?.bandLevels ?? 32,
       pom: { wall: merged.pom?.strength?.wall ?? merged.pom?.wall ?? 0.06, floor: merged.pom?.strength?.floor ?? merged.pom?.floor ?? 0.07, ceil: merged.pom?.strength?.ceil ?? merged.pom?.ceil ?? 0.035, steps: merged.pom?.steps ?? 8 }
     };
@@ -80,9 +73,8 @@ export class Game {
       sunColor: merged.lighting?.sun?.color ?? [1,1,1]
     };
     if(!merged.player) merged.player = merged.playerCfg;
-    if(!merged.ui) merged.ui = { map: merged.map?.display || merged.map || { position:'fullscreen', size:640, opacity:0.92, parchmentBg:'#e8dcc4', parchmentScan:'#ddd0b8' } };
+    if(!merged.ui) merged.ui = { map: merged.map?.display || merged.map || { position:"fullscreen", size:640, opacity:0.92, parchmentBg:"#e8dcc4", parchmentScan:"#ddd0b8" } };
     if(!merged.materialProc) merged.materialProc = merged.materialsProc;
-
     return merged;
   }
 
@@ -93,31 +85,27 @@ export class Game {
   }
 
   async _loadMapFont(mapCfg) {
-    // Restore Task 2 font loading — Pixelify Sans for parchment map aesthetic
-    // Config now lives in src/assets/config/ui/map.json under font {family, fallback, googleName}
     const fontCfg = mapCfg?.font || mapCfg || {};
     const googleName = fontCfg.googleName || fontCfg.fontGoogleName || mapCfg?.fontGoogleName || "Pixelify+Sans:wght@400;600;700";
     const family = fontCfg.family || fontCfg.fontFamily || mapCfg?.fontFamily || "Pixelify Sans";
     if (!googleName) return;
     try {
-      let link = document.getElementById('map-font');
+      let link = document.getElementById("map-font");
       if (!link) {
-        link = document.createElement('link');
-        link.id = 'map-font';
-        link.rel = 'stylesheet';
-        link.href = `https://fonts.googleapis.com/css2?family=${googleName}&display=swap`;
+        link = document.createElement("link");
+        link.id = "map-font";
+        link.rel = "stylesheet";
+        link.href = "https://fonts.googleapis.com/css2?family=" + googleName + "&display=swap";
         document.head.appendChild(link);
-        // Wait for stylesheet to load
         await new Promise((resolve) => { link.onload = resolve; link.onerror = resolve; setTimeout(resolve, 800); });
       }
-      const q = `"${family}"`;
-      // Preload weights/sizes used in map overlay (12px regular for legend, bold for stairs)
+      const q = "\"" + family + "\"";
       if (document.fonts && document.fonts.load) {
         await Promise.all([
-          document.fonts.load(`12px ${q}`),
-          document.fonts.load(`bold 12px ${q}`),
-          document.fonts.load(`10px ${q}`),
-          document.fonts.load(`bold 16px ${q}`),
+          document.fonts.load("12px " + q),
+          document.fonts.load("bold 12px " + q),
+          document.fonts.load("10px " + q),
+          document.fonts.load("bold 16px " + q),
         ]);
         await document.fonts.ready;
         await new Promise(r => setTimeout(r, 50));
@@ -128,19 +116,15 @@ export class Game {
   }
 
   async init() {
-    this.cfg = await this._loadAllConfigs();
+    try { window._gameEarly = this; window.game = this; } catch(e) {}
 
+    this.cfg = await this._loadAllConfigs();
     if (!isWebGL2Supported()) {
       this.hud.textContent = "WebGL2 not supported";
       this.hud.style.display = "block";
       throw new Error("WebGL2 not supported");
     }
-
-    // Load parchment map font before first render — fixes wrong font regression
     await this._loadMapFont(this.cfg?.map);
-
-    // Retry loop like regen() — generator can fail on unlucky random seed (room overlap)
-    // Previous version called generateDungeon once and crashed init on failure
     const debugCfg = this.cfg?.debug || {};
     const maxAttempts = debugCfg.init?.maxAttempts ?? 5;
     let lastErr = null;
@@ -153,22 +137,23 @@ export class Game {
         break;
       } catch (e) {
         lastErr = e;
-        console.warn(`Dungeon gen attempt ${attempt+1} failed, retrying`, e.message);
+        console.warn("Dungeon gen attempt " + (attempt+1) + " failed, retrying", e.message);
       }
     }
     if (lastErr) throw lastErr;
-
     this.renderer = new GPURenderer(this.canvas);
     await this.renderer.init(this.dungeon, this.cfg);
-
-    this.player = new Player(this.dungeon.startX + 0.5, this.dungeon.startY + 0.5, -Math.PI / 2);
+    // Always spawn at center of start tile — floor+0.5 ensures middle even if generator cx is .0 or .5 (even/odd room width)
+    const sx = Math.floor(this.dungeon.startX) + 0.5;
+    const sy = Math.floor(this.dungeon.startY) + 0.5;
+    this.player = new Player(sx, sy, -Math.PI / 2);
     this.player.setConfig(this.cfg);
-
-    this.input = new Input();
+    this.input = new Input(this.canvas);
     this.ui = new UI(this.cfg);
     this.ui.setDungeon(this.dungeon);
-
     this.hud.style.display = "none";
+    // Expose for E2E tests (bob state, grid mode) - ensure after player exists
+    try { window.game = this; window._gamePlayer = this.player; window._gameRenderer = this.renderer; console.log("Game exposed for E2E in game.js", !!window.game); } catch(e) { console.warn("expose failed in game.js", e); }
     this._resize();
     window.addEventListener("resize", () => this._resize());
     window.addEventListener("keydown", this._onKeyDown);
@@ -195,7 +180,9 @@ export class Game {
         this.dungeon = await generateDungeon(this.cfg, seedToUse);
         console.log("Dungeon regenerated:", this.dungeon.seed);
         this.renderer.uploadMap(this.dungeon);
-        this.player.setPosition(this.dungeon.startX + 0.5, this.dungeon.startY + 0.5, -Math.PI / 2);
+        const rsx = Math.floor(this.dungeon.startX) + 0.5;
+        const rsy = Math.floor(this.dungeon.startY) + 0.5;
+        this.player.setPosition(rsx, rsy, -Math.PI / 2);
         this.player.setConfig(this.cfg);
         this.ui.setDungeon(this.dungeon);
         return;
@@ -217,8 +204,7 @@ export class Game {
     const dt = Math.min(0.05, (time - this.lastTime) / 1000);
     this.lastTime = time;
     if (this.renderer && this.renderer.isReady() && this.player && this.input && this.dungeon) {
-      const inp = this.input.update();
-      this.player.update(dt, inp, this.dungeon);
+      this.input.update(dt, this.player, this.dungeon);
       if (this.showMap) {
         this.ui.drawMap(this.dungeon, this.player, this.renderer);
         this.renderer.renderMapOnly(this.dungeon, this.player);
@@ -230,34 +216,56 @@ export class Game {
   }
 
   async _onKeyDown(e) {
-    const k = e.key.toLowerCase();
-    if (k === "r") { await this.regen(null); }
-    else if (k === "m") { this.showMap = !this.showMap; }
-    else if (k === "1") { const v = this.renderer.toggleGridDebug(); this._showHud(`Grid debug: ${v ? 'ON (floor green / wall red / ceil blue)' : 'OFF'}`); }
-    else if (k === "2") { const v = this.renderer.toggleLighting(); this._showHud(`Lighting: ${v ? 'ON' : 'OFF (flat albedo)'}`); }
-    else if (k === "3") { const v = this.renderer.togglePBR(); this._showHud(`PBR: ${v ? 'ON' : 'OFF (diffuse only)'}`); }
-    else if (k === "4") { const v = this.renderer.togglePOM(); this._showHud(`POM: ${v ? 'ON' : 'OFF'}`); }
-    else if (k === "5") { const v = this.renderer.toggleFog(); this._showHud(`Fog: ${v ? 'ON' : 'OFF'}`); }
-    else if (k === "6") { const v = this.renderer.cyclePBRDebug(); const names=['OFF','Albedo','Normal raw','World Normal','Height','Rough','Metal','AO','Emissive']; this._showHud(`PBR Debug: ${names[v]} (${v})`); }
-    else if (k === "7") { const v = this.renderer.toggleChamfer(); this._showHud(`Chamfer: ${v ? 'ON (floor/ceil baseboard + vertical edges)' : 'OFF (sharp 90°)'}`); }
-    else if (k === "8") { const v = this.renderer.toggleCorner(); this._showHud(`Corner Geometry: ${v ? 'ON (rounded intruding r=0.15 outer+inner)' : 'OFF'}`); }
+    const code = e.code || "";
+    // AZERTY-safe: use code only for gameplay, not key — see input.js CODE_MAP
+    if (code === "KeyR") { await this.regen(null); return; }
+    if (code === "KeyM") { this.showMap = !this.showMap; this._showHud("Map: " + (this.showMap ? "ON (parchment overlay)" : "OFF")); return; }
+    if (code === "KeyG") {
+      const newMode = !this.player.gridMode;
+      this.player.setGridMode(newMode);
+      this._showHud("Grid mode: " + (newMode ? "ON (Grimrock tile step ZQSD+AE)" : "OFF (free FPS WASD+mouse)") + " — G to toggle");
+      return;
+    }
+    if (code === "KeyV" || code === "KeyB") {
+      this.player.setViewBobEnabled(!this.player.viewBobEnabled);
+      this._showHud("View bob: " + (this.player.viewBobEnabled ? "ON (figure-8)" : "OFF") + " — V/B toggle, P cycles presets");
+      return;
+    }
+    if (code === "KeyP") {
+      const presets = this.cfg?.playerCfg?.bob?.presets || this.cfg?.player?.bob?.presets || { subtle:{ampY:0.012,ampX:0.008,ampRollDeg:0.3,freq:7.5}, default:{ampY:0.025,ampX:0.015,ampRollDeg:0.6,freq:9}, heavy:{ampY:0.045,ampX:0.028,ampRollDeg:1.2,freq:10.5}, disabled:{ampY:0,ampX:0,ampRollDeg:0,freq:0} };
+      const keys = Object.keys(presets);
+      this._bobPresetIdx = (this._bobPresetIdx + 1) % keys.length;
+      const name = keys[this._bobPresetIdx];
+      this.player.setBobParams(presets[name]);
+      if (name === "disabled") this.player.setViewBobEnabled(false); else this.player.setViewBobEnabled(true);
+      this._showHud("Bob preset: " + name + " — P to cycle, V/B to toggle");
+      return;
+    }
+    if (code === "Digit1" || code === "Numpad1") { const v = this.renderer.toggleGridDebug(); this._showHud("Grid debug: " + (v ? "ON (floor green / wall red / ceil blue)" : "OFF")); return; }
+    if (code === "Digit2" || code === "Numpad2") { const v = this.renderer.toggleLighting(); this._showHud("Lighting: " + (v ? "ON" : "OFF (flat albedo)")); return; }
+    if (code === "Digit3" || code === "Numpad3") { const v = this.renderer.togglePBR(); this._showHud("PBR: " + (v ? "ON" : "OFF (diffuse only)")); return; }
+    if (code === "Digit4" || code === "Numpad4") { const v = this.renderer.togglePOM(); this._showHud("POM: " + (v ? "ON" : "OFF")); return; }
+    if (code === "Digit5" || code === "Numpad5") { const v = this.renderer.toggleFog(); this._showHud("Fog: " + (v ? "ON" : "OFF")); return; }
+    if (code === "Digit6" || code === "Numpad6") { const v = this.renderer.cyclePBRDebug(); const names=["OFF","Albedo","Normal raw","World Normal","Height","Rough","Metal","AO","Emissive"]; this._showHud("PBR Debug: " + names[v] + " (" + v + ")"); return; }
+    if (code === "Digit7" || code === "Numpad7") { const v = this.renderer.toggleChamfer(); this._showHud("Chamfer: " + (v ? "ON (floor/ceil baseboard + vertical edges)" : "OFF (sharp 90°)")); return; }
+    if (code === "Digit8" || code === "Numpad8") { const v = this.renderer.toggleCorner(); this._showHud("Corner Geometry: " + (v ? "ON (rounded intruding r=0.15 outer+inner)" : "OFF")); return; }
   }
 
   _showHud(msg) {
     if (!this.hud) return;
     this.hud.textContent = msg;
-    this.hud.style.display = 'block';
+    this.hud.style.display = "block";
     clearTimeout(this._hudTimer);
     const timeout = this.cfg?.debug?.hud?.timeoutMs ?? this.cfg?.debug?.hudTimeout ?? 1500;
-    this._hudTimer = setTimeout(() => { this.hud.style.display = 'none'; }, timeout);
+    this._hudTimer = setTimeout(() => { this.hud.style.display = "none"; }, timeout);
   }
 }
 
 function lightingFallbackColors(){
   return [
-    { r:1,g:0.6,b:0.2,name:'warm' },
-    { r:0.4,g:0.7,b:1,name:'cool' },
-    { r:0.3,g:1,b:0.4,name:'green' },
-    { r:0.8,g:0.3,b:1,name:'purple' }
+    { r:1,g:0.6,b:0.2,name:"warm" },
+    { r:0.4,g:0.7,b:1,name:"cool" },
+    { r:0.3,g:1,b:0.4,name:"green" },
+    { r:0.8,g:0.3,b:1,name:"purple" }
   ];
 }
