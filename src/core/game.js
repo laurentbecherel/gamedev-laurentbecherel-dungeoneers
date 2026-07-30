@@ -1,6 +1,7 @@
 // Game — top-level orchestration owning all subsystems.
-// Loads dedicated rendering configs + player.json v2 (grid mode, bob, speeds)
-// AZERTY-safe: all shortcuts use event.code, not key, see input.js CODE_MAP
+// Task5: owns DiscoveryManager for fog-of-war minimap reveal with 1-tile peek, retro dither animation, dashed trail.
+// Loads dedicated configs including discovery.json (gameplay/discovery) via getAllRenderConfigs.
+// Architecture: Game is orchestrator only, no discovery algorithm inlined, clean wiring, no magic numbers, AZERTY-safe.
 
 import { getConfig, getAllRenderConfigs } from "../config/config.js";
 import { generateDungeon } from "../world/dungeon/index.js";
@@ -8,6 +9,7 @@ import { GPURenderer, isWebGL2Supported } from "../render/renderer-gpu.js";
 import { Player } from "../entities/player.js";
 import { Input } from "../systems/input.js";
 import { UI } from "../ui/ui.js";
+import { DiscoveryManager } from "../world/discovery.js";
 
 export class Game {
   constructor(canvas) {
@@ -19,9 +21,12 @@ export class Game {
     this.player = null;
     this.input = null;
     this.ui = null;
+    this.discovery = null;
     this.lastTime = 0;
     this.showMap = false;
     this._bobPresetIdx = 1;
+    this._lastPlayerGridX = null;
+    this._lastPlayerGridY = null;
     this._loop = this._loop.bind(this);
     this._onKeyDown = this._onKeyDown.bind(this);
   }
@@ -44,6 +49,7 @@ export class Game {
     merged.corners = renderCfgs.corners || baseCfg.corners || baseCfg.pbr?.corner || { enabled:true, radius:0.15, mode:2, inner:true };
     merged.raymarch = renderCfgs.raymarch || baseCfg.raymarch || { maxSteps:64 };
     merged.map = renderCfgs.map || baseCfg.map || baseCfg.ui?.map || { display:{position:"fullscreen",size:640,opacity:0.92} };
+    merged.discovery = renderCfgs.discovery || baseCfg.discovery || { reveal:{ enabled:true, peekDistance:1, corridorRevealRadius:4, animationDuration:400, dither:{ enabled:true, pattern:"random"} }, trail:{ enabled:true, color:[201,168,76], opacity:0.5, lineWidth:1.8, dash:[5,4], onlyDiscovered:true } };
     merged.materialsProc = renderCfgs["materials-proc"] || baseCfg.materialsProc || baseCfg["materials-proc"] || baseCfg.materialProc || { walls:{}, floors:{}, ceils:{} };
     merged.playerCfg = renderCfgs.player || baseCfg.playerCfg || baseCfg.player || { moveSpeed:3, turnSpeed:2.2, radius:0.28, height:0.5 };
     merged.debug = renderCfgs.debug || baseCfg.debug || {};
@@ -115,6 +121,39 @@ export class Game {
     }
   }
 
+  _initDiscovery() {
+    const discoveryCfg = this.cfg?.discovery || { reveal:{}, trail:{} };
+    if (!this.dungeon) return;
+    if (!this.discovery) {
+      this.discovery = new DiscoveryManager(this.dungeon, discoveryCfg);
+    } else {
+      this.discovery.reset(this.dungeon, discoveryCfg);
+    }
+    const sx = Math.floor(this.dungeon.startX);
+    const sy = Math.floor(this.dungeon.startY);
+    this.discovery.markDiscoveredAt(sx, sy, this.dungeon);
+    this.discovery.addPathPoint(sx, sy);
+    this._lastPlayerGridX = sx;
+    this._lastPlayerGridY = sy;
+  }
+
+  _updateDiscovery() {
+    if (!this.dungeon || !this.player || !this.discovery) return;
+    const px = Math.floor(this.player.x);
+    const py = Math.floor(this.player.y);
+    if (this._lastPlayerGridX === px && this._lastPlayerGridY === py) return;
+    const newly = this.discovery.markDiscoveredAt(px, py, this.dungeon);
+    this.discovery.addPathPoint(px, py);
+    if (newly && newly.length > 0) {
+      const cfg = this.cfg?.discovery?.debug || {};
+      if (cfg.logNewRoom && newly.length > 5) {
+        console.log("New area discovered", newly.length, "cells");
+      }
+    }
+    this._lastPlayerGridX = px;
+    this._lastPlayerGridY = py;
+  }
+
   async init() {
     try { window._gameEarly = this; window.game = this; } catch(e) {}
 
@@ -143,17 +182,16 @@ export class Game {
     if (lastErr) throw lastErr;
     this.renderer = new GPURenderer(this.canvas);
     await this.renderer.init(this.dungeon, this.cfg);
-    // Always spawn at center of start tile — floor+0.5 ensures middle even if generator cx is .0 or .5 (even/odd room width)
     const sx = Math.floor(this.dungeon.startX) + 0.5;
     const sy = Math.floor(this.dungeon.startY) + 0.5;
     this.player = new Player(sx, sy, -Math.PI / 2);
     this.player.setConfig(this.cfg);
+    this._initDiscovery();
     this.input = new Input(this.canvas);
     this.ui = new UI(this.cfg);
     this.ui.setDungeon(this.dungeon);
     this.hud.style.display = "none";
-    // Expose for E2E tests (bob state, grid mode) - ensure after player exists
-    try { window.game = this; window._gamePlayer = this.player; window._gameRenderer = this.renderer; console.log("Game exposed for E2E in game.js", !!window.game); } catch(e) { console.warn("expose failed in game.js", e); }
+    try { window.game = this; window._gamePlayer = this.player; window._gameRenderer = this.renderer; window._gameDiscovery = this.discovery; console.log("Game exposed for E2E in game.js", !!window.game); } catch(e) { console.warn("expose failed in game.js", e); }
     this._resize();
     window.addEventListener("resize", () => this._resize());
     window.addEventListener("keydown", this._onKeyDown);
@@ -184,7 +222,9 @@ export class Game {
         const rsy = Math.floor(this.dungeon.startY) + 0.5;
         this.player.setPosition(rsx, rsy, -Math.PI / 2);
         this.player.setConfig(this.cfg);
+        this._initDiscovery();
         this.ui.setDungeon(this.dungeon);
+        try { window._gameDiscovery = this.discovery; } catch(e) {}
         return;
       } catch (e) {
         attempts++;
@@ -205,8 +245,20 @@ export class Game {
     this.lastTime = time;
     if (this.renderer && this.renderer.isReady() && this.player && this.input && this.dungeon) {
       this.input.update(dt, this.player, this.dungeon);
+      this._updateDiscovery();
+
       if (this.showMap) {
-        this.ui.drawMap(this.dungeon, this.player, this.renderer);
+        const discoveryCfg = this.cfg?.discovery || null;
+        const now = typeof performance !== "undefined" ? performance.now() : Date.now();
+        const animDuration = discoveryCfg?.reveal?.animationDuration ?? 400;
+        const animProgress = this.discovery ? this.discovery.getAnimationProgress(now, animDuration) : 1;
+        // UI now takes discovery into account
+        if (this.ui.drawMap.length >= 3) {
+          // New signature with discovery
+          this.ui.drawMap(this.dungeon, this.player, this.renderer, this.discovery, animProgress, discoveryCfg);
+        } else {
+          this.ui.drawMap(this.dungeon, this.player, this.renderer);
+        }
         this.renderer.renderMapOnly(this.dungeon, this.player);
       } else {
         this.renderer.render(this.dungeon, this.player, time / 1000);
@@ -217,9 +269,17 @@ export class Game {
 
   async _onKeyDown(e) {
     const code = e.code || "";
-    // AZERTY-safe: use code only for gameplay, not key — see input.js CODE_MAP
     if (code === "KeyR") { await this.regen(null); return; }
-    if (code === "KeyM") { this.showMap = !this.showMap; this._showHud("Map: " + (this.showMap ? "ON (parchment overlay)" : "OFF")); return; }
+    if (code === "KeyM") {
+      const wasShowing = this.showMap;
+      this.showMap = !this.showMap;
+      if (this.showMap && !wasShowing && this.discovery) {
+        const now = typeof performance !== "undefined" ? performance.now() : Date.now();
+        this.discovery.onMapOpened(now);
+      }
+      this._showHud("Map: " + (this.showMap ? "ON (parchment overlay — discovery + trail)" : "OFF"));
+      return;
+    }
     if (code === "KeyG") {
       const newMode = !this.player.gridMode;
       this.player.setGridMode(newMode);

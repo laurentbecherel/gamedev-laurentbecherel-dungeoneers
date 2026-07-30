@@ -1,7 +1,9 @@
 // map-ui.js — generates map texture RGBA data for WebGL UI overlay.
-// Restored from Task 2's MinimapRenderer to fix regression: colors, alignment, text labels.
+// Extended for Task5 minimap-reveal: fog-of-war discovery with 1-tile peek, retro dither reveal on M open, dashed transparent trail.
+// Restored from Task 2 MinimapRenderer to fix regression: colors, alignment, text labels.
 // Uses Canvas2D rendering path when document is available (browser), falls back to raw buffer for Node tests.
-// Fully configurable via src/assets/config/ui/map.json (editor-tracked).
+// Fully configurable via src/assets/config/ui/map.json (parchment) + src/assets/config/gameplay/discovery.json (reveal/trail).
+// Architecture: pure rendering, no mutation of discovery (only reads), no magic numbers — reveal/trail from injected discoveryCfg or discovery._cfg.
 
 const DEFAULT_PALETTE = {
   canvasBg: "#e8dcc4",
@@ -54,30 +56,25 @@ const ROLE_DISPLAY = {
   armory: "Armory", shrine: "Shrine", secret: "Secret",
 };
 
-// Helpers to normalize colors from config (can be hex string or [r,g,b] array)
 function toCssColor(c, fallback) {
   if (!c) return fallback;
-  if (typeof c === 'string') return c;
+  if (typeof c === "string") return c;
   if (Array.isArray(c)) {
     if (c.length >= 4) return `rgba(${c[0]|0},${c[1]|0},${c[2]|0},${c[3]/255})`;
     if (c.length >= 3) return `rgb(${c[0]|0},${c[1]|0},${c[2]|0})`;
   }
   return fallback;
 }
-function toHexOrCss(c, fallback) {
-  return toCssColor(c, fallback);
-}
+function toHexOrCss(c, fallback) { return toCssColor(c, fallback); }
 function hexToRgbArray(hex) {
   if (Array.isArray(hex) && hex.length >= 3) return [hex[0]|0, hex[1]|0, hex[2]|0];
-  if (typeof hex !== 'string') return [128,128,128];
-  // handle rgb() strings
+  if (typeof hex !== "string") return [128,128,128];
   const rgbMatch = hex.match(/rgba?\(\s*(\d+),\s*(\d+),\s*(\d+)/i);
   if (rgbMatch) return [parseInt(rgbMatch[1]), parseInt(rgbMatch[2]), parseInt(rgbMatch[3])];
   const m = hex.match(/^#([0-9a-f]{2})([0-9a-f]{2})([0-9a-f]{2})$/i);
   if (!m) return [128,128,128];
   return [parseInt(m[1],16), parseInt(m[2],16), parseInt(m[3],16)];
 }
-
 function setPixel(buf, w, x, y, r, g, b, a = 255) { const i = (y * w + x) * 4; buf[i]=r; buf[i+1]=g; buf[i+2]=b; buf[i+3]=a; }
 function fillRect(buf, w, h, x0, y0, rw, rh, r, g, b, a = 255) {
   const x1 = Math.min(w, x0+rw), y1 = Math.min(h, y0+rh);
@@ -85,18 +82,13 @@ function fillRect(buf, w, h, x0, y0, rw, rh, r, g, b, a = 255) {
 }
 function fillCircle(buf,w,h,cx,cy,rad,r,g,b,a=255){ const r2=rad*rad; for(let dy=-rad;dy<=rad;dy++)for(let dx=-rad;dx<=rad;dx++) if(dx*dx+dy*dy<=r2){ const x=cx+dx,y=cy+dy; if(x>=0&&y>=0&&x<w&&y<h) setPixel(buf,w,x,y,r,g,b,a); } }
 function strokeCircle(buf,w,h,cx,cy,rad,r,g,b,a=255,lw=1){ for(let dy=-rad-lw;dy<=rad+lw;dy++)for(let dx=-rad-lw;dx<=rad+lw;dx++){ const d2=dx*dx+dy*dy; const d=Math.sqrt(d2); if(Math.abs(d-rad)<=lw){ const x=cx+dx,y=cy+dy; if(x>=0&&y>=0&&x<w&&y<h) setPixel(buf,w,x,y,r,g,b,a); } } }
-
 function resolvePaletteConfig(uiCfg) {
   const out = JSON.parse(JSON.stringify(DEFAULT_PALETTE));
   const colors = uiCfg?.colors || {};
-
-  // parchment bg/scan
   if (uiCfg?.parchment?.bg) out.canvasBg = toHexOrCss(uiCfg.parchment.bg, out.canvasBg);
   if (uiCfg?.parchment?.scan) out.canvasScan = toHexOrCss(uiCfg.parchment.scan, out.canvasScan);
-  // legacy compat
   if (uiCfg?.parchmentBg) out.canvasBg = toHexOrCss(uiCfg.parchmentBg, out.canvasBg);
   if (uiCfg?.parchmentScan) out.canvasScan = toHexOrCss(uiCfg.parchmentScan, out.canvasScan);
-
   if (colors.wallDark) out.wallDark = toHexOrCss(colors.wallDark, out.wallDark);
   if (colors.gold) out.gold = toHexOrCss(colors.gold, out.gold);
   if (colors.goldDim) out.goldDim = toHexOrCss(colors.goldDim, out.goldDim);
@@ -104,20 +96,14 @@ function resolvePaletteConfig(uiCfg) {
   if (colors.parchmentBorder) out.parchmentPanelBorder = toHexOrCss(colors.parchmentBorder, out.parchmentPanelBorder);
   if (colors.textLight) out.textLight = toHexOrCss(colors.textLight, out.textLight);
   if (colors.textDim) out.textDim = toHexOrCss(colors.textDim, out.textDim);
-
-  // store raw RGB for fallback buffer path
   if (colors.parchmentPanel && Array.isArray(colors.parchmentPanel)) out.parchmentPanelRGB = colors.parchmentPanel;
   if (colors.parchmentBorder && Array.isArray(colors.parchmentBorder)) out.parchmentBorderRGB = colors.parchmentBorder;
   if (colors.textLight && Array.isArray(colors.textLight)) out.textLightRGB = colors.textLight;
   if (colors.textDim && Array.isArray(colors.textDim)) out.textDimRGB = colors.textDim;
-
   if (colors.roles) out.roles = { ...out.roles, ...colors.roles };
   if (colors.materials) out.materials = { ...out.materials, ...colors.materials };
-
-  // player color handled separately in layout
   return out;
 }
-
 function resolveLayout(uiCfg) {
   const layout = uiCfg?.layout || {};
   return {
@@ -136,7 +122,7 @@ function resolveLayout(uiCfg) {
       color: uiCfg?.colors?.player || [15,220,15],
     },
     legend: {
-      swatch: layout.legend?.swatch ?? 12, // ORIGINAL was 12, not 14 - restore original for correct alignment
+      swatch: layout.legend?.swatch ?? 12,
       gap: layout.legend?.gap ?? 8,
       itemWidth: layout.legend?.itemWidth ?? 90,
       panelAlpha: layout.legend?.panelAlpha ?? 220,
@@ -152,7 +138,6 @@ function resolveLayout(uiCfg) {
     fontGoogleName: uiCfg?.font?.googleName || uiCfg?.fontGoogleName || "Pixelify+Sans:wght@400;600;700",
   };
 }
-
 function roundRectPath(ctx, x, y, w, h, r) {
   const rr = Math.min(r, w/2, h/2);
   ctx.beginPath();
@@ -164,46 +149,123 @@ function roundRectPath(ctx, x, y, w, h, r) {
   ctx.closePath();
 }
 
-export function generateMapTextureData(dungeon, mode="role", player=null, uiCfg={}) {
+// --- Task5 helpers: dither + discovery ---
+function resolveDiscoveryCfg(discovery, discoveryCfg) {
+  // Merge: discovery instance cfg takes priority, then passed discoveryCfg, then defaults
+  const fromInstance = discovery?._cfg || {};
+  const fromFile = discoveryCfg || {};
+  const reveal = fromFile.reveal || fromInstance.reveal || {};
+  const trail = fromFile.trail || fromInstance.trail || {};
+  const dither = reveal.dither || fromInstance.reveal?.dither || {};
+  return {
+    reveal: {
+      enabled: reveal.enabled ?? fromInstance.reveal?.enabled ?? true,
+      peekDistance: reveal.peekDistance ?? fromInstance.reveal?.peekDistance ?? 1,
+      animationDuration: reveal.animationDuration ?? fromInstance.reveal?.animationDuration ?? 400,
+      dither: {
+        enabled: dither.enabled ?? true,
+        pattern: dither.pattern ?? "random",
+        bayerSize: dither.bayerSize ?? 4,
+      },
+      undiscovered: { hide: reveal.undiscovered?.hide ?? true },
+    },
+    trail: {
+      enabled: trail.enabled ?? fromInstance.trail?.enabled ?? true,
+      color: trail.color ?? fromInstance.trail?.color ?? [201, 168, 76],
+      opacity: trail.opacity ?? fromInstance.trail?.opacity ?? 0.5,
+      lineWidth: trail.lineWidth ?? fromInstance.trail?.lineWidth ?? 1.8,
+      dash: trail.dash ?? fromInstance.trail?.dash ?? [5, 4],
+      cap: trail.cap ?? fromInstance.trail?.cap ?? "butt",
+      join: trail.join ?? fromInstance.trail?.join ?? "miter",
+      onlyDiscovered: trail.onlyDiscovered ?? fromInstance.trail?.onlyDiscovered ?? true,
+    },
+  };
+}
+function bayerMatrix4() {
+  return [
+    [0, 8, 2, 10],
+    [12, 4, 14, 6],
+    [3, 11, 1, 9],
+    [15, 7, 13, 5],
+  ];
+}
+function hash01(x, y, order = 0) {
+  // deterministic 0..1
+  const sin = Math.sin(x * 12.9898 + y * 78.233 + order * 0.037) * 43758.5453;
+  return sin - Math.floor(sin);
+}
+function shouldDrawCell(x, y, discovery, newlySet, animProgress, cfg) {
+  if (!discovery) return true;
+  const revealEnabled = cfg?.reveal?.enabled;
+  if (revealEnabled === false) return true;
+  if (!discovery.isDiscovered(x, y)) return false;
+  if (animProgress >= 1) return true;
+  const key = x + "," + y;
+  if (!newlySet.has(key)) return true; // old discovered
+  const pattern = cfg?.reveal?.dither?.pattern || "random";
+  if (pattern === "bayer") {
+    const b = bayerMatrix4();
+    const threshold = b[y & 3][x & 3] / 16;
+    return threshold < animProgress;
+  } else {
+    const order = discovery.getDiscoveryOrder ? discovery.getDiscoveryOrder(x, y) : 0;
+    const h = hash01(x, y, order);
+    return h < animProgress;
+  }
+}
+function trailColorToCss(color) {
+  if (!color) return "#c9a84c";
+  if (typeof color === "string") return color;
+  if (Array.isArray(color) && color.length >= 3) return `rgb(${color[0]|0},${color[1]|0},${color[2]|0})`;
+  return "#c9a84c";
+}
+
+export function generateMapTextureData(dungeon, mode = "role", player = null, uiCfg = {}, discovery = null, animProgress = 1, discoveryCfg = null) {
+  // Backward compat: if 5th arg is number, it is animProgress and discovery is null
+  if (typeof discovery === "number") {
+    animProgress = discovery;
+    discovery = null;
+  }
+  // If uiCfg actually contains discovery as 4th param shift? Keep simple.
+
   const PALETTE = resolvePaletteConfig(uiCfg);
   const L = resolveLayout(uiCfg);
+  const cfg = resolveDiscoveryCfg(discovery, discoveryCfg);
   const w = 640, h = 360;
 
-  const hasDocument = typeof document !== 'undefined' && typeof document.createElement === 'function';
+  const hasDocument = typeof document !== "undefined" && typeof document.createElement === "function";
 
-  // Browser path — use Canvas2D to properly render text labels (fixes missing text regression)
+  const discoveryEnabled = discovery && cfg.reveal.enabled;
+  const newlyList = discovery && discovery.getNewlyDiscoveredSinceLastOpen ? discovery.getNewlyDiscoveredSinceLastOpen() : [];
+  const newlySet = new Set();
+  newlyList.forEach(c => newlySet.add(c.x + "," + c.y));
+
   if (hasDocument) {
     try {
-      const canvas = document.createElement('canvas');
-      canvas.width = w;
-      canvas.height = h;
-      const ctx = canvas.getContext('2d');
-      if (!ctx) throw new Error('no 2d');
+      const canvas = document.createElement("canvas");
+      canvas.width = w; canvas.height = h;
+      const ctx = canvas.getContext("2d");
+      if (!ctx) throw new Error("no 2d");
       ctx.imageSmoothingEnabled = false;
 
-      // Full parchment canvas background — matches original MinimapRenderer
+      // Parchment background
       ctx.fillStyle = toCssColor(PALETTE.canvasBg, DEFAULT_PALETTE.canvasBg);
       ctx.fillRect(0,0,w,h);
       ctx.fillStyle = toCssColor(PALETTE.canvasScan, DEFAULT_PALETTE.canvasScan);
       const scanEvery = L.parchment.scanlineEvery;
-      if (scanEvery > 0) {
-        for(let y=0;y<h;y+=scanEvery) ctx.fillRect(0,y,w,1);
-      }
+      if (scanEvery > 0) for(let y=0;y<h;y+=scanEvery) ctx.fillRect(0,y,w,1);
 
       if (dungeon) {
         const d = dungeon;
         const legendH = L.legendHeight;
         const legendGap = L.legendGap;
-        // ORIGINAL alignment formula from minimap.js (fixes alignment regression)
-        // availW = cw - 40, availH = ch - legendH - legendGap - 40
-        // ox = floor((cw - gridW)/2), oy = floor((availH - gridH)/2)+20
         const availW = w - 40;
         const availH = h - legendH - legendGap - 40;
         const cs = Math.max(L.minCell, Math.floor(Math.min(availW/d.w, availH/d.h)));
         const gridW = d.w*cs;
         const gridH = d.h*cs;
         const ox = Math.floor((w - gridW)/2);
-        const oy = Math.floor((availH - gridH)/2) + 20; // ORIGINAL used +20, not +40 (padding)
+        const oy = Math.floor((availH - gridH)/2) + 20;
         const legendY = oy + gridH + legendGap;
 
         const roomByCell = new Map();
@@ -214,9 +276,8 @@ export function generateMapTextureData(dungeon, mode="role", player=null, uiCfg=
 
         const getCellColor = (x, y, gv, room) => {
           if (gv === 0) {
-            if (mode === "role") {
-              return room ? (ROLE_COLORS[room.role] || PALETTE.materials.floor1) : ROLE_COLORS.corridor;
-            } else if (mode === "zone") {
+            if (mode === "role") return room ? (ROLE_COLORS[room.role] || PALETTE.materials.floor1) : ROLE_COLORS.corridor;
+            else if (mode === "zone") {
               const zi = room ? ["Entry","Antechamber","Depths","Sanctum","Exit"].indexOf(room.zone) : 2;
               const t = ZONE_TINTS[Math.max(0, Math.min(4, zi))] || ZONE_TINTS[2];
               return `rgb(${t[0]},${t[1]},${t[2]})`;
@@ -237,62 +298,76 @@ export function generateMapTextureData(dungeon, mode="role", player=null, uiCfg=
         const isFloor = (x, y) => x>=0&&y>=0&&x<d.w&&y<d.h&&d.grid[y*d.w+x]===0;
         const hasFloorNeighbor = (x, y) => isFloor(x-1,y)||isFloor(x+1,y)||isFloor(x,y-1)||isFloor(x,y+1);
 
-        // Rooms as solid rounded rectangles with wall border — matches original
-        const wallT = Math.max(1, cs * 0.18);
-        const roomCornerR = Math.max(2, Math.min(8, cs * 0.5));
-        d.rooms.forEach(r => {
-          const rx = ox + r.x*cs, ry = oy + r.y*cs;
-          const rw = r.w*cs, rh = r.h*cs;
-          let color;
-          if (mode === "role") color = ROLE_COLORS[r.role] || PALETTE.materials.floor1;
-          else if (mode === "zone") {
-            const zi = ["Entry","Antechamber","Depths","Sanctum","Exit"].indexOf(r.zone);
-            const t = ZONE_TINTS[Math.max(0, Math.min(4, zi))] || ZONE_TINTS[2];
-            color = `rgb(${t[0]},${t[1]},${t[2]})`;
-          } else {
-            color = PALETTE.materials.floor1;
+        if (discoveryEnabled) {
+          // Fog path: per-cell drawing respecting discovery + dither
+          for (let y=0;y<d.h;y++) for (let x=0;x<d.w;x++) {
+            if (!shouldDrawCell(x,y,discovery,newlySet,animProgress,cfg)) continue;
+            const i=y*d.w+x, gv=d.grid[i], room=roomByCell.get(i);
+            // Skip interior walls not adjacent to floor? Keep hasFloorNeighbor for walls
+            if (gv===0) {
+              const col = getCellColor(x,y,0,room);
+              ctx.fillStyle = toCssColor(col, "#6a6a6a");
+              ctx.fillRect(ox+x*cs, oy+y*cs, cs, cs);
+            } else {
+              if (!hasFloorNeighbor(x,y)) continue;
+              const col = getCellColor(x,y,gv,room);
+              ctx.fillStyle = toCssColor(col, "#2a2a2a");
+              ctx.fillRect(ox+x*cs, oy+y*cs, cs, cs);
+            }
           }
-          // Wall background
-          ctx.fillStyle = toCssColor(PALETTE.wallDark, "#2a2a2a");
-          roundRectPath(ctx, rx - wallT/2, ry - wallT/2, rw + wallT, rh + wallT, roomCornerR + wallT/2);
-          ctx.fill();
-          // Room fill
-          ctx.fillStyle = toCssColor(color, "#9a9a9a");
-          roundRectPath(ctx, rx, ry, rw, rh, roomCornerR);
-          ctx.fill();
-        });
-
-        // Corridors and walls per-cell
-        for(let y=0;y<d.h;y++) for(let x=0;x<d.w;x++) {
-          const i=y*d.w+x, gv=d.grid[i], room=roomByCell.get(i);
-          if (room) continue;
-          if (gv===0) {
-            const col = getCellColor(x,y,0,null);
-            ctx.fillStyle = toCssColor(col, "#6a6a6a");
-            ctx.fillRect(ox+x*cs, oy+y*cs, cs, cs);
-          } else {
-            if (!hasFloorNeighbor(x,y)) continue;
-            const col = getCellColor(x,y,gv,null);
-            ctx.fillStyle = toCssColor(col, "#2a2a2a");
-            ctx.fillRect(ox+x*cs, oy+y*cs, cs, cs);
+        } else {
+          // Original path: rounded rooms + per-cell corridors/walls
+          const wallT = Math.max(1, cs * 0.18);
+          const roomCornerR = Math.max(2, Math.min(8, cs * 0.5));
+          d.rooms.forEach(r => {
+            const rx = ox + r.x*cs, ry = oy + r.y*cs;
+            const rw = r.w*cs, rh = r.h*cs;
+            let color;
+            if (mode === "role") color = ROLE_COLORS[r.role] || PALETTE.materials.floor1;
+            else if (mode === "zone") {
+              const zi = ["Entry","Antechamber","Depths","Sanctum","Exit"].indexOf(r.zone);
+              const t = ZONE_TINTS[Math.max(0, Math.min(4, zi))] || ZONE_TINTS[2];
+              color = `rgb(${t[0]},${t[1]},${t[2]})`;
+            } else { color = PALETTE.materials.floor1; }
+            ctx.fillStyle = toCssColor(PALETTE.wallDark, "#2a2a2a");
+            roundRectPath(ctx, rx - wallT/2, ry - wallT/2, rw + wallT, rh + wallT, roomCornerR + wallT/2);
+            ctx.fill();
+            ctx.fillStyle = toCssColor(color, "#9a9a9a");
+            roundRectPath(ctx, rx, ry, rw, rh, roomCornerR);
+            ctx.fill();
+          });
+          for(let y=0;y<d.h;y++) for(let x=0;x<d.w;x++) {
+            const i=y*d.w+x, gv=d.grid[i], room=roomByCell.get(i);
+            if (room) continue;
+            if (gv===0) {
+              const col = getCellColor(x,y,0,null);
+              ctx.fillStyle = toCssColor(col, "#6a6a6a");
+              ctx.fillRect(ox+x*cs, oy+y*cs, cs, cs);
+            } else {
+              if (!hasFloorNeighbor(x,y)) continue;
+              const col = getCellColor(x,y,gv,null);
+              ctx.fillStyle = toCssColor(col, "#2a2a2a");
+              ctx.fillRect(ox+x*cs, oy+y*cs, cs, cs);
+            }
           }
         }
 
-        // Stair indicators with arrow glyphs — restores original behavior
+        // Stair indicators — only if discovered
         const drawStairArrow = (r, isExit) => {
           if (!r.stairWall) return;
+          if (discoveryEnabled) {
+            const mx = (r.stairWall.x1 + r.stairWall.x2)/2, my = (r.stairWall.y1 + r.stairWall.y2)/2;
+            if (!shouldDrawCell(Math.floor(mx), Math.floor(my), discovery, newlySet, animProgress, cfg)) return;
+          }
           const sw = r.stairWall;
           const mx = (sw.x1 + sw.x2)/2, my = (sw.y1 + sw.y2)/2;
           const cx = ox + mx*cs, cy = oy + my*cs;
           const size = Math.max(6, cs * L.stair.sizeFactor);
-          // Gold background circle
           ctx.fillStyle = toCssColor(PALETTE.gold, "#c9a84c");
           ctx.beginPath(); ctx.arc(cx, cy, size*0.6, 0, Math.PI*2); ctx.fill();
-          // Dark border
           ctx.strokeStyle = toCssColor(PALETTE.wallDark, "#2a2a2a");
           ctx.lineWidth = Math.max(1, cs*L.stair.strokeFactor);
           ctx.beginPath(); ctx.arc(cx, cy, size*0.6, 0, Math.PI*2); ctx.stroke();
-          // Arrow glyph
           ctx.fillStyle = toCssColor(PALETTE.wallDark, "#2a2a2a");
           ctx.font = `bold ${Math.max(10,size)}px "${L.fontFamily}", ${L.fontFallback}`;
           ctx.textAlign = "center"; ctx.textBaseline = "middle";
@@ -301,7 +376,42 @@ export function generateMapTextureData(dungeon, mode="role", player=null, uiCfg=
         d.rooms.filter(r=>r.role==="entrance").forEach(r=>drawStairArrow(r,false));
         d.rooms.filter(r=>r.role==="exit").forEach(r=>drawStairArrow(r,true));
 
-        // Player dot — green overlay
+        // Trail — dashed transparent retro line
+        if (cfg.trail.enabled && discovery) {
+          const path = discovery.getPath ? discovery.getPath() : [];
+          if (path.length > 1) {
+            const trailColor = trailColorToCss(cfg.trail.color);
+            ctx.save();
+            ctx.globalAlpha = cfg.trail.opacity ?? 0.5;
+            ctx.strokeStyle = trailColor;
+            ctx.lineWidth = cfg.trail.lineWidth ?? 1.8;
+            const dash = cfg.trail.dash || [5,4];
+            if (ctx.setLineDash) ctx.setLineDash(dash);
+            ctx.lineCap = cfg.trail.cap || "butt";
+            ctx.lineJoin = cfg.trail.join || "miter";
+            ctx.beginPath();
+            let started = false;
+            for (let i=0;i<path.length-1;i++) {
+              const a = path[i], b = path[i+1];
+              if (cfg.trail.onlyDiscovered) {
+                if (!discovery.isDiscovered(a.x,a.y) || !discovery.isDiscovered(b.x,b.y)) { started = false; continue; }
+              }
+              const dist = Math.hypot(b.x-a.x, b.y-a.y);
+              if (dist > 2) { started = false; continue; }
+              // Optional dither for trail? Keep trail fully visible even if newly discovered
+              const ax = ox + a.x*cs + cs*0.5;
+              const ay = oy + a.y*cs + cs*0.5;
+              const bx = ox + b.x*cs + cs*0.5;
+              const by = oy + b.y*cs + cs*0.5;
+              if (!started) { ctx.moveTo(ax,ay); started = true; }
+              ctx.lineTo(bx,by);
+            }
+            ctx.stroke();
+            ctx.restore();
+          }
+        }
+
+        // Player dot — always visible even if undiscovered? Draw always
         if (player) {
           const px = Math.floor(ox + player.x*cs);
           const py = Math.floor(oy + player.y*cs);
@@ -311,17 +421,17 @@ export function generateMapTextureData(dungeon, mode="role", player=null, uiCfg=
           ctx.beginPath(); ctx.arc(px, py, pr, 0, Math.PI*2); ctx.fill();
         }
 
-        // Legend — restores text labels (fixes missing text regression) and correct colors (fixes swatch overwrite bug)
+        // Legend — unchanged
         const items = mode==="role"
           ? Object.entries(PALETTE.roles).filter(([k])=>k!=="corridor").map(([k,c])=>[ROLE_DISPLAY[k]||k, toCssColor(c, "#888")])
           : mode==="zone"
           ? PALETTE.zones.map(z => [z.name, toCssColor(z.hex || `rgb(${z.rgb[0]},${z.rgb[1]},${z.rgb[2]})`, "#a0875f")])
           : [["Wall 1", toCssColor(PALETTE.materials.wall1, "#4a4a4a")],["Wall 2", toCssColor(PALETTE.materials.wall2, "#5a5a5a")],["Floor 1", toCssColor(PALETTE.materials.floor1, "#a0a0a0")],["Floor 2", toCssColor(PALETTE.materials.floor2, "#8a8a8a")]];
 
-        const swatch = L.legend.swatch; // 12 original
-        const gap = L.legend.gap;       // 8 original
+        const swatch = L.legend.swatch;
+        const gap = L.legend.gap;
         const textPad = 6;
-        const itemW = L.legend.itemWidth; // 90 original — 14+6+70 approx
+        const itemW = L.legend.itemWidth;
         const totalW = items.length * itemW - gap;
         const startX = Math.max(20, Math.floor((w - totalW)/2));
         const ly = legendY;
@@ -330,16 +440,13 @@ export function generateMapTextureData(dungeon, mode="role", player=null, uiCfg=
         ctx.textBaseline = "middle";
         let lx = startX;
         for(const [label,col] of items) {
-          // Swatch — correct color (no overwrite bug)
           ctx.fillStyle = col;
           roundRectPath(ctx, lx, ly-6, swatch, swatch, 2);
           ctx.fill();
-          // Border stroke — correct (was previously overwriting with semi-transparent fill)
           ctx.strokeStyle = toCssColor(PALETTE.parchmentPanelBorder, "#8b7355");
           ctx.lineWidth = 0.5;
           roundRectPath(ctx, lx, ly-6, swatch, swatch, 2);
           ctx.stroke();
-          // Label text — restored (fixes missing labels)
           ctx.fillStyle = toCssColor(PALETTE.textLight, "#3a3020");
           ctx.textAlign = "left";
           ctx.fillText(label, lx + swatch + textPad, ly);
@@ -347,22 +454,17 @@ export function generateMapTextureData(dungeon, mode="role", player=null, uiCfg=
         }
       }
 
-      // Extract RGBA
       const imageData = ctx.getImageData(0,0,w,h);
-      // Convert to Uint8Array — keep opaque (255) and let shader uniform handle overall opacity
-      // This matches original visual intent but avoids double-alpha darkening
       const buf = new Uint8Array(imageData.data);
       return buf;
     } catch (e) {
       console.warn("Canvas map render failed, falling back to raw buffer", e);
-      // fall through to raw buffer path
     }
   }
 
-  // Fallback raw buffer path (Node tests) — fixed alignment and color bugs
+  // Fallback raw buffer path (Node tests) — now respects discovery
   const buf = new Uint8Array(w*h*4);
   const alpha = L.parchment.alpha;
-
   const bg = hexToRgbArray(PALETTE.canvasBg);
   const scan = hexToRgbArray(PALETTE.canvasScan);
   const scanEvery = L.parchment.scanlineEvery;
@@ -375,14 +477,13 @@ export function generateMapTextureData(dungeon, mode="role", player=null, uiCfg=
   if (!dungeon) return buf;
   const d = dungeon;
   const legendH = L.legendHeight, legendGap = L.legendGap;
-  // FIX: use original alignment formula, not padded version
   const availW = w - 40;
   const availH = h - legendH - legendGap - 40;
   const cs = Math.max(L.minCell, Math.floor(Math.min(availW/d.w, availH/d.h)));
   const gridW = d.w*cs, gridH = d.h*cs;
   const ox = Math.floor((w - gridW)/2);
-  const oy = Math.floor((availH - gridH)/2) + 20; // FIX: +20 not +40
-  const legendY = oy + gridH + legendGap;
+  const oy = Math.floor((availH - gridH)/2) + 20;
+  // const legendY = oy + gridH + legendGap;
 
   const roomByCell = new Map();
   d.rooms.forEach(r=>{ for(let dy=0;dy<r.h;dy++)for(let dx=0;dx<r.w;dx++) roomByCell.set((r.y+dy)*d.w+(r.x+dx), r); });
@@ -397,29 +498,28 @@ export function generateMapTextureData(dungeon, mode="role", player=null, uiCfg=
   const isFloor = (x,y)=> x>=0&&y>=0&&x<d.w&&y<d.h&&d.grid[y*d.w+x]===0;
   const hasFloorNeighbor = (x,y)=> isFloor(x-1,y)||isFloor(x+1,y)||isFloor(x,y-1)||isFloor(x,y+1);
 
-  // rooms with wall border — fixed to use correct wall thickness like original
-  d.rooms.forEach(r=>{
-    const col = hexToRgbArray(PALETTE.roles[r.role]||PALETTE.materials.floor1);
-    const rx=ox+r.x*cs, ry=oy+r.y*cs, rw=r.w*cs, rh=r.h*cs;
-    const wallCol = hexToRgbArray(PALETTE.wallDark); const t=Math.max(1,Math.floor(cs*0.18));
-    fillRect(buf,w,h,rx-t,ry-t,rw+t*2,t, wallCol[0],wallCol[1],wallCol[2],255);
-    fillRect(buf,w,h,rx-t,ry+rh,rw+t*2,t, wallCol[0],wallCol[1],wallCol[2],255);
-    fillRect(buf,w,h,rx-t,ry,t,rh, wallCol[0],wallCol[1],wallCol[2],255);
-    fillRect(buf,w,h,rx+rw,ry,t,rh, wallCol[0],wallCol[1],wallCol[2],255);
-    fillRect(buf,w,h,rx,ry,rw,rh, col[0],col[1],col[2],255);
-  });
-
-  // corridors and walls
+  // Fog-aware drawing for buffer fallback
   for(let y=0;y<d.h;y++) for(let x=0;x<d.w;x++){
-    const i=y*d.w+x, gv=d.grid[i], r=roomByCell.get(i); if(r) continue;
-    if(gv===0){ const c=getCellColor(x,y,0,null); fillRect(buf,w,h,ox+x*cs,oy+y*cs,cs,cs,c[0],c[1],c[2],255); }
-    else if(hasFloorNeighbor(x,y)){ const c=getCellColor(x,y,gv,null); fillRect(buf,w,h,ox+x*cs,oy+y*cs,cs,cs,c[0],c[1],c[2],255); }
+    if (!shouldDrawCell(x,y,discovery,newlySet,animProgress,cfg)) continue;
+    const i=y*d.w+x, gv=d.grid[i], r=roomByCell.get(i);
+    if (r) {
+      // For buffer path we still draw per-cell to respect fog and 1-tile peek
+      const c=getCellColor(x,y,0,r);
+      fillRect(buf,w,h,ox+x*cs,oy+y*cs,cs,cs,c[0],c[1],c[2],255);
+    } else {
+      if(gv===0){ const c=getCellColor(x,y,0,null); fillRect(buf,w,h,ox+x*cs,oy+y*cs,cs,cs,c[0],c[1],c[2],255); }
+      else if(hasFloorNeighbor(x,y)){ const c=getCellColor(x,y,gv,null); fillRect(buf,w,h,ox+x*cs,oy+y*cs,cs,cs,c[0],c[1],c[2],255); }
+    }
   }
 
-  // stair indicators (gold circles) — also restore arrow placeholder via extra dot (fallback can't render text)
+  // stair gold circles fallback
   const gold = hexToRgbArray(PALETTE.gold), wallDark = hexToRgbArray(PALETTE.wallDark);
   d.rooms.filter(r=>r.role==="entrance"||r.role==="exit").forEach(r=>{
     if(!r.stairWall) return;
+    if (discoveryEnabled) {
+      const mx = (r.stairWall.x1 + r.stairWall.x2)/2, my = (r.stairWall.y1 + r.stairWall.y2)/2;
+      if (!shouldDrawCell(Math.floor(mx), Math.floor(my), discovery, newlySet, animProgress, cfg)) return;
+    }
     const sw=r.stairWall;
     const mx=(sw.x1+sw.x2)/2, my=(sw.y1+sw.y2)/2;
     const cx=Math.floor(ox+mx*cs), cy=Math.floor(oy+my*cs);
@@ -428,27 +528,47 @@ export function generateMapTextureData(dungeon, mode="role", player=null, uiCfg=
     strokeCircle(buf,w,h,cx,cy,Math.floor(sz*0.6), wallDark[0],wallDark[1],wallDark[2],255, Math.max(1,Math.floor(cs*L.stair.strokeFactor)));
   });
 
-  // player dot
   if(player){
     const px=Math.floor(ox+player.x*cs), py=Math.floor(oy+player.y*cs);
     const pr=Math.max(L.player.minRad, Math.floor(cs*L.player.sizeFactor));
-    const pCol = Array.isArray(L.player.color) ? L.player.color : (typeof L.player.color === 'string' ? hexToRgbArray(L.player.color) : [15,220,15]);
+    const pCol = Array.isArray(L.player.color) ? L.player.color : (typeof L.player.color === "string" ? hexToRgbArray(L.player.color) : [15,220,15]);
     fillCircle(buf,w,h,px,py,pr,pCol[0],pCol[1],pCol[2],255);
   }
 
-  // legend bar — FIXED: correct colors (no border overwrite) and attempt text placeholder
-  // In raw buffer we cannot render real text, but we fix swatch rendering to not overwrite
+  // Trail in buffer fallback: draw as pixels along path (approximate)
+  if (cfg.trail.enabled && discovery) {
+    const path = discovery.getPath ? discovery.getPath() : [];
+    const trailRgb = Array.isArray(cfg.trail.color) ? cfg.trail.color : [201,168,76];
+    const trailAlpha = Math.floor((cfg.trail.opacity ?? 0.5) * 255);
+    for (let i=0;i<path.length-1;i++) {
+      const a = path[i], b = path[i+1];
+      if (cfg.trail.onlyDiscovered && (!discovery.isDiscovered(a.x,a.y) || !discovery.isDiscovered(b.x,b.y))) continue;
+      if (Math.hypot(b.x-a.x, b.y-a.y) > 2) continue;
+      if (!shouldDrawCell(a.x,a.y,discovery,newlySet,animProgress,cfg) && !shouldDrawCell(b.x,b.y,discovery,newlySet,animProgress,cfg)) continue;
+      const ax = Math.floor(ox + a.x*cs + cs*0.5), ay = Math.floor(oy + a.y*cs + cs*0.5);
+      const bx = Math.floor(ox + b.x*cs + cs*0.5), by = Math.floor(oy + b.y*cs + cs*0.5);
+      // simple line using bresenham-like steps
+      const steps = Math.max(Math.abs(bx-ax), Math.abs(by-ay));
+      for (let s=0;s<=steps;s++) {
+        if (cfg.trail.dash && cfg.trail.dash.length===2) {
+          const dashLen = cfg.trail.dash[0] + cfg.trail.dash[1];
+          if ((s % dashLen) >= cfg.trail.dash[0]) continue;
+        }
+        const x = Math.floor(ax + (bx-ax)*s/steps);
+        const y = Math.floor(ay + (by-ay)*s/steps);
+        if (x>=0&&y>=0&&x<w&&y<h) setPixel(buf,w,x,y,trailRgb[0],trailRgb[1],trailRgb[2],trailAlpha);
+      }
+    }
+  }
+
+  // legend swatches unchanged — always visible
   const items = Object.entries(PALETTE.roles).filter(([k])=>k!=="corridor").map(([k,c])=>[ROLE_DISPLAY[k]||k, hexToRgbArray(c)]);
   const swatch=L.legend.swatch, gap=L.legend.gap, itemW=L.legend.itemWidth;
   const totalW = items.length*itemW - gap;
   let lx = Math.max(20, Math.floor((w - totalW)/2));
-  const ly = legendY;
-  // Note: panel background removed to match original (which had no panel)
+  const ly = oy + gridH + 16;
   items.forEach(([label,col])=>{
-    // FIX: only one fill for swatch with full opacity, no semi-transparent border overwrite
     fillRect(buf,w,h,lx,ly-7,swatch,swatch,col[0],col[1],col[2],255);
-    // Border would be stroke in canvas, in buffer we skip or draw 1px outline slightly darker
-    // For buffer fallback, we intentionally do NOT overwrite swatch with border color at alpha 80 (that was the bug)
     lx+=itemW;
   });
 

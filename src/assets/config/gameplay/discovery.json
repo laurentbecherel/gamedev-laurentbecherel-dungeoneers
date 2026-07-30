@@ -1,0 +1,38 @@
+{
+  "_readme": "Minimap discovery/fog-of-war + trail settings. All numbers here, no hardcode in JS. Editor-tracked via recursive walk. For task5-minimap-reveal: peekDistance=1, corridor reveal incremental, retro dither on M open, dashed transparent trail.",
+  "version": 1,
+  "reveal": {
+    "enabled": true,
+    "peekDistance": 1,
+    "corridorRevealRadius": 4,
+    "corridor3x3": true,
+    "roomReveal": "entire",
+    "animationDuration": 400,
+    "dither": {
+      "enabled": true,
+      "pattern": "random",
+      "dotSize": 2,
+      "bayerSize": 4
+    },
+    "undiscovered": {
+      "hide": true
+    },
+    "currentRoomBoost": 0.15,
+    "oldRoomOpacity": 0.85
+  },
+  "trail": {
+    "enabled": true,
+    "color": [201, 168, 76],
+    "colorCss": "#c9a84c",
+    "opacity": 0.5,
+    "lineWidth": 1.8,
+    "dash": [5, 4],
+    "cap": "butt",
+    "join": "miter",
+    "maxPoints": 1024,
+    "onlyDiscovered": true
+  },
+  "debug": {
+    "logNewRoom": false
+  }
+}
