@@ -161,10 +161,3 @@ npm start # http://localhost:8000/game.html
 # V/B toggles bob, P cycles presets, R regen, M map, 1-8 debug (code-based, AZERTY safe)
 # Editor: http://localhost:8000/editor.html -> assets -> config -> gameplay -> player.json
 ```
-
-Screenshots / Video for README (author-only, not required for solver — optional for final task presentation):
-- These are to help the README and submission teaser, not part of acceptance criteria. Solver does NOT need to produce them.
-- Suggested captures if you do: grid ON vs OFF HUD, bob ON vs OFF while walking, mouse look active, editor showing player.json v2.
-
-In `task.toml` screenshots and videos are for the catalog only; E2E and unit tests are the true acceptance.
-
