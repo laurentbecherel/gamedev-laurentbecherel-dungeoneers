@@ -253,9 +253,7 @@ export class GPURenderer {
 
     try {
       this.spriteRenderer = new SpriteGpuRenderer(gl);
-      // Pass shader sources if needed
-      // this.spriteRenderer.init({ vsSpriteSrc, fsSpritePBRSrc, MAX_LIGHTS });
-      this.spriteRenderer.init();
+      this.spriteRenderer.init({ vsSpriteSrc, fsSpritePBRSrc, MAX_LIGHTS });
       // Preload sprites used in dungeon
       const ids = [...new Set(this._sprites.map(s => s.spriteId || s.type || 'torch_wall'))].filter(Boolean);
       await this.spriteRenderer.ensureSprites(gl, ids);

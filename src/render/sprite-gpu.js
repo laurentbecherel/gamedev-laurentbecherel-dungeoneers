@@ -158,6 +158,17 @@ function defaultFS(maxLights) {
     fog = clamp(fog, 0.06, 1.0);
     float fogDark = 0.55 + fog*0.45;
     total *= fogDark;
+    // HDR fix: avoid pink from channel-wise clamp to 1, preserve hue and bloom to warm white
+    {
+      float maxC = max(max(total.r, total.g), total.b);
+      if (maxC > 1.0) {
+        float over = clamp((maxC - 1.0) * 0.32, 0.0, 0.7);
+        vec3 scaled = total / maxC;
+        vec3 warmWhite = vec3(1.0, 0.94, 0.82);
+        total = mix(scaled, warmWhite, over);
+      }
+      total = clamp(total, 0.0, 1.0);
+    }
     outColor = vec4(total, alb.a * v_alpha);
   }`;
 }

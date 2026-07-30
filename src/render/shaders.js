@@ -972,12 +972,23 @@ void main() {
       finalColor *= fog;
       finalColor += u_fogColor * (1.0 - fog);
     }
+    // HDR fix: bright should go to warm white, not pink/magenta from channel-wise clamp
+    {
+      float maxC = max(max(finalColor.r, finalColor.g), finalColor.b);
+      if (maxC > 1.0) {
+        float over = clamp((maxC - 1.0) * 0.35, 0.0, 0.75);
+        vec3 scaled = finalColor / maxC;
+        vec3 warmWhite = vec3(1.0, 0.94, 0.82);
+        finalColor = mix(scaled, warmWhite, over);
+      }
+      finalColor = clamp(finalColor, 0.0, 1.0);
+    }
     if (u_authentic == 1) {
       int bands = max(8, u_bandLevels);
       finalColor = floor(finalColor * float(bands)) / float(bands);
     }
   }
-  outColor = vec4(clamp(finalColor, 0.0, 1.0), 1.0);
+  outColor = vec4(finalColor, 1.0);
 }
 `;
 
@@ -1248,10 +1259,21 @@ void main(){
   fog = clamp(fog, 0.06, 1.0);
   float fogDark = 0.68 + fog * 0.32;
   Lo *= fogDark;
+  // HDR fix for sprites too: preserve hue, avoid pink from channel clip, bloom to warm white
+  {
+    float maxC = max(max(Lo.r, Lo.g), Lo.b);
+    if (maxC > 1.0) {
+      float over = clamp((maxC - 1.0) * 0.32, 0.0, 0.7);
+      vec3 scaled = Lo / maxC;
+      vec3 warmWhite = vec3(1.0, 0.94, 0.82);
+      Lo = mix(scaled, warmWhite, over);
+    }
+    Lo = clamp(Lo, 0.0, 1.0);
+  }
   float alphaFade = 1.0;
   if (v_dist > 14.0) alphaFade = max(0.12, 1.0 - (v_dist - 14.0) * 0.09);
   float alphaOut = albedoS.a * v_alpha * alphaFade;
-  outColor = vec4(clamp(Lo, 0.0, 1.5), alphaOut);
+  outColor = vec4(Lo, alphaOut);
 }
 `;
 
