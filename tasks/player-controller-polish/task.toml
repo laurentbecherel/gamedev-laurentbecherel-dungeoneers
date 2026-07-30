@@ -14,8 +14,11 @@ screenshots = [
   "./screenshots/game-mouse-look.png",
   "./screenshots/editor-player-config.png"
 ]
-videos = []
-teaser = ""
+videos = [
+  "./screenshots/task4-demo.webm",
+  "./screenshots/task4-bob-demo.webm"
+]
+teaser = "./screenshots/game-bob-on.png"
 base-commit-hash = "c2e768d67d55a8ce6fc6df7916070c8be23885ec"
 commit-hash = ""
 avocado-model = "Muse Spark 1.1"
