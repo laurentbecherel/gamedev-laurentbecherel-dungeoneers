@@ -33,3 +33,16 @@ build/
 
 # Local dev
 .local/
+
+# GameDev: videos should be PixelCloud, not repo binaries
+*.webm
+*.mp4
+
+
+# Logs
+*.err
+
+
+# Test results (local artifacts)
+src/test-results/
+
