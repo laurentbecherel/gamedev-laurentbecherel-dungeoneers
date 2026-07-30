@@ -1,7 +1,7 @@
 // Game — top-level orchestration owning all subsystems.
 // Task5: owns DiscoveryManager for fog-of-war minimap reveal with 1-tile peek, retro dither animation, dashed trail.
 // Loads dedicated configs including discovery.json (gameplay/discovery) via getAllRenderConfigs.
-// Architecture: Game is orchestrator only, no discovery algorithm inlined, clean wiring, no magic numbers, AZERTY-safe.
+// Architecture: Game is orchestrator only, no discovery algorithm inlined, clean wiring, AZERTY-safe.
 
 import { getConfig, getAllRenderConfigs } from "../config/config.js";
 import { generateDungeon } from "../world/dungeon/index.js";
@@ -10,6 +10,18 @@ import { Player } from "../entities/player.js";
 import { Input } from "../systems/input.js";
 import { UI } from "../ui/ui.js";
 import { DiscoveryManager } from "../world/discovery.js";
+
+const DEFAULT_DISCOVERY_FALLBACK = {
+  reveal: { enabled: true, peekDistance: 1, corridorRevealRadius: 4, animationDuration: 400, dither: { enabled: true, pattern: "random" } },
+  trail: { enabled: true, color: [88, 128, 92], opacity: 0.45, lineWidth: 2.0, dash: [5, 4], onlyDiscovered: true }
+};
+
+const BOB_PRESETS_FALLBACK = {
+  subtle: { ampY: 0.012, ampX: 0.008, ampRollDeg: 0.3, freq: 7.5 },
+  default: { ampY: 0.025, ampX: 0.015, ampRollDeg: 0.6, freq: 9 },
+  heavy: { ampY: 0.045, ampX: 0.028, ampRollDeg: 1.2, freq: 10.5 },
+  disabled: { ampY: 0, ampX: 0, ampRollDeg: 0, freq: 0 }
+};
 
 export class Game {
   constructor(canvas) {
@@ -31,31 +43,41 @@ export class Game {
     this._onKeyDown = this._onKeyDown.bind(this);
   }
 
+  _pickCfg(renderCfgs, baseCfg, key, fallback) {
+    return renderCfgs[key] || baseCfg[key] || fallback;
+  }
+
   _mergeConfigs(baseCfg, renderCfgs){
     const merged = { ...baseCfg };
     for(const [k,v] of Object.entries(renderCfgs)){
       if(v) merged[k] = v;
     }
-    merged.generator = renderCfgs.generator || baseCfg.generator || {};
-    merged.fog = renderCfgs.fog || baseCfg.fog || { enabled:true, base:0.06, squared:0.005, color:[0.05,0.05,0.08] };
-    merged.rendering = renderCfgs.rendering || baseCfg.rendering || { fov:1.0, textureFilter:"nearest", resolution:"640x360" };
-    merged.palette = renderCfgs.palette || baseCfg.palette || { authentic:true, paletteStyle:"doom", bandLevels:32 };
-    merged.pom = renderCfgs.pom || baseCfg.pbr?.pom || baseCfg.renderer?.pom || { enabled:true, wall:0.06, floor:0.07, ceil:0.035, steps:8 };
-    merged.pbr = renderCfgs.pbr || baseCfg.pbr || { ao:{affectSun:0.25,affectPoint:0.35,affectAmbient:1.0} };
-    merged.ao = renderCfgs.ao || baseCfg.ao || baseCfg.pbr?.ao || { affect:{sun:0.25,point:0.35,ambient:1.0} };
-    merged.lighting = renderCfgs.lighting || baseCfg.lighting || baseCfg.lights || { ambient:{level:0.36,color:[1,1,1],worldMul:0.38}, sun:{intensity:1.5,color:[1,1,1],dir:[-0.55,-0.45,-0.7]} };
-    merged.shadows = renderCfgs.shadows || baseCfg.shadows || { bias:{traceNormalOffset:0.10,dirOffset:0.06}, sun:{shadowFactor:0.25,maxDist:20}, point:{shadowFactor:0.15,distEpsilon:0.1} };
-    merged.chamfer = renderCfgs.chamfer || baseCfg.chamfer || baseCfg.pbr?.chamfer || { enabled:true, floorSize:0.30, ceilSize:0.24, wallSize:0.28 };
-    merged.corners = renderCfgs.corners || baseCfg.corners || baseCfg.pbr?.corner || { enabled:true, radius:0.15, mode:2, inner:true };
-    merged.raymarch = renderCfgs.raymarch || baseCfg.raymarch || { maxSteps:64 };
-    merged.map = renderCfgs.map || baseCfg.map || baseCfg.ui?.map || { display:{position:"fullscreen",size:640,opacity:0.92} };
-    merged.discovery = renderCfgs.discovery || baseCfg.discovery || { reveal:{ enabled:true, peekDistance:1, corridorRevealRadius:4, animationDuration:400, dither:{ enabled:true, pattern:"random"} }, trail:{ enabled:true, color:[201,168,76], opacity:0.5, lineWidth:1.8, dash:[5,4], onlyDiscovered:true } };
+    merged.generator = this._pickCfg(renderCfgs, baseCfg, 'generator', {});
+    merged.fog = this._pickCfg(renderCfgs, baseCfg, 'fog', { enabled:true, base:0.06, squared:0.005, color:[0.05,0.05,0.08] });
+    merged.rendering = this._pickCfg(renderCfgs, baseCfg, 'rendering', { fov:1.0, textureFilter:"nearest", resolution:"640x360" });
+    merged.palette = this._pickCfg(renderCfgs, baseCfg, 'palette', { authentic:true, paletteStyle:"doom", bandLevels:32 });
+    merged.pom = this._pickCfg(renderCfgs, baseCfg, 'pom', baseCfg.pbr?.pom || baseCfg.renderer?.pom || { enabled:true, wall:0.06, floor:0.07, ceil:0.035, steps:8 });
+    merged.pbr = this._pickCfg(renderCfgs, baseCfg, 'pbr', { ao:{affectSun:0.25,affectPoint:0.35,affectAmbient:1.0} });
+    merged.ao = this._pickCfg(renderCfgs, baseCfg, 'ao', baseCfg.pbr?.ao || { affect:{sun:0.25,point:0.35,ambient:1.0} });
+    merged.lighting = this._pickCfg(renderCfgs, baseCfg, 'lighting', baseCfg.lights || { ambient:{level:0.36,color:[1,1,1],worldMul:0.38}, sun:{intensity:1.5,color:[1,1,1],dir:[-0.55,-0.45,-0.7]} });
+    merged.shadows = this._pickCfg(renderCfgs, baseCfg, 'shadows', { bias:{traceNormalOffset:0.10,dirOffset:0.06}, sun:{shadowFactor:0.25,maxDist:20}, point:{shadowFactor:0.15,distEpsilon:0.1} });
+    merged.chamfer = this._pickCfg(renderCfgs, baseCfg, 'chamfer', baseCfg.pbr?.chamfer || { enabled:true, floorSize:0.30, ceilSize:0.24, wallSize:0.28 });
+    merged.corners = this._pickCfg(renderCfgs, baseCfg, 'corners', baseCfg.pbr?.corner || { enabled:true, radius:0.15, mode:2, inner:true });
+    merged.raymarch = this._pickCfg(renderCfgs, baseCfg, 'raymarch', { maxSteps:64 });
+    merged.map = this._pickCfg(renderCfgs, baseCfg, 'map', baseCfg.ui?.map || { display:{position:"fullscreen",size:640,opacity:0.92} });
+    merged.discovery = this._pickCfg(renderCfgs, baseCfg, 'discovery', DEFAULT_DISCOVERY_FALLBACK);
     merged.materialsProc = renderCfgs["materials-proc"] || baseCfg.materialsProc || baseCfg["materials-proc"] || baseCfg.materialProc || { walls:{}, floors:{}, ceils:{} };
-    merged.playerCfg = renderCfgs.player || baseCfg.playerCfg || baseCfg.player || { moveSpeed:3, turnSpeed:2.2, radius:0.28, height:0.5 };
-    merged.debug = renderCfgs.debug || baseCfg.debug || {};
+    merged.playerCfg = this._pickCfg(renderCfgs, baseCfg, 'player', baseCfg.player || { moveSpeed:3, turnSpeed:2.2, radius:0.28, height:0.5 });
+    merged.debug = this._pickCfg(renderCfgs, baseCfg, 'debug', {});
     merged.items = merged.generator?.items || baseCfg.items || { maxTorches:24, minTorchDist:6, corridorBias:1.5, torchOffset:0.35 };
     merged.torchColors = merged.generator?.torchColors || merged.lighting?.torchColors || baseCfg.torchColors || lightingFallbackColors();
     merged.boundaryWallId = merged.generator?.boundaryWallId ?? baseCfg.boundaryWallId ?? 1;
+
+    this._mergeDerivedRenderConfigs(merged);
+    return merged;
+  }
+
+  _mergeDerivedRenderConfigs(merged){
     if(!merged.renderer) merged.renderer = {
       fov: merged.rendering?.fov ?? 1.0,
       textureFilter: merged.rendering?.textureFilter ?? "nearest",
@@ -81,7 +103,6 @@ export class Game {
     if(!merged.player) merged.player = merged.playerCfg;
     if(!merged.ui) merged.ui = { map: merged.map?.display || merged.map || { position:"fullscreen", size:640, opacity:0.92, parchmentBg:"#e8dcc4", parchmentScan:"#ddd0b8" } };
     if(!merged.materialProc) merged.materialProc = merged.materialsProc;
-    return merged;
   }
 
   async _loadAllConfigs(){
@@ -149,15 +170,8 @@ export class Game {
       if (cfg.logNewRoom && newly.length > 5) {
         console.log("New area discovered", newly.length, "cells");
       }
-      // Bug fix: if discovery happens while minimap is open, mark as seen immediately
-      // so close+reopen does not re-trigger fade-in animation for cells already seen live
       if (this.showMap) {
-        // Merge into current pending for live dither and update max so next open is clean
-        if (this.discovery.addPendingWhileMapOpen) {
-          this.discovery.addPendingWhileMapOpen(newly);
-        } else if (this.discovery.setLastOpenMaxToCurrent) {
-          this.discovery.setLastOpenMaxToCurrent();
-        }
+        this.discovery.addPendingWhileMapOpen(newly);
       }
     }
     this._lastPlayerGridX = px;
@@ -262,13 +276,7 @@ export class Game {
         const now = typeof performance !== "undefined" ? performance.now() : Date.now();
         const animDuration = discoveryCfg?.reveal?.animationDuration ?? 400;
         const animProgress = this.discovery ? this.discovery.getAnimationProgress(now, animDuration) : 1;
-        // UI now takes discovery into account
-        if (this.ui.drawMap.length >= 3) {
-          // New signature with discovery
-          this.ui.drawMap(this.dungeon, this.player, this.renderer, this.discovery, animProgress, discoveryCfg);
-        } else {
-          this.ui.drawMap(this.dungeon, this.player, this.renderer);
-        }
+        this.ui.drawMap(this.dungeon, this.player, this.renderer, this.discovery, animProgress, discoveryCfg);
         this.renderer.renderMapOnly(this.dungeon, this.player);
       } else {
         this.renderer.render(this.dungeon, this.player, time / 1000);
@@ -302,7 +310,7 @@ export class Game {
       return;
     }
     if (code === "KeyP") {
-      const presets = this.cfg?.playerCfg?.bob?.presets || this.cfg?.player?.bob?.presets || { subtle:{ampY:0.012,ampX:0.008,ampRollDeg:0.3,freq:7.5}, default:{ampY:0.025,ampX:0.015,ampRollDeg:0.6,freq:9}, heavy:{ampY:0.045,ampX:0.028,ampRollDeg:1.2,freq:10.5}, disabled:{ampY:0,ampX:0,ampRollDeg:0,freq:0} };
+      const presets = this.cfg?.playerCfg?.bob?.presets || this.cfg?.player?.bob?.presets || BOB_PRESETS_FALLBACK;
       const keys = Object.keys(presets);
       this._bobPresetIdx = (this._bobPresetIdx + 1) % keys.length;
       const name = keys[this._bobPresetIdx];

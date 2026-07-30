@@ -1,5 +1,5 @@
 // UI — WebGL-based UI subsystem for map overlay and HUD.
-// Task5: now supports fog-of-war discovery with retro dither + dashed trail.
+// Task5: supports fog-of-war discovery with retro dither + dashed trail.
 // Prepares map texture data for WebGL rendering (no separate 2D canvas).
 
 import { generateMapTextureData } from "../render/map-ui.js";
@@ -13,25 +13,33 @@ export class UI {
 
   setDungeon(dungeon) { this.dungeon = dungeon; }
 
-  // New signature: drawMap(dungeon, player, renderer, discovery, animProgress, discoveryCfg)
-  // Keeps backward compat: if 3rd arg is renderer and 4th is discovery, handle.
+  /**
+   * Draw map texture.
+   * Signature: drawMap(dungeon, player, renderer, discovery, animProgress, discoveryCfg)
+   * - dungeon, player, renderer required
+   * - discovery optional (implements isDiscovered, getPath, getNewlyDiscoveredSinceLastOpen)
+   * - animProgress 0..1 optional
+   * - discoveryCfg optional file config
+   */
   drawMap(dungeon, player, renderer, discovery = null, animProgress = 1, discoveryCfg = null) {
     if (!dungeon || !renderer) return;
     const d = dungeon || this.dungeon;
     if (!d) return;
-    // If renderer is actually discovery (old calls), shift
-    // Detect if 3rd param looks like renderer (has renderMapUI) vs discovery (has isDiscovered)
+
     let actualRenderer = renderer;
     let actualDiscovery = discovery;
     let actualAnim = animProgress;
     let actualDiscoveryCfg = discoveryCfg;
 
-    // If renderer passed as discovery (legacy UI.drawMap(dungeon, player, renderer) from old Game)
-    // then discovery param is null and we are fine.
-
-    // If discovery is number (animProgress passed as 4th), handle
+    // Backward compat: 4th arg could be animProgress number if discovery omitted
     if (typeof actualDiscovery === "number") {
       actualAnim = actualDiscovery;
+      actualDiscovery = null;
+    }
+
+    // Validate discovery shape — must have isDiscovered fn, otherwise treat as null and keep anim
+    if (actualDiscovery && typeof actualDiscovery.isDiscovered !== "function") {
+      // Legacy call where discovery slot held something else — ignore
       actualDiscovery = null;
     }
 
@@ -39,7 +47,7 @@ export class UI {
     const discCfg = actualDiscoveryCfg || this.cfg?.discovery || null;
 
     const texData = generateMapTextureData(d, "role", player, uiCfg, actualDiscovery, actualAnim, discCfg);
-    if (texData && actualRenderer && actualRenderer.renderMapUI) {
+    if (texData && actualRenderer?.renderMapUI) {
       actualRenderer.renderMapUI(texData, uiCfg);
     }
   }

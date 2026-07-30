@@ -25,9 +25,9 @@ const CONFIG_PATHS = {
   // gameplay
   'generator':      ['config/gameplay/generator', 'config/generator', 'config/main'],
   'player':         ['config/gameplay/player', 'config/player', 'config/main'],
-  'discovery':      ['config/gameplay/discovery', 'config/discovery', 'config/gameplay/minimap-reveal', 'config/ui/map', 'config/main'],
+  'discovery':      ['config/gameplay/discovery', 'config/discovery', 'config/ui/map', 'config/main'],
   // ui
-  'map':            ['config/ui/map', 'config/map', 'config/ui/map', 'config/main'],
+  'map':            ['config/ui/map', 'config/map', 'config/main'],
   'debug':          ['config/ui/debug', 'config/debug', 'config/main'],
   // legacy
   'main':           ['config/main']

@@ -80,18 +80,28 @@ test.describe("Task5: Minimap Reveal & Discovery", () => {
       await page.keyboard.press("KeyW");
       await page.waitForTimeout(300);
     }
-    const beforeRegen = await page.evaluate(() => window.game.discovery.getWalkableDiscoveredCount(window.game.dungeon));
+    const beforeInfo = await page.evaluate(() => ({
+      walkable: window.game.discovery.getWalkableDiscoveredCount(window.game.dungeon),
+      pathLen: window.game.discovery.getPath().length
+    }));
     await page.keyboard.press("KeyR");
     await page.waitForTimeout(2000);
-    const afterRegen = await page.evaluate(() => window.game.discovery.getWalkableDiscoveredCount(window.game.dungeon));
-    const pathLen = await page.evaluate(() => window.game.discovery.getPath().length);
-    const total = await page.evaluate(() => {
+    await page.waitForFunction(() => window.game && window.game.discovery && window.game.dungeon);
+    const afterInfo = await page.evaluate(() => {
       const d = window.game.dungeon;
-      return d.grid ? Array.from(d.grid).filter(v => v === 0).length : 1000;
+      const total = d.grid ? Array.from(d.grid).filter(v => v === 0).length : 1000;
+      const walkable = window.game.discovery.getWalkableDiscoveredCount(d);
+      const pathLen = window.game.discovery.getPath().length;
+      return { walkable, pathLen, total, ratio: total ? walkable / total : 0 };
     });
-    expect(afterRegen).toBeLessThanOrEqual(beforeRegen);
-    expect(pathLen).toBeGreaterThanOrEqual(1);
-    expect(afterRegen).toBeLessThan(total * 0.5);
+    // After regen, discovery should be reset to start room only (<50% of floor)
+    expect(afterInfo.walkable).toBeGreaterThan(0);
+    expect(afterInfo.ratio).toBeLessThan(0.5);
+    // Path should reset to 1 (start cell) — allow 1-2 due to timing
+    expect(afterInfo.pathLen).toBeGreaterThanOrEqual(1);
+    expect(afterInfo.pathLen).toBeLessThanOrEqual(2);
+    // Path after regen should be <= before (since we reset), not relying on floor size comparison
+    expect(afterInfo.pathLen).toBeLessThanOrEqual(beforeInfo.pathLen);
   });
 
   test("editor: discovery.json exists and editable via API", async ({ page }) => {
