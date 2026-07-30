@@ -13,8 +13,8 @@ import { isWebGL2Supported } from "./render/renderer-gpu.js";
   try { window.game = game; console.log("Game exposed early in main.js"); } catch(e) {}
   try {
     await game.init();
-    // Expose for E2E tests - critical for Task4 bob verification
-    try { window.game = game; window._gamePlayer = game.player; window._gameRenderer = game.renderer; } catch(e) { console.warn("expose failed", e); }
+    // Expose for E2E tests - critical for Task4 bob verification + Task6 sprites/lights
+    try { window.game = game; window._gamePlayer = game.player; window._gameRenderer = game.renderer; window._gameDungeon = game.dungeon; } catch(e) { console.warn("expose failed", e); }
     console.log("Game exposed for E2E", !!window.game);
     game.start();
   } catch (e) {

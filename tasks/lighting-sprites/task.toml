@@ -1,0 +1,21 @@
+name = "Dungeoneers: Lighting, Sprites & Particles"
+instruction = "./instruction.md"
+
+[game]
+tags = ["RPG/adventure/story", "Arcade/action", "3D/VR scene-like", "Atmosphere/lighting"]
+tech-stack-tags = ["Web JS/DOM", "WebGL2", "GLSL", "Vanilla JS canvas", "PBR", "Procedural"]
+assets-used = ["primitives", "procedural", "sprites"]
+harness = "Metacode"
+screenshots = [
+  "./screenshots/screen-torch-wall.png",
+  "./screenshots/screen-brazier-floor.png",
+  "./screenshots/screen-multi-lights.png",
+  "./screenshots/screen-flicker-graph.png",
+  "./screenshots/screen-sprite-pbr.png",
+  "./screenshots/screen-editor-sprites.png"
+]
+videos = []
+teaser = ""
+base-commit-hash = "de62d40820a47735e61a2ad07fa06aaba080d630"
+commit-hash = ""
+avocado-model = "Muse Spark 1.1"

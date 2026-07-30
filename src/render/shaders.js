@@ -1,8 +1,10 @@
-// GLSL shader sources for WebGL2 raycaster — extended configurable version
-// All visual behaviours exposed via uniforms from dedicated JSON configs:
-// POM (pom.json), PBR (pbr.json), AO (ao.json), Shadows (shadows.json),
-// Chamfer (chamfer.json), Corners (corners.json), Rendering (rendering.json)
-// Fog (fog.json), Raymarch (raymarch.json), Palette (palette.json)
+// GLSL shader sources for WebGL2 raycaster — Task 6 Complete: multi-lights + PBR sprites
+// All visual domains exposed via uniforms from dedicated JSONs
+// Extends Task 3 with MAX_LIGHTS array and sprite billboard PBR shaders.
+// Inspiration from mygame's shaders.js which had MAX_LIGHTS 12 and sprite GPU path.
+
+export const MAX_LIGHTS = 12;
+export const MAX_CHARS = 8;
 
 export const vsSource = `#version 300 es
 in vec2 a_pos;
@@ -38,11 +40,21 @@ uniform sampler2D u_ceilAlbedo,  u_ceilNormal,  u_ceilHeight,  u_ceilRoughMetal;
 uniform float u_texSize;
 uniform float u_atlasWalls, u_atlasFloors, u_atlasCeils;
 
-uniform vec3  u_lightPos;
-uniform vec3  u_lightColor;
-uniform float u_lightIntensity;
-uniform float u_lightRadius;
-
+uniform int   u_numLights;
+uniform vec3  u_lightPos[12];
+uniform vec3  u_lightColor[12];
+uniform float u_lightIntensity[12];
+uniform float u_lightRadius[12];
+uniform int   u_lightType[12];
+uniform vec3  u_lightDir[12];
+uniform float u_lightConeInner[12];
+uniform float u_lightConeOuter[12];
+uniform float u_lightPulseSpeed[12];
+uniform float u_lightPulseAmt[12];
+uniform int   u_lightNoShadow[12];
+uniform float u_lightFlickerSpeed[12];
+uniform float u_lightFlickerAmount[12];
+uniform float u_lightPhase[12];
 uniform vec3  u_ambientColor;
 uniform float u_ambientLevel;
 uniform float u_worldAmbientMul;
@@ -371,46 +383,23 @@ vec3 pbrShade(vec3 albedo, vec3 N, float rough, float metal, float ao, vec3 emis
 
   float biasN = u_shadowBiasN > 0.0 ? u_shadowBiasN : 0.10;
   float biasDir = u_shadowBiasDir > 0.0 ? u_shadowBiasDir : 0.06;
-  float sunShad = u_shadowSunFactor > 0.0 ? u_shadowSunFactor : 0.25;
-  float pointShad = u_shadowPointFactor > 0.0 ? u_shadowPointFactor : 0.15;
+  float sunShadFactor = u_shadowSunFactor > 0.0 ? u_shadowSunFactor : 0.25;
+  float pointShadFactor = u_shadowPointFactor > 0.0 ? u_shadowPointFactor : 0.15;
   float sunMax = u_shadowSunMax > 0.0 ? u_shadowSunMax : 20.0;
   float pointEps = u_shadowPointEps >= 0.0 ? u_shadowPointEps : 0.1;
 
-  if (u_pbrEnabled == 0) {
-    vec3 sunDir = normalize(vec3(u_sunDir.xy, u_sunDirZ));
-    vec3 Lsun = -sunDir;
-    float sunShadow = 1.0;
-    vec2 shadowDirSun = normalize(Lsun.xy);
-    vec2 shadowOriginSun = worldPos.xy + traceN.xy * biasN + shadowDirSun * biasDir;
-    if (length(shadowDirSun) > 0.01 && traceRay(shadowOriginSun, shadowDirSun, sunMax)) sunShadow = sunShad;
-    float NdotLsun = max(dot(N, Lsun), 0.0);
-    vec3 sunContrib = albedo * u_sunColor * u_sunIntensity * NdotLsun * sunShadow * aoSunEff;
-    vec3 Lp = u_lightPos - worldPos;
-    float distp = length(Lp);
-    vec3 pointContrib = vec3(0.0);
-    if (distp < u_lightRadius) {
-      vec3 LpN = Lp / distp;
-      float atten = clamp(1.0 - distp / u_lightRadius, 0.0, 1.0); atten *= atten;
-      float shadow = 1.0;
-      vec2 sd = normalize(LpN.xy);
-      vec2 so = worldPos.xy + traceN.xy * biasN + sd * biasDir;
-      if (length(sd) > 0.01 && traceRay(so, sd, distp - pointEps)) shadow = pointShad;
-      float NdotLp = max(dot(N, LpN), 0.0);
-      pointContrib = albedo * u_lightColor * u_lightIntensity * atten * NdotLp * shadow * aoPointEff;
-    }
-    vec3 ambient = u_ambientColor * albedo * u_ambientLevel * u_worldAmbientMul * aoAmbEff;
-    return ambient + sunContrib + pointContrib + emissive;
-  }
   float f0d = u_pbrF0 > 0.0 ? u_pbrF0 : 0.04;
   vec3 F0 = mix(vec3(f0d), albedo, metal);
   vec3 Lo = vec3(0.0);
+
+  // Sun
   vec3 sunDir = normalize(vec3(u_sunDir.xy, u_sunDirZ));
   vec3 Lsun = -sunDir;
   float sunShadow = 1.0;
   {
-    vec2 shadowDir = normalize(Lsun.xy);
-    vec2 shadowOrigin = worldPos.xy + traceN.xy * biasN + shadowDir * biasDir;
-    if (length(shadowDir) > 0.01 && traceRay(shadowOrigin, shadowDir, sunMax)) sunShadow = sunShad;
+    vec2 sDirSun = normalize(Lsun.xy);
+    vec2 sOriginSun = worldPos.xy + traceN.xy * biasN + sDirSun * biasDir;
+    if (length(sDirSun) > 0.01 && traceRay(sOriginSun, sDirSun, sunMax)) sunShadow = sunShadFactor;
   }
   {
     vec3 H = normalize(viewDir + Lsun);
@@ -422,31 +411,75 @@ vec3 pbrShade(vec3 albedo, vec3 N, float rough, float metal, float ao, vec3 emis
     vec3 specular = numerator / denom;
     vec3 kS = F; vec3 kD = vec3(1.0) - kS; kD *= 1.0 - metal;
     float NdotL = max(dot(N, Lsun), 0.0);
-    Lo += (kD * albedo / PI + specular) * u_sunColor * u_sunIntensity * NdotL * sunShadow * aoSunEff;
+    Lo += (kD * albedo / 3.14159265 + specular) * u_sunColor * u_sunIntensity * NdotL * sunShadow * aoSunEff;
   }
-  vec3 L = u_lightPos - worldPos;
-  float dist = length(L);
-  if (dist < u_lightRadius) {
-    L /= dist;
-    float d = dist / u_lightRadius;
-    float attenQuad = u_pbrAttenQuad > 0.0 ? u_pbrAttenQuad : 0.25;
-    float atten = clamp(1.0 - d, 0.0, 1.0); atten *= atten;
-    atten = atten / (1.0 + d * d * attenQuad);
+
+  // Many point lights (torches/braziers) — Task 6
+  for (int i = 0; i < 12; i++) {
+    if (i >= u_numLights) break;
+    vec3 lPos = u_lightPos[i];
+    // skip zeroed lights
+    if (u_lightIntensity[i] <= 0.001) continue;
+    vec3 Lvec = lPos - worldPos;
+    float dist = length(Lvec);
+    float radius = u_lightRadius[i];
+    if (dist > radius) continue;
+    if (dist < 0.001) continue;
+    Lvec /= dist;
+    float atten = clamp(1.0 - dist / radius, 0.0, 1.0);
+    // quadratic falloff + configurable quad factor if present, else simple square
+    atten *= atten;
+    atten = atten / (1.0 + (dist/radius)*(dist/radius) * max(u_pbrAttenQuad, 0.0));
+
+    // Shadow: skip if flagged noShadow (emissive/ambient/crystal)
     float shadow = 1.0;
-    vec2 shadowDir = normalize(L.xy);
-    vec2 shadowOrigin = worldPos.xy + traceN.xy * biasN + shadowDir * biasDir;
-    if (length(shadowDir) > 0.01 && traceRay(shadowOrigin, shadowDir, dist - pointEps)) shadow = pointShad;
-    vec3 H = normalize(viewDir + L);
+    if (u_lightNoShadow[i] == 0) {
+      vec2 shDir = normalize(Lvec.xy);
+      vec2 shOrigin = worldPos.xy + traceN.xy * biasN + shDir * biasDir;
+      if (length(shDir) > 0.01 && traceRay(shOrigin, shDir, dist - pointEps)) shadow = pointShadFactor;
+    }
+
+    // Spot cone
+    int lType = u_lightType[i];
+    if (lType == 1) {
+      vec3 spotDir = normalize(u_lightDir[i]);
+      float cosTheta = dot(-Lvec, spotDir);
+      float inner = u_lightConeInner[i];
+      float outer = u_lightConeOuter[i];
+      float spotAtt = smoothstep(outer, inner, cosTheta);
+      atten *= spotAtt;
+      if (spotAtt <= 0.01) continue;
+    }
+
+    // Flicker / Pulse already baked into intensity on CPU via organic factor,
+    // but shader retains cheap visual flicker for extra liveliness when type==flicker
+    if (lType == 2) {
+      // cheap extra flicker (sin) layered on top of CPU organic intensity
+      float fSpeed = u_lightFlickerSpeed[i] > 0.1 ? u_lightFlickerSpeed[i] : 6.0;
+      float fAmt = u_lightFlickerAmount[i] > 0.001 ? u_lightFlickerAmount[i] : 0.12;
+      float ph = u_lightPhase[i];
+      float flickAdd = 0.92 + 0.08 * sin(u_time * fSpeed + ph * 1.7 + float(i)*0.9) + 0.05 * sin(u_time * fSpeed * 1.9 + ph*2.3);
+      atten *= clamp(flickAdd, 0.68, 1.22);
+    } else if (lType == 3) {
+      float ps = u_lightPulseSpeed[i]; float pa = u_lightPulseAmt[i];
+      if (ps > 0.1 && pa > 0.01) {
+        float pulse = 1.0 + pa * sin(u_time * ps + u_lightPhase[i] + float(i)*0.7);
+        atten *= pulse;
+      }
+    }
+
+    vec3 H = normalize(viewDir + Lvec);
     float NDF = DistributionGGX(N, H, rough);
-    float G = GeometrySmith(N, viewDir, L, rough);
+    float G = GeometrySmith(N, viewDir, Lvec, rough);
     vec3 F = fresnelSchlick(max(dot(H, viewDir), 0.0), F0);
-    vec3 numerator = NDF * G * F;
-    float denom = 4.0 * max(dot(N, viewDir), 0.0) * max(dot(N, L), 0.0) + max(u_pbrGGXEps, 0.0001);
-    vec3 specular = numerator / denom;
+    vec3 numerator2 = NDF * G * F;
+    float denom2 = 4.0 * max(dot(N, viewDir), 0.0) * max(dot(N, Lvec), 0.0) + max(u_pbrGGXEps, 0.0001);
+    vec3 specular = numerator2 / denom2;
     vec3 kS = F; vec3 kD = vec3(1.0) - kS; kD *= 1.0 - metal;
-    float NdotL = max(dot(N, L), 0.0);
-    Lo += (kD * albedo / PI + specular) * u_lightColor * u_lightIntensity * atten * NdotL * shadow * aoPointEff;
+    float NdotL = max(dot(N, Lvec), 0.0);
+    Lo += (kD * albedo / 3.14159265 + specular) * u_lightColor[i] * u_lightIntensity[i] * atten * NdotL * shadow * aoPointEff;
   }
+
   vec3 ambient = u_ambientColor * albedo * u_ambientLevel * u_worldAmbientMul * aoAmbEff;
   vec3 color = ambient + Lo + emissive;
   return color;
@@ -939,4 +972,284 @@ uniform sampler2D u_mapUI;
 uniform float u_opacity;
 out vec4 outColor;
 void main(){ vec4 c = texture(u_mapUI, v_uv); outColor = vec4(c.rgb, c.a * u_opacity); }
+`;
+
+// --- Sprite GPU billboard shaders — Task 6 ---
+// Adapted from mygame's vsSpriteSrc / fsSpritePBRSrc which rendered PBR lit characters
+// sharing sun+torch uniforms. Here reused for environmental sprites (torch wall sconce, brazier).
+
+export const vsSpriteSrc = `#version 300 es
+precision highp float;
+// Sprite billboard vertex shader — instanced quads facing camera.
+// Projection matches raycast camera.
+
+in vec2 a_corner;
+in vec3 a_center;
+in vec2 a_size;
+in vec4 a_uvRect;
+in float a_alpha;
+in float a_normalStrength;
+in float a_rimStrength;
+
+uniform vec2 u_resolution;
+uniform vec2 u_pos;
+uniform float u_angle;
+uniform float u_planeLen;
+uniform float u_bobPixels;
+uniform float u_eyeZ;
+
+out vec2 v_uv;
+out vec3 v_worldPos;
+out vec3 v_viewDir;
+out vec3 v_cameraRight;
+out vec3 v_cameraForward;
+out float v_alpha;
+out float v_normalStrength;
+out float v_rimStrength;
+out float v_dist;
+
+void main(){
+  vec2 dir = vec2(cos(u_angle), sin(u_angle));
+  vec2 plane = vec2(-dir.y, dir.x) * u_planeLen;
+  vec2 camRight2 = normalize(vec2(-dir.y, dir.x));
+  vec3 camRight = vec3(camRight2, 0.0);
+  vec3 camUp = vec3(0.0, 0.0, 1.0);
+  vec3 camForward = vec3(dir.x, dir.y, 0.0);
+  float halfW = a_size.x * 0.5;
+  float h = a_size.y;
+  vec3 worldPos = a_center + camRight * (a_corner.x * halfW) + camUp * (a_corner.y * h);
+  vec2 toCenter = a_center.xy - u_pos;
+  float invDet = 1.0 / (plane.x * dir.y - dir.x * plane.y);
+  float transformX = invDet * (dir.y * toCenter.x - dir.x * toCenter.y);
+  float transformY = invDet * (-plane.y * toCenter.x + plane.x * toCenter.y);
+  if (transformY <= 0.12) { gl_Position = vec4(2.0,2.0,0.0,1.0); return; }
+  float screenX = 0.5 * (1.0 + transformX / transformY);
+  float lineH = u_resolution.y / transformY;
+  float bottomZ = a_center.z;
+  float topZ = a_center.z + a_size.y;
+  float yAtWorldZ = u_resolution.y * 0.5 + lineH * (u_eyeZ - worldPos.z);
+  yAtWorldZ -= u_bobPixels;
+  float wScreen = lineH * a_size.x;
+  float xScreen = screenX * u_resolution.x + a_corner.x * wScreen * 0.5;
+  float clipX = (xScreen / u_resolution.x) * 2.0 - 1.0;
+  float clipY = 1.0 - (yAtWorldZ / u_resolution.y) * 2.0;
+  gl_Position = vec4(clipX, clipY, 0.0, 1.0);
+  float u_ = mix(a_uvRect.x, a_uvRect.z, a_corner.x * 0.5 + 0.5);
+  float v_ = mix(a_uvRect.w, a_uvRect.y, a_corner.y);
+  v_uv = vec2(u_, v_);
+  v_worldPos = worldPos;
+  v_viewDir = normalize(vec3(u_pos.x, u_pos.y, u_eyeZ) - worldPos);
+  v_cameraRight = normalize(camRight);
+  v_cameraForward = normalize(camForward);
+  v_alpha = a_alpha;
+  v_normalStrength = a_normalStrength;
+  v_rimStrength = a_rimStrength;
+  v_dist = transformY;
+}
+`;
+
+export const fsSpritePBRSrc = `#version 300 es
+precision highp float;
+precision highp int;
+
+in vec2 v_uv;
+in vec3 v_worldPos;
+in vec3 v_viewDir;
+in vec3 v_cameraRight;
+in vec3 v_cameraForward;
+in float v_alpha;
+in float v_normalStrength;
+in float v_rimStrength;
+in float v_dist;
+
+out vec4 outColor;
+
+uniform sampler2D u_albedo;
+uniform sampler2D u_normal;
+uniform sampler2D u_orm;
+
+uniform int u_numLights;
+uniform vec3 u_lightPos[12];
+uniform vec3 u_lightColor[12];
+uniform float u_lightIntensity[12];
+uniform float u_lightRadius[12];
+uniform int u_lightType[12];
+uniform vec3 u_lightDir[12];
+uniform float u_lightConeInner[12];
+uniform float u_lightConeOuter[12];
+uniform float u_lightPulseSpeed[12];
+uniform float u_lightPulseAmt[12];
+uniform int u_lightNoShadow[12];
+uniform float u_time;
+
+uniform vec3 u_sunDir;
+uniform float u_sunIntensity;
+uniform vec3 u_sunColor;
+uniform float u_ambient;
+uniform float u_fogBase;
+uniform float u_fogSq;
+
+vec3 decodeNormal(vec3 enc){ return normalize(enc * 2.0 - 1.0); }
+float attenuate(float dist, float radius){
+  if (dist > radius) return 0.0;
+  float d = dist / radius;
+  return pow(max(0.0, 1.0 - d), 2.0) / (1.0 + d * d * 0.2);
+}
+void main(){
+  vec4 albedoS = texture(u_albedo, v_uv);
+  if (albedoS.a < 0.08) discard;
+  vec3 albedo = albedoS.rgb;
+  vec3 normalEnc = texture(u_normal, v_uv).rgb;
+  vec3 normalTS = decodeNormal(normalEnc);
+  normalTS.xy *= v_normalStrength;
+  normalTS = normalize(normalTS);
+  vec3 tangent = normalize(v_cameraRight);
+  vec3 bitangent = vec3(0.0,0.0,1.0);
+  vec3 geomN = normalize(-v_cameraForward + vec3(0.0,0.0,0.4));
+  mat3 TBN = mat3(tangent, bitangent, geomN);
+  vec3 N = normalize(TBN * normalTS);
+  vec3 orm = texture(u_orm, v_uv).rgb;
+  float ao = orm.r;
+  float roughness = clamp(orm.g, 0.04, 1.0);
+  float metal = clamp(orm.b, 0.0, 1.0);
+  vec3 V = normalize(v_viewDir);
+  float ambientBoost = 1.6;
+  float ambientBase = 0.22;
+  vec3 Lo = albedo * (u_ambient * ambientBoost + ambientBase) * ao;
+  {
+    vec3 L = normalize(-u_sunDir);
+    float NdotL = max(dot(N, L), 0.0);
+    if (NdotL > 0.0) {
+      vec3 H = normalize(V + L);
+      float NdotH = max(dot(N, H), 0.0);
+      float specPower = mix(64.0, 2.0, roughness);
+      float spec = pow(NdotH, specPower) * (1.0 - roughness) * (0.2 + metal * 0.8) * NdotL;
+      vec3 diffuse = albedo * NdotL * u_sunIntensity * 0.6;
+      Lo += diffuse * u_sunColor;
+      Lo += spec * u_sunColor * u_sunIntensity * 0.5;
+    }
+    float VdotL = dot(V, L);
+    float behind = max(0.0, -VdotL);
+    if (behind > 0.01) {
+      float fresnel = pow(1.0 - max(dot(N, V), 0.0), 3.0);
+      float rim = fresnel * behind * v_rimStrength * 0.7;
+      Lo += vec3(rim, rim * 0.6, rim * 0.3);
+    }
+  }
+  for (int i=0;i<12;i++){
+    if (i>=u_numLights) break;
+    vec3 lp = u_lightPos[i];
+    vec3 toL = lp - v_worldPos;
+    float dist = length(toL);
+    float radius = u_lightRadius[i];
+    if (dist > radius) continue;
+    float att = attenuate(dist, radius);
+    int lt = u_lightType[i];
+    if (lt == 1) {
+      vec3 spotDir = normalize(u_lightDir[i]);
+      vec3 Ldir = normalize(toL);
+      float cosTheta = dot(-Ldir, spotDir);
+      float spotAtt = smoothstep(u_lightConeOuter[i], u_lightConeInner[i], cosTheta);
+      att *= spotAtt;
+    }
+    if (lt == 2) {
+      float flick = 0.72 + 0.28 * sin(u_time * 9.0 + float(i)*2.3) + 0.12 * sin(u_time*17.0 + float(i));
+      att *= clamp(flick, 0.45, 1.35);
+    } else if (lt == 3) {
+      float ps = u_lightPulseSpeed[i]; float pa = u_lightPulseAmt[i];
+      if (ps < 0.1) ps = 2.2; if (pa < 0.01) pa = 0.4;
+      att *= (1.0 + pa * sin(u_time * ps + float(i)));
+    } else if (lt == 6) {
+    } else if (lt == 4 || lt == 5) {
+    } else {
+      float flick = 0.85 + 0.15 * sin(u_time * 6.0 + float(i) * 1.7) + 0.08 * sin(u_time * 9.0 + float(i) * 2.3);
+      att *= flick;
+    }
+    if (att <= 0.01) continue;
+    vec3 L = toL / max(dist, 0.001);
+    float NdotL = max(dot(N, L), 0.0);
+    if (NdotL > 0.0) {
+      float attenN = att * (0.35 + 0.65 * NdotL);
+      float contrib = attenN * u_lightIntensity[i] * NdotL * 1.15;
+      Lo += albedo * contrib * u_lightColor[i];
+    }
+    if (NdotL > 0.08) {
+      vec3 H = normalize(V + L);
+      float NdotH = max(dot(N, H), 0.0);
+      if (NdotH > 0.18) {
+        float specPower = 3.0 + (1.0 - roughness) * 36.0;
+        float metalBoost = 0.2 + metal * 1.6;
+        float attenN = att * (0.35 + 0.65 * NdotL);
+        float spec = pow(NdotH, specPower) * (1.0 - roughness) * metalBoost * max(0.1, NdotL) * attenN;
+        Lo += spec * u_lightColor[i];
+      }
+    }
+    float VdotL = dot(V, L);
+    float behind = max(0.0, -VdotL);
+    float behindSide = max(0.0, -dot(N, L)) * 0.5;
+    float NdotV = max(dot(N, V), 0.0);
+    float fresnel = pow(1.0 - NdotV, 3.0);
+    float edgeNorm = length(normalTS.xy);
+    float rimBase = max(edgeNorm * 1.8, max(0.0, 1.0 - normalTS.z) * 2.0);
+    float rim = rimBase * fresnel * (behind * 0.9 + behindSide) * v_rimStrength * att * (0.7 + metal * 0.8) * 0.35;
+    if (rim > 0.001) Lo += vec3(rim, rim * 0.6, rim * 0.3) * u_lightColor[i];
+  }
+  float fog = 1.0 / (1.0 + v_dist * u_fogBase + v_dist * v_dist * u_fogSq);
+  fog = clamp(fog, 0.06, 1.0);
+  float fogDark = 0.68 + fog * 0.32;
+  Lo *= fogDark;
+  float alphaFade = 1.0;
+  if (v_dist > 14.0) alphaFade = max(0.12, 1.0 - (v_dist - 14.0) * 0.09);
+  float alphaOut = albedoS.a * v_alpha * alphaFade;
+  outColor = vec4(clamp(Lo, 0.0, 1.5), alphaOut);
+}
+`;
+
+// Particle shaders — simple additive for flame/sparking, Task 6
+export const vsParticleSrc = `#version 300 es
+in vec2 a_pos;
+in vec3 a_center;
+in float a_size;
+in vec4 a_color;
+uniform vec2 u_resolution;
+uniform vec2 u_pos;
+uniform float u_angle;
+uniform float u_planeLen;
+uniform float u_bobPixels;
+uniform float u_eyeZ;
+out vec4 v_color;
+out float v_dist;
+void main(){
+  vec2 dir = vec2(cos(u_angle), sin(u_angle));
+  vec2 plane = vec2(-dir.y, dir.x) * u_planeLen;
+  vec2 toC = a_center.xy - u_pos;
+  float invDet = 1.0 / (plane.x * dir.y - dir.x * plane.y);
+  float tx = invDet * (dir.y * toC.x - dir.x * toC.y);
+  float ty = invDet * (-plane.y * toC.x + plane.x * toC.y);
+  if (ty <= 0.15) { gl_Position = vec4(2.0,2.0,0.0,1.0); return; }
+  float sx = 0.5 * (1.0 + tx / ty);
+  float lineH = u_resolution.y / ty;
+  float yWorld = u_resolution.y * 0.5 + lineH * (u_eyeZ - a_center.z) - u_bobPixels;
+  float xScreen = sx * u_resolution.x + a_pos.x * a_size * lineH * 0.5;
+  float yScreen = yWorld + a_pos.y * a_size * lineH * 0.5;
+  float clipX = (xScreen / u_resolution.x) * 2.0 - 1.0;
+  float clipY = 1.0 - (yScreen / u_resolution.y) * 2.0;
+  gl_Position = vec4(clipX, clipY, 0.0, 1.0);
+  v_color = a_color;
+  v_dist = ty;
+}
+`;
+
+export const fsParticleSrc = `#version 300 es
+precision mediump float;
+in vec4 v_color;
+in float v_dist;
+out vec4 outColor;
+uniform float u_fogBase;
+uniform float u_fogSq;
+void main(){
+  float fog = 1.0 / (1.0 + v_dist * u_fogBase + v_dist * v_dist * u_fogSq);
+  fog = clamp(fog, 0.06, 1.0);
+  outColor = vec4(v_color.rgb * fog, v_color.a);
+}
 `;
