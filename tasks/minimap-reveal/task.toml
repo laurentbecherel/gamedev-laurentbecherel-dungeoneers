@@ -1,0 +1,21 @@
+name = "Dungeoneers: Minimap Reveal & Discovery"
+instruction = "./instruction.md"
+
+[game]
+tags = ["RPG/adventure/story", "Arcade/action", "First-person"]
+tech-stack-tags = ["Web JS/DOM", "WebGL2", "Vanilla JS canvas"]
+assets-used = ["primitives", "procedural"]
+harness = "Metacode"
+screenshots = [
+  "./screenshots/map-initial-reveal.png",
+  "./screenshots/map-corridor-peek.png",
+  "./screenshots/map-room-reveal.png",
+  "./screenshots/map-dither-animation.png",
+  "./screenshots/map-path-trail.png",
+  "./screenshots/map-full-explored.png"
+]
+videos = []
+teaser = "./screenshots/map-path-trail.png"
+base-commit-hash = "93f57692667a06a295cf517fab32fecba04c6b18"
+commit-hash = ""
+avocado-model = "Muse Spark 1.1"

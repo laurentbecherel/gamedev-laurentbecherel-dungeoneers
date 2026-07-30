@@ -33,3 +33,10 @@ build/
 
 # Local dev
 .local/
+
+# GameDev: no video binaries in repo per TASK_GUIDELINES.md §2
+*.webm
+*.mp4
+**/test-results/
+playwright-report/
+
