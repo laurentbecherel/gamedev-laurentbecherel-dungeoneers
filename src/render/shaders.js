@@ -184,6 +184,94 @@ bool rayCircleHit(vec2 O, vec2 Dir, vec2 C, float r, out float t0, out float t1)
   return true;
 }
 
+// Resolve whether ray hits solid material in wall cell W, accounting for
+// rounded corners. Corners are part of the hit test (not a post-hoc patch), so:
+//   - convex corners cut the square back to a quarter-cylinder of radius r;
+//     a ray that passes through the cut returns false so the caller keeps
+//     marching (nothing is rendered there instead of the old flat wedge).
+//   - concave corners add a fillet that bulges toward the room, in front of
+//     the flat face; it only ever adds a nearer surface, never reveals behind.
+// The arc is tangent to the flat face exactly r from the corner, so the
+// arc<->flat join is continuous. Classification is world-space (view independent).
+bool resolveWallHit(ivec2 W, int side, ivec2 stepDir, vec2 ray, float cornerR,
+                    int cornerEnabled, int cornerInner,
+                    out float outT, out vec2 outHp, out vec2 outN, out bool outRounded) {
+  // Flat entry face.
+  float perp;
+  if (side == 0) perp = (float(W.x) - u_playerPos.x + (1.0 - float(stepDir.x)) * 0.5) / ray.x;
+  else           perp = (float(W.y) - u_playerPos.y + (1.0 - float(stepDir.y)) * 0.5) / ray.y;
+  outT = perp;
+  outHp = u_playerPos + ray * perp;
+  outN = (side == 0) ? vec2(float(-stepDir.x), 0.0) : vec2(0.0, float(-stepDir.y));
+  outRounded = false;
+  if (cornerEnabled != 1 || cornerR <= 0.01) return true;
+
+  for (int k = 0; k < 2; k++) {
+    int off = (k == 0) ? -1 : 1;
+    vec2 P, interiorDir, roomDir;
+    float coordAlong, cornerCoord;
+    ivec2 E, W2, D;
+    if (side == 0) {
+      cornerCoord = float(W.y) + (k == 0 ? 0.0 : 1.0);
+      coordAlong = outHp.y;
+      P = vec2(float(W.x) + (stepDir.x > 0 ? 0.0 : 1.0), cornerCoord);
+      interiorDir = vec2(float(stepDir.x), float(-off));
+      roomDir     = vec2(float(-stepDir.x), float(-off));
+      E  = ivec2(W.x - stepDir.x, W.y);
+      W2 = ivec2(W.x, W.y + off);
+      D  = ivec2(W.x - stepDir.x, W.y + off);
+    } else {
+      cornerCoord = float(W.x) + (k == 0 ? 0.0 : 1.0);
+      coordAlong = outHp.x;
+      P = vec2(cornerCoord, float(W.y) + (stepDir.y > 0 ? 0.0 : 1.0));
+      interiorDir = vec2(float(-off), float(stepDir.y));
+      roomDir     = vec2(float(-off), float(-stepDir.y));
+      E  = ivec2(W.x, W.y - stepDir.y);
+      W2 = ivec2(W.x + off, W.y);
+      D  = ivec2(W.x + off, W.y - stepDir.y);
+    }
+    bool outer = isOuterConvex(W, E, W2, D);
+    bool inner = (cornerInner == 1) && isInnerConcave(W, E, W2, D);
+    if (!outer && !inner) continue;
+
+    if (outer) {
+      // Flat face is cut away within r of this corner.
+      if (abs(coordAlong - cornerCoord) >= cornerR) continue;
+      vec2 C = P + interiorDir * cornerR;
+      float t0, t1;
+      if (rayCircleHit(u_playerPos, ray, C, cornerR, t0, t1)) {
+        for (int r = 0; r < 2; r++) {
+          float t = (r == 0) ? t0 : t1;
+          if (t <= 0.01) continue;
+          vec2 q = u_playerPos + ray * t;
+          vec2 offP = q - C;
+          if (offP.x * interiorDir.x > 0.0 || offP.y * interiorDir.y > 0.0) continue;
+          outT = t; outHp = q; outN = normalize(offP); outRounded = true;
+          return true;
+        }
+      }
+      // In the cut region and the arc was missed: ray passes through -> no hit.
+      return false;
+    } else {
+      // Concave fillet: nearer surface bulging into the room; add only.
+      vec2 C = P + roomDir * cornerR;
+      float t0, t1;
+      if (rayCircleHit(u_playerPos, ray, C, cornerR, t0, t1)) {
+        for (int r = 0; r < 2; r++) {
+          float t = (r == 0) ? t0 : t1;
+          if (t <= 0.01 || t >= perp) continue;
+          vec2 q = u_playerPos + ray * t;
+          vec2 offP = q - C;
+          if (offP.x * roomDir.x > 0.0 || offP.y * roomDir.y > 0.0) continue;
+          outT = t; outHp = q; outN = normalize(-offP); outRounded = true;
+          return true;
+        }
+      }
+    }
+  }
+  return true;
+}
+
 vec2 atlasUV(float matId, vec2 uv, float atlasW, float texS) {
   float tileU = (matId - 1.0 + uv.x) / (atlasW / texS);
   return vec2(tileU, uv.y);
@@ -384,6 +472,9 @@ void main() {
   float perpDist = 0.0;
   vec2 hitPos = vec2(0.0);
   float cellType = 0.0;
+  vec3 cornerNormal = vec3(0.0);
+  bool hasCornerRound = false;
+  float cornerRadius = clamp(u_cornerRadius, 0.02, 0.45);
 
   for (int i = 0; i < 64; i++) {
     if (sideDist.x < sideDist.y) { sideDist.x += deltaDist.x; mapPos.x += float(stepDir.x); side = 0; }
@@ -391,7 +482,22 @@ void main() {
     if (mapPos.x < 0.0 || mapPos.y < 0.0 || mapPos.x >= u_mapSize.x || mapPos.y >= u_mapSize.y) break;
     vec4 cell = texelFetch(u_mapTex, ivec2(mapPos), 0);
     cellType = cell.r * 255.0;
-    if (cellType > 0.5) { hit = 1; break; }
+    if (cellType > 0.5) {
+      // Corner-aware hit test: rounded corners participate in the hit so a ray
+      // that passes through a cut convex corner keeps marching instead of
+      // rendering a stray flat wedge.
+      float cT; vec2 cHp; vec2 cN; bool cRound;
+      if (resolveWallHit(ivec2(mapPos), side, stepDir, ray, cornerRadius,
+                         u_cornerEnabled, u_cornerInner, cT, cHp, cN, cRound)) {
+        hit = 1;
+        perpDist = cT;
+        hitPos = cHp;
+        cornerNormal = vec3(cN.x, cN.y, 0.0);
+        hasCornerRound = cRound;
+        break;
+      }
+      // else: corner rounded away here — continue the DDA.
+    }
   }
 
   vec3 finalColor = u_fogColor;
@@ -413,122 +519,12 @@ void main() {
   float tStart = u_chamferTrimStart >= 0.0 ? u_chamferTrimStart : 0.08;
   float tMid = u_chamferTrimMid > 0.0 ? u_chamferTrimMid : 0.35;
   float tEnd = u_chamferTrimEnd > 0.0 ? u_chamferTrimEnd : 1.0;
-  float bandNear = u_cornerBandNear >= 0.0 ? u_cornerBandNear : 0.08;
-  float bandFarExtra = u_cornerBandFarExtra >= 0.0 ? u_cornerBandFarExtra : 0.15;
-  float bandFarFactor = u_cornerBandFarFactor > 0.0 ? u_cornerBandFarFactor : 2.0;
-  float sectorThresh = u_cornerSectorThresh >= 0.0 ? u_cornerSectorThresh : 0.02;
   float nMix = u_cornerNormalMix > 0.0 ? u_cornerNormalMix : 0.92;
   float albBoost = u_cornerAlbedoBoost >= 0.0 ? u_cornerAlbedoBoost : 0.05;
   float roughMul = u_cornerRoughMul > 0.0 ? u_cornerRoughMul : 0.82;
   float aoMul = u_cornerAoMul > 0.0 ? u_cornerAoMul : 0.96;
 
   if (hit == 1) {
-    if (side == 0) perpDist = (mapPos.x - u_playerPos.x + (1.0 - float(stepDir.x)) * 0.5) / ray.x;
-    else perpDist = (mapPos.y - u_playerPos.y + (1.0 - float(stepDir.y)) * 0.5) / ray.y;
-    hitPos = u_playerPos + ray * perpDist;
-
-    // --- true intruding rounded corners ---
-    vec3 cornerNormal = vec3(0.0);
-    bool hasCornerRound = false;
-    float cornerRadius = clamp(u_cornerRadius, 0.02, 0.45);
-
-    if (u_cornerEnabled == 1 && cornerRadius > 0.01) {
-      if (side == 0) {
-        ivec2 W = ivec2(mapPos);
-        float wy = float(W.y);
-        for (int k = 0; k < 2; k++) {
-          float cornerY = (k == 0) ? wy : wy + 1.0;
-          float dy = abs(hitPos.y - cornerY);
-          if (dy > cornerRadius + bandNear) continue;
-          int off = (k == 0) ? -1 : 1;
-          ivec2 E = ivec2(W.x - stepDir.x, W.y);
-          ivec2 W2 = ivec2(W.x, W.y + off);
-          ivec2 D = ivec2(W.x - stepDir.x, W.y + off);
-          bool outer = isOuterConvex(W, E, W2, D);
-          bool inner = false;
-          if (u_cornerInner == 1) inner = isInnerConcave(W, E, W2, D);
-          if (!outer && !inner) continue;
-          vec2 C0 = vec2(hitPos.x, cornerY);
-          vec2 cellCenter;
-          vec2 dirSign;
-          vec2 C;
-          if (outer) {
-            cellCenter = vec2(float(W.x) + 0.5, float(W.y) + 0.5);
-            dirSign = sign(cellCenter - C0);
-            if (abs(dirSign.x) < 0.1) dirSign.x = float(stepDir.x);
-            if (k == 0) { if (dirSign.y < 0.0) dirSign.y = 1.0; } else { if (dirSign.y > 0.0) dirSign.y = -1.0; }
-            C = C0 + dirSign * cornerRadius;
-          } else {
-            cellCenter = vec2(float(D.x) + 0.5, float(D.y) + 0.5);
-            dirSign = sign(cellCenter - C0);
-            if (abs(dirSign.x) < 0.1) dirSign.x = float(D.x >= int(C0.x) ? 1 : -1);
-            if (abs(dirSign.y) < 0.1) dirSign.y = float(D.y >= int(C0.y) ? 1 : -1);
-            C = C0 + dirSign * cornerRadius;
-          }
-          float t0, t1;
-          if (!rayCircleHit(u_playerPos, ray, C, cornerRadius, t0, t1)) continue;
-          float tCand = -1.0;
-          if (t0 > 0.01 && t0 >= perpDist - bandNear && t0 <= perpDist + cornerRadius * bandFarFactor + bandFarExtra) tCand = t0;
-          else if (t1 > 0.01 && t1 >= perpDist - bandNear && t1 <= perpDist + cornerRadius * bandFarFactor + bandFarExtra) tCand = t1;
-          if (tCand < 0.0) continue;
-          vec2 hp = u_playerPos + ray * tCand;
-          vec2 offP = hp - C;
-          if (offP.x * dirSign.x > sectorThresh || offP.y * dirSign.y > sectorThresh) continue;
-          perpDist = tCand;
-          hitPos = hp;
-          cornerNormal = vec3(normalize(offP), 0.0);
-          hasCornerRound = true;
-          break;
-        }
-      } else {
-        ivec2 W = ivec2(mapPos);
-        float wx = float(W.x);
-        for (int k = 0; k < 2; k++) {
-          float cornerX = (k == 0) ? wx : wx + 1.0;
-          float dx = abs(hitPos.x - cornerX);
-          if (dx > cornerRadius + bandNear) continue;
-          int off = (k == 0) ? -1 : 1;
-          ivec2 E = ivec2(W.x, W.y - stepDir.y);
-          ivec2 W2 = ivec2(W.x + off, W.y);
-          ivec2 D = ivec2(W.x + off, W.y - stepDir.y);
-          bool outer = isOuterConvex(W, E, W2, D);
-          bool inner = false;
-          if (u_cornerInner == 1) inner = isInnerConcave(W, E, W2, D);
-          if (!outer && !inner) continue;
-          vec2 C0 = vec2(cornerX, hitPos.y);
-          vec2 cellCenter;
-          vec2 dirSign;
-          vec2 C;
-          if (outer) {
-            cellCenter = vec2(float(W.x) + 0.5, float(W.y) + 0.5);
-            dirSign = sign(cellCenter - C0);
-            if (abs(dirSign.y) < 0.1) dirSign.y = float(stepDir.y);
-            if (k == 0) { if (dirSign.x < 0.0) dirSign.x = 1.0; } else { if (dirSign.x > 0.0) dirSign.x = -1.0; }
-            C = C0 + dirSign * cornerRadius;
-          } else {
-            cellCenter = vec2(float(D.x) + 0.5, float(D.y) + 0.5);
-            dirSign = sign(cellCenter - C0);
-            if (abs(dirSign.x) < 0.1) dirSign.x = float(D.x >= int(C0.x) ? 1 : -1);
-            if (abs(dirSign.y) < 0.1) dirSign.y = float(D.y >= int(C0.y) ? 1 : -1);
-            C = C0 + dirSign * cornerRadius;
-          }
-          float t0, t1;
-          if (!rayCircleHit(u_playerPos, ray, C, cornerRadius, t0, t1)) continue;
-          float tCand = -1.0;
-          if (t0 > 0.01 && t0 >= perpDist - bandNear && t0 <= perpDist + cornerRadius * bandFarFactor + bandFarExtra) tCand = t0;
-          else if (t1 > 0.01 && t1 >= perpDist - bandNear && t1 <= perpDist + cornerRadius * bandFarFactor + bandFarExtra) tCand = t1;
-          if (tCand < 0.0) continue;
-          vec2 hp = u_playerPos + ray * tCand;
-          vec2 offP = hp - C;
-          if (offP.x * dirSign.x > sectorThresh || offP.y * dirSign.y > sectorThresh) continue;
-          perpDist = tCand;
-          hitPos = hp;
-          cornerNormal = vec3(normalize(offP), 0.0);
-          hasCornerRound = true;
-          break;
-        }
-      }
-    }
 
     float floorH = 0.0;
     float ceilH = 1.0;
