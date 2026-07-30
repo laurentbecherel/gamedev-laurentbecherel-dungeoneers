@@ -34,15 +34,11 @@ build/
 # Local dev
 .local/
 
-# GameDev: videos should be PixelCloud, not repo binaries
+# GameDev: videos should be PixelCloud, not repo binaries - no video binaries per TASK_GUIDELINES
 *.webm
 *.mp4
-
-
-# Logs
 *.err
-
-
-# Test results (local artifacts)
+**/test-results/
 src/test-results/
+playwright-report/
 

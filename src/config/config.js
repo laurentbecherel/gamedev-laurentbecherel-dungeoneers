@@ -25,8 +25,9 @@ const CONFIG_PATHS = {
   // gameplay
   'generator':      ['config/gameplay/generator', 'config/generator', 'config/main'],
   'player':         ['config/gameplay/player', 'config/player', 'config/main'],
+  'discovery':      ['config/gameplay/discovery', 'config/discovery', 'config/ui/map', 'config/main'],
   // ui
-  'map':            ['config/ui/map', 'config/map', 'config/ui/map', 'config/main'],
+  'map':            ['config/ui/map', 'config/map', 'config/main'],
   'debug':          ['config/ui/debug', 'config/debug', 'config/main'],
   // legacy
   'main':           ['config/main']
@@ -125,6 +126,8 @@ export async function getMapConfig(){ return _fetchConfig('map'); }
 export async function getMaterialsProcConfig(){ return _fetchConfig('materials-proc'); }
 export async function getPlayerConfig(){ return _fetchConfig('player'); }
 export async function getDebugConfig(){ return _fetchConfig('debug'); }
+export async function getDiscoveryConfig(){ return _fetchConfig('discovery'); }
+export async function saveDiscoveryConfig(cfg){ return _saveConfig('discovery', cfg); }
 export async function getGeneratorConfig(){ return _fetchConfig('generator'); }
 export async function saveGeneratorConfig(cfg){ return _saveConfig('generator', cfg); }
 export async function getFogConfig(){ return _fetchConfig('fog'); }
@@ -141,7 +144,7 @@ export async function saveFogConfig(cfg){
 
 // Batch load all rendering configs at once for Game init
 export async function getAllRenderConfigs(){
-  const names = ['rendering','palette','pom','pbr','ao','lighting','shadows','chamfer','corners','raymarch','fog','generator','map','materials-proc','player','debug'];
+  const names = ['rendering','palette','pom','pbr','ao','lighting','shadows','chamfer','corners','raymarch','fog','generator','map','materials-proc','player','debug','discovery'];
   const promises = names.map(n => _fetchConfig(n).catch(()=>null));
   const results = await Promise.all(promises);
   const out = {};

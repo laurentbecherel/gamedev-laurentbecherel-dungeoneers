@@ -1,0 +1,54 @@
+{
+  "_readme": "Minimap discovery/fog-of-war + trail settings. All numbers here, no hardcode in JS. Tunable via editor: reveal (peekDistance, corridorRevealRadius, animationDuration, dither pattern random/bayer), trail (color [88,128,92] muted green #58805c, opacity 0.45, lineWidth 2, dash [5,4]), playerDir. Primary for minimap reveal, fallback map.json.",
+  "version": 1,
+  "reveal": {
+    "enabled": true,
+    "peekDistance": 1,
+    "corridorRevealRadius": 4,
+    "corridor3x3": true,
+    "roomReveal": "entire",
+    "animationDuration": 400,
+    "dither": {
+      "enabled": true,
+      "pattern": "random",
+      "dotSize": 2,
+      "bayerSize": 4
+    },
+    "undiscovered": {
+      "hide": true
+    },
+    "oldRoomOpacity": 0.85,
+    "currentRoomBoost": 0.15
+  },
+  "trail": {
+    "enabled": true,
+    "color": [
+      88,
+      128,
+      92
+    ],
+    "opacity": 0.45,
+    "lineWidth": 2.0,
+    "dash": [
+      5,
+      4
+    ],
+    "cap": "butt",
+    "join": "miter",
+    "maxPoints": 1024,
+    "onlyDiscovered": true
+  },
+  "playerDir": {
+    "enabled": true,
+    "size": 0,
+    "color": [
+      42,
+      42,
+      42
+    ],
+    "opacity": 0.95
+  },
+  "debug": {
+    "logNewRoom": false
+  }
+}
