@@ -93,14 +93,12 @@ await page.screenshot({ path: "../tasks/player-controller-polish/screenshots/edi
 - Canvas click pointer lock + mouse look
 - R regen
 
-**Files generated (local, not committed as binary per GameDev PixelCloud rule, but kept here for your convenience per your request):**
-- `./screenshots/task4-demo.webm` — full demo
-- `./screenshots/task4-bob-demo.webm` — bob focus (same content)
+**Working artifacts (not in repo, per your note):**
+- Playwright recordings are working artifacts for local verification, not catalog teaser. They were generated as `src/test-results/.../video.webm` (325KB) and removed from repo per TASK_GUIDELINES.md "Videos not stored in repo".
+- To re-generate locally, see below.
 
 **Preview:**
-<video src="./screenshots/task4-demo.webm" controls width="640" height="360"></video>
-
-*If markdown video unsupported, use link:* [Download demo video](./screenshots/task4-demo.webm)
+> Video is working artifact, not committed. Re-record locally to view motion.
 
 **How recorded:**
 ```bash
