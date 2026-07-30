@@ -1,309 +1,165 @@
 # Player Controller Polish — Dungeoneers Task 4
 
-> Build the full first-person controller feel: Grid-step + Free-roam dual mode, pointer-lock mouse look, and figure-8 view bob with tunable presets. Task 3 delivered 3D with WASD+QE only; Task 4 makes movement feel good.
+> Make movement feel good: bring back grid-step + free-roam dual mode, pointer-lock mouse look, and figure-8 view bob with tunable presets. Task 3 delivered 3D with basic WASD+QE; Task 4 polishes the first-person feel.
 
-**Why two movement modes:** The prototype (`gamedev-laurentbecherel-mygame`) shipped both. Grid mode is authentic Legend of Grimrock — discrete tile-to-tile stepping with smooth lerp, hold-to-repeat for continuous chaining, buffered turn for fluid feel, 90° cardinal snapping. Free mode is Doom — analog WASD strafe + QE turn + mouse look with slide collision. Players (and reviewers) should feel both. Grid mode defaults ON for retro authenticity, but G toggles to free FPS for modern feel.
+**Why two movement modes:** The prototype shipped both and players expect both. Grid mode is authentic to Legend of Grimrock — you step discretely from tile center to tile center with a smooth animation, you can hold a key to keep chaining steps, and you can buffer the next turn while still animating for fluid corridors. Free mode is Doom-style — continuous analog movement with strafe and mouse look, you slide along walls instead of getting stuck. Grid mode should default ON for retro authenticity, but G toggles to free FPS for modern feel.
 
-**Why view bob:** Without bob, first-person feels like a floating camera. Prototype's bob is a figure-8 (vertical sin(phase*2) + horizontal sin(phase) + roll sin(phase)) driven by movement speed, with 5 tunable params + presets. Small differences in amp/freq drastically change feel — must be editor-tunable and testable.
+**Why view bob:** Without bob, first-person feels like a floating security camera. Walking should produce a subtle figure-8 head motion driven by movement — vertical bobs twice as fast as horizontal sway and roll, intensity grows with speed and decays when you stop, leaning slightly into strafe. Small differences in amplitude/frequency drastically change feel, so it must be fully tunable from config and via presets.
 
-This task builds on Task 3's `src/entities/player.js`, `src/systems/input.js`, and `src/assets/config/gameplay/player.json`. No renderer changes beyond exposing bob offsets to shader via uniforms already present (eye offset). No new assets.
+**Why layout-agnostic input:** The prototype used `e.key` (logical character). On French AZERTY keyboards, W position produces Z, A position produces Q, numbers 1-8 require Shift and produce symbols. That broke movement and debug toggles. Games should use physical key positions (muscle memory), not characters. This task must fix that.
+
+This task builds on Task 3's player, input, game loop, and player config. No new assets, no renderer rewrite — only wiring bob offsets to the existing camera if possible (at minimum exposing state so renderer/tests can observe difference between bob ON vs OFF).
 
 ## 1. Project Structure
 
-Extend `src/` with modifications:
+You will extend `src/`:
 
-```
-src/
-├── entities/
-│   └── player.js               # MODIFIED — dual mode, bob, grid lerp, facing, collision 8-point circle
-├── systems/
-│   └── input.js                # REWRITTEN — keyboard edge detection, hold timers, buffer, mouse delta, pointer lock
-├── core/
-│   └── game.js                 # MODIFIED — wire Input(canvas), pointer-lock click handler, G/V key binds, bob offsets to renderer
-├── assets/config/gameplay/
-│   └── player.json             # MODIFIED — expanded schema (see section 6)
-├── config/
-│   └── config.js               # VERIFY — already supports player via getPlayerConfig() / getAllRenderConfigs()
-├── render/
-│   └── shaders.js              # OPTIONAL — apply bob offset if not already (viewBobOffsetX, viewBobOffset, viewBobRoll) as camera translation/roll
-└── tests/
-    ├── unit/player.test.js     # NEW — movement, collision, deterministic bob, mode toggle
-    └── e2e/game.spec.js        # MODIFIED — new keybinds, pointer lock, bob config, movement
-```
+- `entities/player.js` — dual mode (grid + free), view bob
+- `systems/input.js` — keyboard + mouse, pointer lock, hold/repeat, buffer, layout-agnostic
+- `core/game.js` — wire Input with canvas, G/V/B/P/R/M handling, HUD, pass bob to renderer
+- `assets/config/gameplay/player.json` — expanded schema with speeds, sensitivity, grid timings, bob params + presets
+- Tests — movement, collision, mode toggle, bob, AZERTY mapping, pointer lock, editor persistence
 
-Existing Task 3 canvas is `id="game-canvas"` in `game.html`. Input must bind to that canvas, not window alone.
+Existing game canvas is `id="game-canvas"` in `game.html`. Input must bind to that canvas for pointer lock, not just window.
 
-## 2. Player — Free Roam Mode (Doom style)
+## 2. Player — Free Roam (Doom-style)
 
-`Player` must support continuous analog movement:
+Continuous mode should work when grid mode is OFF.
 
-- Resolve config via `_resolvePlayerCfg()` checking `cfg.playerCfg || cfg.player || {}`. Fields: `moveSpeed` 3.0, `strafeSpeed` 2.8, `turnSpeed` 2.2 rad/s for QE, `mouseSensitivity` 0.0022 rad/px, `radius` 0.28, `height` 0.5.
-- `setPosition(x,y,angle)` resets both continuous and grid targets, clears lerp, resets bob phase/amount, updates facing.
-- `setConfig(cfg)` stores cfg for later `update()` resolve.
-- `update(dt,input,dungeon)` when `!gridMode`:
-  - QE turn: `angle += turn * turnSpeedKeyboard * dt`
-  - Mouse look: `angle += mouseDX * mouseSensitivity` from Input (mouseDX already accumulated per frame)
-  - Normalize angle to [-PI, PI]
-  - Compute forward/right vectors from angle: fwd = (cos, sin), right = (-sin, cos)
-  - move = fwd*forward*moveSpeed + right*strafe*strafeSpeed; clamp diagonal length <=1 to avoid sprint exploit
-  - Scale by dt, slide collision: try full move, else X only, else Y only
-  - Collision check: circle vs grid with 8 sample points around radius (center + 4 cardinal + 4 diagonal *0.7) testing `grid[iy*w+ix] !== 0` or out of bounds = blocked. Radius configurable.
-- Light source: `getLightSource()` returns warm point at eye height `height + light.height`, color/intensity/radius from cfg.
+**Intent:**
+- QE should turn smoothly, mouse should look when pointer is locked (and be ignored in grid mode).
+- Forward/strafe should combine into a movement vector using the player's facing, with diagonal movement clamped so you cannot sprint faster diagonally.
+- Collision should feel fair — you have a small radius around you and you slide along walls instead of stopping dead when hitting at an angle.
+- Spawning, config loading, and light source should still work as in Task 3, but now config may live under either `player` or `playerCfg` key for backwards compatibility.
+- Resetting position (e.g. on regen) should fully reset movement state so you don't carry over intent.
 
-## 3. Player — Grid Mode (Grimrock style, default ON)
+**Config expectations:**
+Player config contains movement speeds, turn speed, mouse sensitivity, collision radius, eye height, light properties, grid timings, and bob parameters. Player should read these from config with reasonable fallbacks, not hardcode magic numbers. No hardcoded constants that should be tunable.
 
-Authentic stepped movement:
+## 3. Player — Grid Mode (Grimrock-style, default ON)
 
-- State: `gridMode` bool default true, `gridTargetX/Y`, `gridTargetAngle`, `gridFacing` 0-3 (N/E/S/W, 0=N = -PI/2, 1=E=0, 2=S=PI/2, 3=W=PI with wrap handling), `moveLerp` 0-1, `turnLerp` 0-1, `_gridStartX/Y/Angle`, `gridMoveSpeed` 5.0 lerp/s, `gridTurnSpeed` 6.5 lerp/s, `gridHoldInitialDelay` 0.18s, `gridHoldRepeatDelay` 0.06s.
-- `setGridMode(on)`: when ON, snap target to nearest tile center + nearest cardinal angle, set `moveLerp=0 turnLerp=0` to lerp to snapped pose; when OFF, keep current continuous pose, set lerp=1.
-- Discrete commands:
-  - `tryGridMoveWithMap(dir, map)` dir 0=F 1=B 2=StrafeL 3=StrafeR relative to `gridFacing`. Compute desired tile from `gridTargetX/Y` + dirVec. Block if out of bounds or `grid[ty*w+tx] !== 0`. Else set `_gridStartX/Y = x/y`, target += vec, `moveLerp=0`, return true. Must reject if already animating (`moveLerp<1 || turnLerp<1`).
-  - `tryGridTurn(delta)` delta -1 left +1 right: set `_gridStartAngle=angle`, update `gridFacing = (facing+delta+4)&3`, target angle = cardAngles[facing], `turnLerp=0`.
-- `update()` when `gridMode`:
-  - Lerp position toward target using smoothstep `t*t*(3-2*t)`, angle via shortest-angle lerp handling wrap.
-  - When lerp reaches 1, snap exact to target.
-  - Moving flag true while lerp <1 — drives bob.
-  - Ignore continuous `_forward/_strafe/_turn` in grid mode; they are handled via discrete methods by Input.
-  - `updateFacingFromAngle()` to keep facing in sync after snap.
+**Intent:**
+- Movement is discrete tile-to-tile, always landing on tile centers to avoid drift.
+- You face only four cardinal directions (N/E/S/W). Turning rotates 90° with smooth interpolation that takes the shortest angle path.
+- Pressing movement should start a smooth lerp from your current tile to the target tile center; while that lerp is in progress you cannot start another move (busy rejection).
+- Holding a direction should repeat after a short initial delay, then at a faster repeat rate — like holding arrow in a menu.
+- If you tap a turn early while still stepping, it should buffer and execute as soon as the step finishes (fluid chaining), with a short timeout so old buffered inputs expire.
+- Toggling grid mode ON should snap your target to the nearest tile center and nearest cardinal direction and lerp to it; toggling OFF should keep your current continuous pose.
 
-Edge cases: cardAngles = [-PI/2, 0, PI/2, PI] (N/E/S/W). Normalize angle after update. Choosing nearest cardinal on mode switch must use angular distance modulo 2PI.
+**Behaviors to preserve:**
+- Start position is roughly start tile center +0.5 offset, facing north.
+- Strafing moves sideways relative to facing, not turning.
+- Grid collision checks target tile validity (inside bounds + walkable), not continuous circle sampling.
 
-### 3b. Authentic Feel Details
+## 4. View Bob — Figure-8 Path
 
-- Spawn at `start+0.5, angle -PI/2` (facing north) like Task 3.
-- Grid targets must always stay on tile centers (x.y = floor+0.5) to avoid half-tile drift.
-- Strafing left/right in grid mode moves sideways relative to facing, not turning.
-- Collision in grid mode checks target tile only, not circle sampling — simpler discrete validity.
+**Intent:**
+- Bob adds walking feel and must be toggleable and tunable.
+- Intensity should grow when you start moving and decay when you stop.
+- Phase should advance faster when you run, slower when almost idle.
+- When enabled while moving, you should see vertical offset, horizontal offset, and roll all varying over time in a figure-8: vertical oscillates twice per horizontal cycle.
+- Roll should also lean slightly into the strafe direction when strafing.
+- When disabled, all offsets zero.
 
-## 4. View Bobbing — Figure-8 Path
+**Tunable:**
+- 5 parameters drive feel: vertical amplitude, horizontal amplitude, roll amplitude (in degrees), frequency, speed scale. They must be editable via config and mergeable via setter.
+- Presets: subtle (small), default (medium), heavy (large), disabled (all zero). Subtle is smaller than default, heavy larger than default, disabled zero. Preset names matter, exact numbers are tunable.
+- Must expose state for renderer and tests (e.g. method returning enabled/offset/offsetX/roll/phase).
 
-Bob adds walking feel; must be toggleable and tunable.
+**Renderer integration:**
+Game should pass bob offsets to renderer if renderer supports camera translation/roll; otherwise applying offset to eye height is acceptable as long as you can observe canvas pixel change between bob ON vs OFF while walking. Naming is flexible but observable.
 
-- State: `bobPhase`, `bobAmount` 0-1, `viewBobEnabled` bool, `viewBobOffset` vertical, `viewBobOffsetX` horizontal, `viewBobRoll` radians, `bobParams` = { `ampY` 0.025 m vertical, `ampX` 0.015 m horizontal, `ampRoll` rad from deg `ampRollDeg` 0.6°, `freq` 9.0 Hz walk cycle, `speedScale` 1.0 } plus storing raw deg for editor round-trip `_ampRollDeg`.
-- Update logic:
-  - Target bob = `min(1, speed/moveSpeed)` in free mode, or fixed 0.7 when moving in grid mode else 0.
-  - `bobAmount += (target - bobAmount)*dt*8` exponential decay for landing.
-  - If `bobAmount>0.01`, `bobPhase += dt * freq * speedScale * (0.5 + bobAmount)` — slower when almost idle, faster when running.
-  - If enabled: `offsetY = sin(phase*2)*ampY*amount`, `offsetX = sin(phase)*ampX*amount`, `roll = sin(phase)*ampRoll*amount + strafe*0.5*ampRoll*0.8` (strafe influence leans into strafe).
-  - Else zeros.
-- Figure-8: vertical oscillates twice per horizontal cycle (frequency 2:1).
-- Renderer integration: `core/game.js` should pass bob offsets to renderer if renderer supports camera translate/roll, or apply as simple position offset to eye height for verification. At minimum expose via `getViewBobState()` for renderer/tests. Task 3 renderer already handles eye height; applying `viewBobOffset` to player Z and `viewBobOffsetX` as lateral shift and `viewBobRoll` as small roll or screen tilt is acceptable — naming free but must be observable in 3D (canvas pixels change when bob enabled vs disabled).
+## 5. Input — Layout-Agnostic, Hold/Repeat, Buffer, Pointer Lock
 
-### Presets
+**Problem to solve:** Prototype used `e.key.toLowerCase()` (logical character). On AZERTY, physical W key reports Z, A reports Q, numbers require Shift. That broke WASD and 1-8 toggles.
 
-Config must include `bob.presets` map:
+**Intent:**
+- Use physical key codes (`event.code` like `KeyW`, `Digit1`) not logical characters (`e.key`).
+- Muscle memory is positional — French player expects ZQSD on same finger positions as WASD. Checking code makes ZQSD work natively when you check WASD codes, because physical W position is Z label on AZERTY but code still `KeyW`. For robustness, accept both QWERTY and AZERTY physical positions for forward/strafe where it helps without causing double actions in the same mode.
+- Number row debug toggles 1-8 must work without Shift on AZERTY, so use `Digit1`..`Digit8` codes, not character `'1'`. Accept `Numpad1`..`Numpad8` as fallback.
+- +/- zoom (if any) should use `Equal`/`Minus`/`NumpadAdd` etc., not `+` character.
+- Document in a header comment why code vs key, and your chosen mapping table for QWERTY/AZERTY.
 
-```json
-"presets": {
-  "subtle": { "ampY":0.012, "ampX":0.008, "ampRollDeg":0.3, "freq":7.5 },
-  "default": { "ampY":0.025, "ampX":0.015, "ampRollDeg":0.6, "freq":9.0 },
-  "heavy": { "ampY":0.045, "ampX":0.028, "ampRollDeg":1.2, "freq":10.5 },
-  "disabled": { "ampY":0, "ampX":0, "ampRollDeg":0, "freq":0 }
-}
-```
-
-Editor loads generic JSON, so presets are editable without code. Player must have `setBobParams(p)` merging and `setViewBobEnabled(v)`.
-
-## 5. Input System — Keyboard + Mouse + Hold/Repeat + Buffer + Layout-Agnostic Best Practice
-
-Rewrite `systems/input.js` to match prototype `mygame/src/systems/input.js` but fix its AZERTY bug — Task 3 used `e.key.toLowerCase()` which breaks on French keyboards. **Must use `event.code` (physical key position), not `event.key` (layout-dependent char).**
-
-### 5a. Keyboard Layout Agnostic — Why `code` not `key`
-
-Problem observed:
-
-- French AZERTY: W position = Z key, A position = Q key, numbers 1-8 produce `&é"'(-è_ç` without Shift, need Shift for digits. Task 3 checks `key==='w'` / `key==='1'` fails for AZERTY users who must press Z for forward and Shift+1 for debug toggle 1.
-- Best practice for games: **muscle memory is positional, not character-based**. A French player expects ZQSD to behave like WASD because fingers sit on same physical keys. Using `code` achieves this automatically: physical W key reports `code="KeyW"` on both QWERTY (char 'w') and AZERTY (char 'z'). Checking `code` makes ZQSD work natively without special casing.
-
-Rules for all keybinds in this task (and retroactively for 1-8/R/M/G/V/B):
-
-- Listen to `keydown/keyup` and store `e.code` strings, not `e.key`. Keep `Set` / map of active codes e.g. `pressedCodes`.
-- For gameplay actions, map to physical codes:
-  - Forward: `KeyW` (covers W QWERTY + Z AZERTY) — **do not** check `key==='w'` only
-  - Back: `KeyS` (same char in both layouts) — code `KeyS`
-  - Strafe Left: `KeyA` (covers A QWERTY + Q AZERTY)
-  - Strafe Right: `KeyD` (same)
-  - Turn Left / Right: `KeyQ` (covers Q QWERTY + A AZERTY? actually QWERTY Q = AZERTY A) + `KeyE`, plus `ArrowLeft` / `ArrowRight` as fallback, plus `KeyA`/`KeyD` duplicates? Keep Q/E primary as turn to avoid conflict with strafe, but support both QWERTY and AZERTY by checking both `KeyQ` and `KeyA` for turn-left.
-  - To be robust, accept **both layouts explicitly**: `forward = KeyW OR KeyZ ?` No — best dual approach: accept physical position AND French logical position by checking both `KeyW` and `KeyZ`? Actually `KeyZ` physical is W? Let's define: On AZERTY, physical `KeyW` is Z key, but physical `KeyZ` is W key? Wait QWERTY bottom row X C V B... top row QWERTYUIOP, second row ASDF. AZERTY top row AZERTYUIOP, second row QSDF. So mapping: QWERTY W <=> AZERTY Z (both `KeyW`), QWERTY A <=> AZERTY Q (both `KeyA`), QWERTY Z <=> AZERTY W (both `KeyZ`), QWERTY Q <=> AZERTY A (both `KeyQ`). So if French player expects ZQSD = W forward is `KeyW` (Z), Q left is `KeyA` (Q), S back is `KeyS` (S), D right is `KeyD` (D) — that's already ZQSD via `KeyWASD` codes. So checking `KeyW/A/S/D` alone satisfies ZQSD natively. **But** some French players mentally remap to ZQSD letters, they might press physical `KeyZ` (W) expecting forward? That would be confusion. Safest: accept **both** physical WASD and physical ZQSD positions as same action. That is: forward = `KeyW` OR `KeyZ`? No that double counts. Let's specify: implement helper `isForward()` that returns true if `code===KeyW` (W position = Z on AZERTY) OR `code===ArrowUp`. But also accept `code===KeyZ` as courtesy for QWERTY player on AZERTY keyboard who presses W physical (which is `KeyZ`) ? Actually that case is QWERTY player looking for W char but keyboard is AZERTY — they'd press physical `KeyZ` (W char). If we only accept `KeyW`, they'd fail. So accept **both** `KeyW` and `KeyZ` for forward? Then forward = `KeyW` or `KeyZ`. Let's define explicit mapping table and require it in code.
-
-Recommended mapping to cover QWERTY + AZERTY + arrows with no extra config:
-
-```
-forward:  KeyW, KeyZ, ArrowUp
-back:     KeyS, ArrowDown
-strafeLeft: KeyA, KeyQ
-strafeRight: KeyD
-turnLeft: KeyQ, KeyA? careful conflict — decide: turn left = KeyQ (QWERTY Q = AZERTY A) OR ArrowLeft
-turnRight: KeyE, ArrowRight
-action keys: KeyR, KeyM, KeyG, KeyV, KeyB, Digit0-8 — via code
-```
-
-Because strafeLeft already uses KeyA/KeyQ, turn should **not** reuse same codes in same mode to avoid double action. Resolution: In grid mode, A/D = strafe left/right, Q/E = turn left/right. So turn left = `KeyQ` OR `KeyA`? That conflicts with strafe left = KeyA. So keep distinct: strafe = A/D (`KeyA`/`KeyD`), turn = Q/E (`KeyQ`/`KeyE`). For AZERTY coverage, also accept: strafe left alternative = `KeyQ` (physical Q position = A on AZERTY already covered? Actually physical Q = `KeyQ` = A char on AZERTY, physical A = `KeyA` = Q char. So A position has two codes `KeyA` (Q char) and Q position has `KeyQ` (A char). If we want to support both mental models, accept both `KeyA` and `KeyQ` for strafe-left, but then turn-left conflicts. Trade-off: in grid mode, keep strafe = A/D only (codes `KeyA`/`KeyD`), turn = Q/E (`KeyQ`/`KeyE`). On AZERTY, that means strafe left = physical A position (Q char) = `KeyA`, strafe right = `KeyD`, turn left = physical Q position (A char) = `KeyQ`, turn right = `KeyE`. So player uses QAD E? That's QSDE on AZERTY physically? Let's think: AZERTY keyboard labeling: row2: Q S D F... So physical positions: `KeyA` is Q label, `KeyS` is S, `KeyD` is D, `KeyQ` is A label. So our assignment results in: AZERTY user presses Q(=KeyA) to strafe left, S to back, D to strafe right, A(=KeyQ) to turn left, E to turn right. That's not ZQSD but QSD + A/E. Acceptable but confusing. Better to also add `KeyW`/`KeyZ` dual.
-
-To simplify and satisfy prompt "ZQSD works": **Accept both `KeyW` and `KeyZ` as forward, both `KeyA` and `KeyQ` as left**. Implementation must have a central `CODE_MAP` from logical action to array of codes, checked via `some(code in pressedSet)`. Comment mapping in code explaining AZERTY.
-
-For number row 1-8 debug: Use `Digit1`...`Digit8` codes, not `key==='1'`. Must also accept `Numpad1`... fallback. On AZERTY, Digit1 physical produces `&` char but code still `Digit1`, so toggle works without Shift. Playwright tests should use `page.keyboard.press('Digit1')` not `'1'`.
-
-For +/- zoom (if implemented): use `Equal`, `Minus`, `NumpadAdd`, `NumpadSubtract` codes, plus `Digit` with shift variants?
-
-General best practice to document:
-
-- Use `code` for all gameplay, never `key` for actions. `key` only for text input in editor or chat.
-- Normalize to uppercase codes (`KeyW`) — not locale strings.
-- Store active codes in Set, clear on blur/visibility change to avoid stuck keys.
-- Provide `isDown(codeOrArray)` helper that checks Set.
-- Provide mapping config future-proof: action -> codes array, persisted as codes.
-- Tests must simulate `code` presses.
-
-- Constructor takes `canvas` element for pointer-lock binding.
-- Tracks `pressedCodes` Set of `code` strings, `prevCodes` Set for `justPressed`, `mouseDX/DY` accumulated while pointerLocked.
+**Behaviors:**
+- Track active physical codes in a set, track previous frame for edge detection (just pressed), accumulate mouse delta only when pointer is locked.
 - Bindings:
-  - `click` on canvas -> `canvas.requestPointerLock()`
-  - `pointerlockchange` -> update `pointerLocked` bool
-  - `mousemove` -> if locked, accumulate movementX/Y
-  - `contextmenu` preventDefault, `Escape` exits pointer lock.
-  - `keydown/keyup` listening to `e.code` (KeyW/A/S/D/Z/Q, KeyQ/E, Digit1-8, KeyR/M/G/V/B, Arrow keys, Equal/Minus/Numpad).
-- Hold-to-repeat for grid mode:
-  - `_hold = {f,b,ls,rs,tl,tr}` timers seconds key held.
-  - `_holdInitial` 0.18s first repeat, `_holdRepeat` 0.06s subsequent, overridable from player config `gridHoldInitialDelay/Repeat`.
-  - `_buffer = {type, age}` with timeout 0.3s for buffered next action when tapped early before lerp ends — gives fluid chaining.
-- `update(dt, player, map)`:
-  - Determine gridMode from `player.gridMode` (not DOM element). Optionally still support legacy checkbox id gridMode if present.
-  - Consume `mouseDX` reset to 0 each frame.
-  - If gridMode:
-    - Compute down states via `isCodeDown(['KeyW','KeyZ','ArrowUp']) = F`, `KeyS/ArrowDown = B`, `KeyA,KeyQ = LS`, `KeyD = RS`, `KeyQ,ArrowLeft = TL` (note conflict handling — if LS already uses KeyQ, disambiguate: allow both but prioritize move vs turn via order check; or make TL = KeyQ only when not pressing strafe modifier; simplest: TL = KeyQ AND ArrowLeft, LS = KeyA only, document that on AZERTY TL = A label (KeyQ) and LS = Q label (KeyA)). Propose final non-conflicting mapping that works both layouts: F=`KeyW|KeyZ|ArrowUp`, B=`KeyS|ArrowDown`, LS=`KeyA`, RS=`KeyD`, TL=`KeyQ|ArrowLeft`, TR=`KeyE|ArrowRight`. This maps AZERTY to: Z forward, S back, Q strafe left (KeyA), D strafe right, A turn left (KeyQ), E turn right — matches ZQSD + AE for turn. Acceptable compromise, comment in code why. Compute justPressed via edge.
-    - Immediate edge actions: on justPressed, try corresponding `player.tryGridMoveWithMap` / `tryGridTurn`. If succeeds set hold=0 clear buffer act=true. If fails because busy (lerp<1), queue buffer.
-    - Increment hold timers for down keys.
-    - Expire buffer after 0.3s.
-    - If idle (moveLerp>=1 && turnLerp>=1) and buffer exists, try buffered action, reset its hold timer, clear buffer on success, clear if wall-blocked.
-    - If idle and no buffer and no edge act, try hold repeat: if down duration >= holdInitial, attempt move/turn, on success set timer to `initial - repeat` to cadence tile-by-tile.
-    - Call `player.setInput(0,0,0,0)` then `player.update(dt,map)`.
-  - Else free mode:
-    - forward = (W/Z/Up)-(S/Down), strafe = D-(A/Q), turn = (E/Right)-(Q/Left) with separate turn vs strafe as per mode? In free mode Q/E turn, A/D strafe; keep same as grid for consistency but allow both.
-    - Normalize forward+strafe diagonal <=1.
-    - `player.setInput(forward, strafe, turn, mouseDX)` then `player.update(dt,map)`.
-  - Store prevCodes copy for next edge detection. Handle blur: on `visibilitychange` or `blur` clear pressed set to avoid stuck.
+  - Click on canvas requests pointer lock
+  - Listen to pointerlockchange to track locked state
+  - Mousemove accumulates movement when locked
+  - Prevent context menu, Escape exits lock (browser default)
+  - Clear pressed set on blur/visibility change to avoid stuck keys
+  - Provide helper to check if a code or any of array is down
+- Hold-to-repeat for grid mode: timers for each direction, first repeat after initial delay, then faster repeat rate, overridable from player config.
+- Buffer for early taps: small timeout (~0.3s) storing next intended action while animating, executed when idle, cleared if wall blocked or expired.
+- Update method receives dt, player, map, decides grid vs free based on player state, returns continuous intent in free mode or drives discrete grid moves via player methods in grid mode, resets mouse delta each frame.
 
-Include in code comment header explaining `code` vs `key` best practice and AZERTY mapping.
-
-### 5b. Playwright + E2E Layout Safety
-
-E2E tests should press codes, not characters: `await page.keyboard.press('KeyW')` not `'w'`, and `Digit1` not `'1'`. Document that.
+E2E tests must press codes (`KeyW`, `Digit1`) not characters.
 
 ## 6. Config — player.json Schema Expansion
 
-`src/assets/config/gameplay/player.json` version 1 -> 2:
+Version 1 → 2. Must include fields for movement speeds, mouse sensitivity, radius, height, grid mode default, grid move/turn speeds, hold timings, bob enabled flag, bob params (ampY, ampX, ampRollDeg, freq, speedScale, presets map), collision note, light. Loaded via existing config loader. Keep legacy alias support (config may be under `player` or `playerCfg`).
 
-```json
-{
-  "version": 2,
-  "moveSpeed": 3.0,
-  "strafeSpeed": 2.8,
-  "turnSpeed": 2.2,
-  "mouseSensitivity": 0.0022,
-  "radius": 0.28,
-  "height": 0.5,
-  "gridMode": true,
-  "gridMoveSpeed": 5.0,
-  "gridTurnSpeed": 6.5,
-  "gridHoldInitialDelay": 0.18,
-  "gridHoldRepeatDelay": 0.06,
-  "viewBobEnabled": true,
-  "bob": {
-    "ampY": 0.025,
-    "ampX": 0.015,
-    "ampRollDeg": 0.6,
-    "freq": 9.0,
-    "speedScale": 1.0,
-    "presets": { "...": "... as above ..." }
-  },
-  "collision": { "slide": true, "radius": 0.28, "note": "circle 8-point vs AABB" },
-  "light": { "intensity":1.8, "radius":4.5, "color":[1,0.9,0.7], "height":0.45 }
-}
-```
+All movement numbers must be read from config with fallbacks, not hardcoded. Presets must be editable without code.
 
-Fields must be read via `getPlayerConfig()` / `getAllRenderConfigs()` in Game. No hardcoded movement constants in player.js — all from config with fallback defaults. Keep legacy alias `_resolvePlayerCfg()` checking `playerCfg || player`.
+## 7. Game Integration
 
-## 7. Game Integration + Controls
+- Construct Input with canvas element so pointer-lock binding works.
+- Update loop drives input.update(dt, player, dungeon) and passes resulting intent to player.
+- Handle keys:
+  - Existing: R regen, M map, 1-8 debug toggles (must use code)
+  - New: G toggles grid mode with HUD message distinguishing Grimrock vs free FPS, V or B toggles bob with HUD, P cycles bob presets with HUD (optional but expected). HUD reuses existing timeout.
+- Pointer lock is handled in Input; game loop should not break when locked.
+- Pass bob offsets to renderer if possible.
 
-`core/game.js`:
-
-- Construct `Input` with canvas arg: `new Input(this.canvas)`.
-- Update loop: `const inp = this.input.update(dt, this.player, this.dungeon)` or keep old call shape but pass map/player.
-- Key handling in `_onKeyDown`:
-  - Existing: R regen, M map, 1-8 debug toggles.
-  - NEW:
-    - G toggles grid mode: `player.setGridMode(!player.gridMode)` HUD "Grid mode: ON (Grimrock tile step) / OFF (free FPS)"
-    - V or B toggles view bob: `player.setViewBobEnabled(!player.viewBobEnabled)` HUD "View bob: ON/OFF"
-    - P cycles bob presets (optional): apply preset to bobParams and HUD "Bob preset: default"
-  - Ensure HUD messages reuse existing `_showHud` with timeout from debug config.
-- Pointer lock: canvas click already handled in Input; no extra Game change needed except ensuring Game loop not breaking when pointer locked.
-- Pass bob offsets to renderer if possible: renderer may read `player.viewBobOffset`, `viewBobOffsetX`, `viewBobRoll` to adjust eye position/roll uniform. If Task 3 renderer doesn't support roll, adding lateral Y/X offset to camera pos is acceptable; must produce visible difference between bob on/off when walking.
-
-`main.js` remains tiny bootstrap; Game owns all wiring.
+Main.js remains tiny bootstrap; game owns wiring. For E2E verification, exposing game instance on window is acceptable (helps test bob state).
 
 ## 8. Editor Integration
 
-`player.json` appears under `assets → config → gameplay → player.json` in existing hierarchical editor tree (Task 3 recursive walk). No custom editor tab needed — generic Visual/Raw JSON editor suffices. Verify editor can edit new fields, save via PUT `/api/assets/config/gameplay/player`, persist to disk, and game reloads config on R regen (already does `getAllRenderConfigs()`).
+player.json appears under assets → config → gameplay → player.json in hierarchical editor tree from Task 3 recursive walk. Generic visual/raw JSON editor suffices. Editor can edit new fields, save via PUT, persist to disk, game reloads on R regen.
 
 ## 9. Tests
 
-**Unit at `src/tests/unit/player.test.js` (Node built-in runner):**
+**Unit (player.test.js):**
+- Deterministic spawn, forward moves, wall blocks, slide along wall, turn rotates.
+- Grid: move blocks wall/allows free, lerp progresses and snaps to center, turn updates facing, toggle snaps nearest center+cardinal.
+- Free: diagonal clamp, mouse look changes angle in free but ignored in grid.
+- Bob: disabled zero offsets, enabled moving non-zero, decays idle, merges, presets shape valid, figure-8 relation, roll strafe influence, base height vs bob, raw angle vs roll, light steady, clear intent on setPosition, speedScale affects phase, grid bob target moving vs idle.
+- Collision: circle detects near wall, not far.
+- Config alias.
 
-- Deterministic spawn: same seed start position angle = -PI/2.
-- Grid mode: `tryGridMoveWithMap` blocks wall, allows free tile, updates target to center, lerp progresses 0->1 over dt, final position snapped, angle cardinal snapping, facing 0-3 correct.
-- Free mode: forward moves +X when angle 0, slide collision tries X then Y, radius respected, diagonal clamping.
-- Mode toggle: `setGridMode(true)` snaps to nearest center+cardinal, `false` keeps continuous.
-- View bob: `viewBobEnabled` false => zero offsets; true + moving => offsets non-zero, figure-8 relation (phase*2 vs phase), amount decays when idle, `setBobParams` merges, presets shape valid.
-- Collision: 8-point circle detects wall when near, not when far.
-- Config resolution: `playerCfg` vs `player` alias returns same.
+**E2E (game-controller.spec.js):**
+- Page loads no console errors, canvas visible WebGL2
+- WASD/ZQSD movement changes canvas or player state, QE turn changes, G toggles grid/free HUD, V/B toggles bob HUD + observable state change, P cycles presets, R regen, M map, 1-8 debug (code presses)
+- Pointer lock: click canvas → no JS error, mouse move rotates in free mode
+- Editor: player.json appears, editable, persists via API, schema valid
+- Tests use code presses (Digit1, KeyW, KeyZ) not characters, proving AZERTY safety
 
-**E2E at `src/tests/e2e/game.spec.js` + `game-controller.spec.js` new: **
+All npm run test:unit + test:e2e must pass.
 
-- Page loads no console errors, canvas WebGL2.
-- WASD changes canvas pixels (movement), QE changes pixels (turn).
-- G toggles grid/free and HUD shows mode text.
-- V/B toggles bob and HUD.
-- R regenerates, M map still works, 1-8 debug still works.
-- Pointer lock: click canvas -> pointerLocked true (browser permission stub acceptable, at least no JS error), mouse movement changes angle in free mode.
-- Editor: `player.json` appears in tree, editable, persists via API `GET/PUT /api/assets/config/gameplay/player` returns expected schema.
+## 10. Acceptance
 
-All `npm run test:unit` + `test:e2e` must pass.
-
-## 10. Acceptance Criteria
-
-- [ ] `src/entities/player.js` implements dual mode: `gridMode`, `gridTargetX/Y/Angle`, `gridFacing`, `moveLerp/turnLerp`, `gridMoveSpeed/TurnSpeed`, `tryGridMoveWithMap` + `tryGridTurn` with wall check blocking and busy rejection, free mode WASD/ZQSD + QE + mouse delta, slide collision 8-point, `setGridMode` snapping, `setPosition` resetting lerp+phase, view bob figure-8 with `ampY/ampX/ampRoll/freq` + `bobAmount` decay + presets + `setViewBobEnabled`/`setBobParams`/`getViewBobState`.
-- [ ] `src/systems/input.js` rewrites to accept canvas, tracks **codes** (`pressedCodes` Set of `e.code`) + prevCodes, not `e.key`, `mouseDX/DY` accumulate only when pointerLocked, `pointerLock` click handler, `isDown(codesArray)` / `justPressed`, hold timers `_hold` initial 0.18 repeat 0.06 overridable, buffer `_buffer` age 0.3s timeout for early tap chaining, `update(dt,player,map)` implements grid edge->immediate + buffer->hold-repeat logic and free continuous normalized input plus mouseDX passing, blur/visibilitychange clears stuck keys.
-- [ ] Keyboard layout agnostic: movement uses `code` — forward = `KeyW` OR `KeyZ` OR `ArrowUp`, back = `KeyS` OR `ArrowDown`, left strafe = `KeyA` OR `KeyQ`, right = `KeyD`, turn left = `KeyQ` OR `ArrowLeft`, turn right = `KeyE` OR `ArrowRight`. Debug toggles use `Digit1`-`Digit8` codes (not key '1'), G/V/B/R/M use `KeyG` etc. This makes ZQSD work on AZERTY and 1-8 work without Shift. Header comment explains `code` vs `key` best practice and AZERTY mapping table.
-- [ ] `src/assets/config/gameplay/player.json` version 2 with fields: moveSpeed, strafeSpeed, turnSpeed, mouseSensitivity, radius, height, gridMode, gridMoveSpeed, gridTurnSpeed, gridHoldInitialDelay, gridHoldRepeatDelay, viewBobEnabled, bob{ampY,ampX,ampRollDeg,freq,speedScale,presets{subtle,default,heavy,disabled}}, collision, light. Loaded via `getPlayerConfig()`/`getAllRenderConfigs()`.
-- [ ] `src/core/game.js` wires `new Input(canvas)`, `input.update(dt,player,dungeon)`, handles G grid toggle and V/B bob toggle with HUD timeout, passes bob offsets to renderer (at least offset applied, observable canvas change walking ON vs OFF). Game keys use `code` (e.g. `e.code==='KeyG'`) not `key==='g'`, to avoid AZERTY mismatch.
-- [ ] Mouse look works: click canvas requests pointer lock (no error), mouse movement rotates view in free mode only, ESC exits lock (browser default).
-- [ ] No console errors on load, WebGL2 path still works, existing toggles R/M/1-8 preserved and work on AZERTY (pressing `&` position = `Digit1` code still triggers toggle 1).
-- [ ] No hardcoded movement numbers in player.js — all resolved from config with fallbacks.
-- [ ] Tests pass: `player.test.js` covers spawn, grid move/block/lerp/facing, free slide, mode toggle snap, bob enabled/disabled/figure-8, 8-point collision, config alias. E2E verifies movement via `KeyW`/`KeyZ` both, G/V toggles + HUD, pointer-lock click no error, editor persistence. E2E uses code presses (`Digit1`, `KeyW`) not character presses.
-- [ ] ES modules only, no emoji, no new runtime deps beyond Node built-ins.
+- Player supports dual mode: grid default ON, free OFF, with lerp to center/cardinal, busy rejection, hold repeat, buffer, slide collision, mode snap, view bob figure-8 tunable + presets + toggle + state getter, no hardcoded movement numbers
+- Input tracks physical codes, not logical chars, mouse delta only when locked, pointer lock on canvas click, isDown helper, hold timers overridable, buffer timeout, update implements grid edge→immediate + buffer→hold-repeat + free continuous normalized + mouseDX, clears on blur
+- Layout agnostic: movement uses code so ZQSD works on AZERTY, debug Digit1-8 works without Shift, G/V/B/R/M via code. Header comment explains code vs key and mapping table
+- player.json v2 with required fields, loaded via getAllRenderConfigs, legacy alias support
+- Game wires Input(canvas), handles G grid toggle and V/B bob toggle with HUD, passes bob to renderer observable, keys use code
+- Mouse look: click requests pointer lock no error, rotates in free only, ESC exits
+- No console errors, WebGL2 works, R/M/1-8 preserved AZERTY-safe
+- No hardcoded movement numbers, ES modules only, no emoji, no new deps
+- Tests pass covering spawn, grid move/block/lerp/facing, free slide, toggle snap, bob enabled/figure-8/decay/presets, collision, alias, and E2E ZQSD, G/V, pointer lock, editor persistence using code presses
 
 ## 11. Out of Scope
 
-- Full RPG trinity loop, characters/sprites, inventory — future tasks.
-- Chair bobbing head height animation for jumping/crouching — no jump yet.
-- Gamepad support, touch joystick, full rebindable key config UI (just document code-based mapping for now — rebind UI is Task 5 editor-complete).
-- Custom editor tabs per subsystem — editor-complete Task 5.
-- Rendering changes beyond applying bob offset; POM/chamfer/corner/palette debug remain Task 3.
-- Audio footstep sync (could play tick on bob phase in future but not now).
-- Multiplayer networking.
-- Text input fields (editor) still use `key` — only gameplay shortcuts must use `code`. This note avoids over-applying code rule to text entry.
+- RPG loop, inventory, sprites, jumping/crouching bob, gamepad, touch joystick, full rebind UI (code-based mapping documented is enough), custom editor tabs, rendering beyond bob offset, audio sync, multiplayer. Text inputs in editor still use key — only gameplay shortcuts must use code.
 
-## 12. Running Instructions
+## 12. Running
 
 ```bash
 cd src && npm install
 npm start # http://localhost:8000/game.html
-# Game loads with grid mode ON (Grimrock step). WASD tile step, QE 90° turn.
-# G toggles free FPS, then mouse click locks pointer for mouse look, WASD free strafe.
-# V toggles view bob, B alternative, P cycles presets if implemented.
-# R regenerates dungeon, M map overlay, 1-8 debug toggles (from Task 3).
-# Editor: http://localhost:8000/editor.html -> assets -> config -> gameplay -> player.json to tune speeds, sensitivity, bob params, presets.
+# Grid ON default: WASD tile step, QE 90° turn. G toggles free FPS, click locks pointer for mouse look.
+# V/B toggles bob, P cycles presets, R regen, M map, 1-8 debug (code-based, AZERTY safe)
+# Editor: http://localhost:8000/editor.html -> assets -> config -> gameplay -> player.json
 ```
 
-Screenshots to capture (author provides, not solver): game with grid mode HUD, free mode mouse look HUD, view bob ON vs OFF comparison walking, config editor showing expanded player.json, pointer lock active indicator if possible.
+Screenshots to capture: grid ON vs OFF HUD, bob ON vs OFF while walking, mouse look active, editor showing player.json.
