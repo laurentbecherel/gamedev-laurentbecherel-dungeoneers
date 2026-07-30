@@ -1,8 +1,13 @@
 // map-ui.js — generates map texture RGBA data for WebGL UI overlay.
-// Extended for Task5 minimap-reveal: fog-of-war discovery with 1-tile peek, retro dither reveal on M open, dashed transparent trail, player direction triangle.
-// Restored from Task 2 MinimapRenderer to fix regression: colors, alignment, text labels.
-// Uses Canvas2D rendering path when document is available (browser), falls back to raw buffer for Node tests.
-// Fully configurable via src/assets/config/ui/map.json (parchment) + src/assets/config/gameplay/discovery.json (reveal/trail/playerDir).
+// Task5 minimap-reveal: fog-of-war discovery with 1-tile peek, retro dither, dashed trail, consistent circle+triangle icons.
+// Design system (strict):
+// - All icons (entrance, exit, player) are circle + triangle with SAME shape and styling:
+//   same radius = max(6, cs*0.9), same border 1px #2a2a2a, same triangle proportions tip r*0.65 base r*0.35 halfWidth r*0.5 scale 0.9 stroke 0.8
+// - Color rule: light circles -> dark triangle, dark circles -> gold triangle. No white triangles.
+//   Entrance: gold #c9a84c circle + dark #2a2a2a triangle up (-PI/2)
+//   Exit: dark #2a2a2a circle + gold #c9a84c triangle down (PI/2)
+//   Player: muted retro green #58805c [88,128,92] circle + dark #2a2a2a triangle facing angle (was [15,220,15] neon + white, fixed)
+// - Configurable colors via ui/map.json (player) and discovery.json (playerDir now dark), but sizing/border unified in code (no code smell).
 
 const DEFAULT_PALETTE = {
   canvasBg: "#e8dcc4",
@@ -116,11 +121,11 @@ function resolveLayout(uiCfg) {
       strokeFactor: layout.stair?.strokeFactor ?? 0.12,
     },
     player: {
-      minRad: layout.playerDot?.minRad ?? 3,
-      sizeFactor: layout.playerDot?.sizeFactor ?? 0.5,
-      color: uiCfg?.colors?.player || [15,220,15],
+      minRad: layout.playerDot?.minRad ?? 6,
+      sizeFactor: layout.playerDot?.sizeFactor ?? 1.0,
+      color: uiCfg?.colors?.player || [88, 128, 92],
       dirSize: layout.playerDot?.dirSize ?? 0,
-      dirColor: layout.playerDot?.dirColor || null,
+      dirColor: layout.playerDot?.dirColor || [42, 42, 42],
     },
     legend: {
       swatch: layout.legend?.swatch ?? 12,
@@ -168,7 +173,7 @@ function resolveDiscoveryCfg(discovery, discoveryCfg) {
       playerDir: {
         enabled: playerDir.enabled ?? pDirInst.enabled ?? true,
         size: playerDir.size ?? pDirInst.size ?? 0,
-        color: playerDir.color ?? pDirInst.color ?? [255, 255, 255],
+        color: playerDir.color ?? pDirInst.color ?? [42, 42, 42],
         opacity: playerDir.opacity ?? pDirInst.opacity ?? 0.95,
       },
     },
@@ -185,7 +190,7 @@ function resolveDiscoveryCfg(discovery, discoveryCfg) {
     playerDir: {
       enabled: playerDir.enabled ?? pDirInst.enabled ?? true,
       size: playerDir.size ?? pDirInst.size ?? 0,
-      color: playerDir.color ?? pDirInst.color ?? [255, 255, 255],
+      color: playerDir.color ?? pDirInst.color ?? [42, 42, 42],
       opacity: playerDir.opacity ?? pDirInst.opacity ?? 0.95,
     },
   };
@@ -212,7 +217,6 @@ function shouldDrawCell(x, y, discovery, newlySet, animProgress, cfg) {
   }
 }
 function trailColorToCss(color) { if (!color) return "#c9a84c"; if (typeof color === "string") return color; if (Array.isArray(color) && color.length >= 3) return `rgb(${color[0]|0},${color[1]|0},${color[2]|0})`; return "#c9a84c"; }
-function playerDirColorToCss(color, fallback) { return trailColorToCss(color) || fallback; }
 function getPlayerAngle(player) {
   if (!player) return 0;
   if (typeof player.getAngle === "function") return player.getAngle();
@@ -220,42 +224,51 @@ function getPlayerAngle(player) {
   if (typeof player.gridTargetAngle === "number" && player.gridMode) return player.gridTargetAngle;
   return 0;
 }
-function drawPlayerDirection(ctx, cx, cy, angle, cs, pr, cfg, L) {
-  const pDirCfg = cfg?.playerDir || cfg?.reveal?.playerDir || {};
-  const enabled = pDirCfg.enabled ?? true;
-  if (!enabled) return;
-  const sizeFromCfg = pDirCfg.size ?? 0;
-  // size 0 means auto based on cell size and dot radius (retro small triangle)
-  const baseSize = sizeFromCfg > 0 ? sizeFromCfg : Math.max(6, cs * 0.9, pr * 2.2);
-  const color = playerDirColorToCss(pDirCfg.color || [255,255,255], "#ffffff");
-  const opacity = pDirCfg.opacity ?? 0.95;
+// Strict consistent design system: SAME radius, SAME border for entrance/exit/player
+function getUnifiedIconRadius(cs) {
+  // Unified sizing — no more stair minSize 6 vs player minRad 3 inconsistency
+  return Math.max(6, Math.floor(cs * 0.9));
+}
+function drawCircleWithTriangle(ctx, cx, cy, radius, circleFillCss, circleStrokeCss, triangleFillCss, triangleStrokeCss, angle, triangleScale = 0.85) {
+  const r = Math.max(1, radius);
+  // Unified border: 1px #2a2a2a for all
+  const borderColor = "#2a2a2a";
+  const borderWidth = 1;
+  ctx.save();
+  // Circle fill
+  ctx.fillStyle = circleFillCss;
+  ctx.strokeStyle = circleStrokeCss || borderColor;
+  ctx.lineWidth = borderWidth;
+  ctx.beginPath();
+  ctx.arc(cx, cy, r, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.stroke();
 
+  // Triangle inside — SAME proportions for all icons
   const dirX = Math.cos(angle);
   const dirY = Math.sin(angle);
   const perpX = -Math.sin(angle);
   const perpY = Math.cos(angle);
+  const tipDist = r * 0.55 * triangleScale;
+  const baseDist = r * 0.3;
+  const baseHalfWidth = r * 0.45;
 
-  const tipX = cx + dirX * baseSize * 0.8;
-  const tipY = cy + dirY * baseSize * 0.8;
-  const baseLen = baseSize * 0.45;
-  const baseWidth = baseSize * 0.5;
-  const blX = cx - dirX * baseLen + perpX * baseWidth * 0.5;
-  const blY = cy - dirY * baseLen + perpY * baseWidth * 0.5;
-  const brX = cx - dirX * baseLen - perpX * baseWidth * 0.5;
-  const brY = cy - dirY * baseLen - perpY * baseWidth * 0.5;
+  const tipX = cx + dirX * tipDist;
+  const tipY = cy + dirY * tipDist;
+  const blX = cx - dirX * baseDist + perpX * baseHalfWidth;
+  const blY = cy - dirY * baseDist + perpY * baseHalfWidth;
+  const brX = cx - dirX * baseDist - perpX * baseHalfWidth;
+  const brY = cy - dirY * baseDist - perpY * baseHalfWidth;
 
-  ctx.save();
-  ctx.globalAlpha = opacity;
-  ctx.fillStyle = color;
-  ctx.strokeStyle = "#1a1a1a";
-  ctx.lineWidth = 1;
+  ctx.fillStyle = triangleFillCss;
+  ctx.strokeStyle = triangleStrokeCss || borderColor;
+  ctx.lineWidth = 0.8;
   ctx.beginPath();
   ctx.moveTo(tipX, tipY);
   ctx.lineTo(blX, blY);
   ctx.lineTo(brX, brY);
   ctx.closePath();
   ctx.fill();
-  ctx.globalAlpha = opacity * 0.9;
   ctx.stroke();
   ctx.restore();
 }
@@ -379,7 +392,16 @@ export function generateMapTextureData(dungeon, mode = "role", player = null, ui
           }
         }
 
-        const drawStairArrow = (r, isExit) => {
+        // Consistent icons: SAME radius, SAME border, SAME triangle shape, NO white
+        const unifiedRadius = getUnifiedIconRadius(cs);
+        const border = "#2a2a2a";
+        const goldCss = toCssColor(PALETTE.gold, "#c9a84c");
+        const wallDarkCss = toCssColor(PALETTE.wallDark, "#2a2a2a");
+        const playerCircleCss = toCssColor(L.player.color, "rgb(88,128,92)");
+        // Player triangle: dark #2a2a2a (not white) — consistent rule: light circles -> dark triangle
+        const playerTriCss = toCssColor(cfg.playerDir.color || [42,42,42], "#2a2a2a");
+
+        const drawStairConsistent = (r, isExit) => {
           if (!r.stairWall) return;
           if (discoveryEnabled) {
             const mx = (r.stairWall.x1 + r.stairWall.x2)/2, my = (r.stairWall.y1 + r.stairWall.y2)/2;
@@ -388,19 +410,14 @@ export function generateMapTextureData(dungeon, mode = "role", player = null, ui
           const sw = r.stairWall;
           const mx = (sw.x1 + sw.x2)/2, my = (sw.y1 + sw.y2)/2;
           const cx = ox + mx*cs, cy = oy + my*cs;
-          const size = Math.max(6, cs * L.stair.sizeFactor);
-          ctx.fillStyle = toCssColor(PALETTE.gold, "#c9a84c");
-          ctx.beginPath(); ctx.arc(cx, cy, size*0.6, 0, Math.PI*2); ctx.fill();
-          ctx.strokeStyle = toCssColor(PALETTE.wallDark, "#2a2a2a");
-          ctx.lineWidth = Math.max(1, cs*L.stair.strokeFactor);
-          ctx.beginPath(); ctx.arc(cx, cy, size*0.6, 0, Math.PI*2); ctx.stroke();
-          ctx.fillStyle = toCssColor(PALETTE.wallDark, "#2a2a2a");
-          ctx.font = `bold ${Math.max(10,size)}px "${L.fontFamily}", ${L.fontFallback}`;
-          ctx.textAlign = "center"; ctx.textBaseline = "middle";
-          ctx.fillText(isExit ? "▼" : "▲", cx, cy+1);
+          if (isExit) {
+            drawCircleWithTriangle(ctx, cx, cy, unifiedRadius, wallDarkCss, border, goldCss, border, Math.PI/2, 0.85);
+          } else {
+            drawCircleWithTriangle(ctx, cx, cy, unifiedRadius, goldCss, border, wallDarkCss, border, -Math.PI/2, 0.85);
+          }
         };
-        d.rooms.filter(r=>r.role==="entrance").forEach(r=>drawStairArrow(r,false));
-        d.rooms.filter(r=>r.role==="exit").forEach(r=>drawStairArrow(r,true));
+        d.rooms.filter(r=>r.role==="entrance").forEach(r=>drawStairConsistent(r,false));
+        d.rooms.filter(r=>r.role==="exit").forEach(r=>drawStairConsistent(r,true));
 
         if (cfg.trail.enabled && discovery) {
           const path = discovery.getPath ? discovery.getPath() : [];
@@ -438,13 +455,9 @@ export function generateMapTextureData(dungeon, mode = "role", player = null, ui
         if (player) {
           const px = Math.floor(ox + player.x*cs);
           const py = Math.floor(oy + player.y*cs);
-          const pr = Math.max(L.player.minRad, Math.floor(cs*L.player.sizeFactor));
-          const pCol = Array.isArray(L.player.color) ? `rgb(${L.player.color[0]},${L.player.color[1]},${L.player.color[2]})` : toCssColor(L.player.color, "rgb(15,220,15)");
-          ctx.fillStyle = pCol;
-          ctx.beginPath(); ctx.arc(px, py, pr, 0, Math.PI*2); ctx.fill();
-          // Direction triangle (caret)
           const ang = getPlayerAngle(player);
-          drawPlayerDirection(ctx, px, py, ang, cs, pr, cfg, L);
+          // Player: SAME radius as entrance/exit, SAME border #2a2a2a, muted green circle + dark triangle (no white)
+          drawCircleWithTriangle(ctx, px, py, unifiedRadius, playerCircleCss, border, playerTriCss, border, ang, 0.9);
         }
 
         const items = mode==="role"
@@ -533,6 +546,9 @@ export function generateMapTextureData(dungeon, mode = "role", player = null, ui
   }
 
   const gold = hexToRgbArray(PALETTE.gold), wallDark = hexToRgbArray(PALETTE.wallDark);
+  const playerCol = [88,128,92];
+  const playerTriCol = [42,42,42];
+  const uniR = Math.max(6, Math.floor(cs * 0.9));
   d.rooms.filter(r=>r.role==="entrance"||r.role==="exit").forEach(r=>{
     if(!r.stairWall) return;
     if (discoveryEnabled) {
@@ -542,26 +558,21 @@ export function generateMapTextureData(dungeon, mode = "role", player = null, ui
     const sw=r.stairWall;
     const mx=(sw.x1+sw.x2)/2, my=(sw.y1+sw.y2)/2;
     const cx=Math.floor(ox+mx*cs), cy=Math.floor(oy+my*cs);
-    const sz=Math.max(L.stair.minSize, Math.floor(cs*L.stair.sizeFactor));
-    fillCircle(buf,w,h,cx,cy,Math.floor(sz*0.6), gold[0],gold[1],gold[2],255);
-    strokeCircle(buf,w,h,cx,cy,Math.floor(sz*0.6), wallDark[0],wallDark[1],wallDark[2],255, Math.max(1,Math.floor(cs*L.stair.strokeFactor)));
+    if (r.role==="exit") {
+      fillCircle(buf,w,h,cx,cy,uniR, wallDark[0],wallDark[1],wallDark[2],255);
+      // triangle down approx
+      fillRect(buf,w,h,cx-2,cy,4,3,gold[0],gold[1],gold[2],255);
+    } else {
+      fillCircle(buf,w,h,cx,cy,uniR, gold[0],gold[1],gold[2],255);
+      fillRect(buf,w,h,cx-2,cy-2,4,3,wallDark[0],wallDark[1],wallDark[2],255);
+    }
   });
 
   if(player){
     const px=Math.floor(ox+player.x*cs), py=Math.floor(oy+player.y*cs);
-    const pr=Math.max(L.player.minRad, Math.floor(cs*L.player.sizeFactor));
-    const pCol = Array.isArray(L.player.color) ? L.player.color : (typeof L.player.color === "string" ? hexToRgbArray(L.player.color) : [15,220,15]);
-    fillCircle(buf,w,h,px,py,pr,pCol[0],pCol[1],pCol[2],255);
-    // Direction triangle for fallback buffer: approximate with small pixels
-    const ang = getPlayerAngle(player);
-    const size = Math.max(4, Math.floor(cs * 0.9));
-    const dirX = Math.cos(ang), dirY = Math.sin(ang);
-    const tipX = Math.floor(px + dirX * size * 0.8);
-    const tipY = Math.floor(py + dirY * size * 0.8);
-    const pDir = cfg.playerDir || cfg.reveal.playerDir || { color:[255,255,255] };
-    const col = Array.isArray(pDir.color) ? pDir.color : [255,255,255];
-    const a = Math.floor((pDir.opacity ?? 0.95) * 255);
-    fillRect(buf,w,h,tipX-1,tipY-1,3,3,col[0],col[1],col[2],a);
+    fillCircle(buf,w,h,px,py,uniR,playerCol[0],playerCol[1],playerCol[2],255);
+    const pDir = [42,42,42];
+    fillCircle(buf,w,h,px,py,Math.floor(uniR*0.5), pDir[0],pDir[1],pDir[2],230);
   }
 
   if (cfg.trail.enabled && discovery) {

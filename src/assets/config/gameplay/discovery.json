@@ -1,5 +1,5 @@
 {
-  "_readme": "Minimap discovery/fog-of-war + trail + player direction. All tunable, no hardcode. Editor-tracked via recursive walk. Task5: peekDistance=1, corridor reveal 4, dither random/bayer, trail dashed gold 0.5, player dir triangle white.",
+  "_readme": "Consistent circle+triangle design system, no white. Player muted green #58805c [88,128,92] circle + dark triangle, entrance gold+dark, exit dark+gold. Trail now same green as player (configurable) with transparent dashed.",
   "version": 1,
   "reveal": {
     "enabled": true,
@@ -8,41 +8,35 @@
     "corridor3x3": true,
     "roomReveal": "entire",
     "animationDuration": 400,
-    "dither": {
-      "enabled": true,
-      "pattern": "random",
-      "dotSize": 2,
-      "bayerSize": 4
-    },
+    "dither": { "enabled": true, "pattern": "random", "dotSize": 2, "bayerSize": 4 },
     "undiscovered": { "hide": true },
-    "currentRoomBoost": 0.15,
     "oldRoomOpacity": 0.85,
-    "playerDir": {
-      "enabled": true,
-      "size": 0,
-      "color": [255, 255, 255],
-      "opacity": 0.95,
-      "note": "size 0 = auto based on cell size and dot radius, color white triangle with dark stroke for direction"
-    }
+    "playerDir": { "enabled": true, "size": 0, "color": [42, 42, 42], "opacity": 0.95, "note": "Dark triangle #2a2a2a inside player circle, consistent, no white" }
   },
   "trail": {
     "enabled": true,
-    "color": [201, 168, 76],
-    "colorCss": "#c9a84c",
-    "opacity": 0.5,
-    "lineWidth": 1.8,
+    "color": [88, 128, 92],
+    "colorCss": "#58805c",
+    "opacity": 0.45,
+    "lineWidth": 2.0,
     "dash": [5, 4],
     "cap": "butt",
     "join": "miter",
     "maxPoints": 1024,
-    "onlyDiscovered": true
+    "onlyDiscovered": true,
+    "note": "Trail same colour as player muted green #58805c [88,128,92] for consistency, transparent dashed, configurable via editor"
   },
   "playerDir": {
     "enabled": true,
     "size": 0,
-    "color": [255, 255, 255],
+    "color": [42, 42, 42],
     "opacity": 0.95,
-    "note": "Small triangle caret showing player facing on minimap. Size 0 auto, color white, editable via editor"
+    "note": "Dark triangle caret, consistent with entrance/exit, no white"
+  },
+  "player": {
+    "color": [88, 128, 92],
+    "colorCss": "#58805c",
+    "note": "Player circle muted retro green #58805c, fitting parchment #e8dcc4 + gold #c9a84c, configurable via map.json colors.player and here for trail parity"
   },
   "debug": { "logNewRoom": false }
 }
