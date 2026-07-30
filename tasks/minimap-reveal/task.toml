@@ -16,6 +16,6 @@ screenshots = [
 ]
 videos = []
 teaser = "./screenshots/map-path-trail.png"
-base-commit-hash = "93f57692667a06a295cf517fab32fecba04c6b18"
+base-commit-hash = "efedd836208f870840a9c296a5fc6fc49294db1d"
 commit-hash = ""
 avocado-model = "Muse Spark 1.1"
