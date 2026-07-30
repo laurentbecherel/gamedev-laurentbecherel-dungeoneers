@@ -16,7 +16,7 @@ function getLiveLightsCfg() {
 }
 
 export class Light {
-  constructor({ type = LIGHT_TYPES.POINT, pos = [0, 0, 0], color = [1, 1, 1], intensity = 1, radius = 5, flickerSpeed = 0, flickerAmount = 0, phase = 0, id = null, dir = [0, 0, -1], coneInner = 0.85, coneOuter = 0.65, pulseSpeed = 0, pulseAmount = 0, noShadow = false } = {}) {
+  constructor({ type = LIGHT_TYPES.POINT, pos = [0, 0, 0], color = [1, 1, 1], intensity = 1, radius = 5, flickerSpeed = 0, flickerAmount = 0, phase = 0, id = null, dir = [0, 0, -1], coneInner = 0.85, coneOuter = 0.65, pulseSpeed = 0, pulseAmount = 0, noShadow = false, roomIndex = -1, zone = null, role = null, spriteId = null } = {}) {
     this.type = type;
     this.pos = pos.slice();
     this.color = color.slice();
@@ -32,6 +32,10 @@ export class Light {
     this.pulseSpeed = pulseSpeed;
     this.pulseAmount = pulseAmount;
     this.noShadow = !!noShadow;
+    this.roomIndex = roomIndex;
+    this.zone = zone;
+    this.role = role;
+    this.spriteId = spriteId;
   }
 
   get typeId() { return LIGHT_TYPE_IDS[this.type] ?? 0; }
@@ -166,6 +170,10 @@ export class LightManager {
       pulseSpeed: it.pulseSpeed ?? 0,
       pulseAmount: it.pulseAmount ?? 0,
       noShadow: !!it.noShadow,
+      roomIndex: it.roomIndex ?? -1,
+      zone: it.zone || null,
+      role: it.role || null,
+      spriteId: it.spriteId || it.type || null,
     })) : []);
 
     this.lights = src.map(l => new Light({
@@ -184,6 +192,10 @@ export class LightManager {
       pulseSpeed: l.pulseSpeed,
       pulseAmount: l.pulseAmount,
       noShadow: l.noShadow,
+      roomIndex: l.roomIndex ?? -1,
+      zone: l.zone || null,
+      role: l.role || null,
+      spriteId: l.spriteId || null,
     }));
   }
 

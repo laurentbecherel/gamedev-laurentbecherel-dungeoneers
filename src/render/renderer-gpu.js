@@ -276,6 +276,83 @@ export class GPURenderer {
     this.bandLevels = paletteCfg.bandLevels ?? rendering.bandLevels ?? legacy.bandLevels ?? 32;
   }
 
+
+  // --- Task 6: CPU depth buffer for sprite occlusion (matches shader DDA, per screen column) ---
+  _computeDepthBuffer(dungeon, posX, posY, angle) {
+    const w = this.canvas.width || 640;
+    this._depthBuffer = this._depthBuffer && this._depthBuffer.length === w ? this._depthBuffer : new Float32Array(w);
+    const depth = this._depthBuffer;
+    const dirX = Math.cos(angle);
+    const dirY = Math.sin(angle);
+    const planeLen = Math.tan((this._fovCache || 1.0) * 0.5);
+    const planeX = -dirY * planeLen;
+    const planeY = dirX * planeLen;
+    const mapW = dungeon.w, mapH = dungeon.h;
+    const grid = dungeon.grid;
+    for (let x = 0; x < w; x++) {
+      const cameraX = 2 * x / w - 1;
+      const rayDirX = dirX + planeX * cameraX;
+      const rayDirY = dirY + planeY * cameraX;
+      let mapX = Math.floor(posX);
+      let mapY = Math.floor(posY);
+      const deltaDistX = Math.abs(1 / rayDirX);
+      const deltaDistY = Math.abs(1 / rayDirY);
+      let stepX, stepY;
+      let sideDistX, sideDistY;
+      if (rayDirX < 0) { stepX = -1; sideDistX = (posX - mapX) * deltaDistX; } else { stepX = 1; sideDistX = (mapX + 1 - posX) * deltaDistX; }
+      if (rayDirY < 0) { stepY = -1; sideDistY = (posY - mapY) * deltaDistY; } else { stepY = 1; sideDistY = (mapY + 1 - posY) * deltaDistY; }
+      let hit = 0, side = 0, perp = 0;
+      for (let i = 0; i < 64; i++) {
+        if (sideDistX < sideDistY) { sideDistX += deltaDistX; mapX += stepX; side = 0; } else { sideDistY += deltaDistY; mapY += stepY; side = 1; }
+        if (mapX < 0 || mapY < 0 || mapX >= mapW || mapY >= mapH) { perp = 20; hit = 1; break; }
+        if (grid[mapY * mapW + mapX] !== 0) {
+          hit = 1;
+          if (side === 0) perp = sideDistX - deltaDistX; else perp = sideDistY - deltaDistY;
+          break;
+        }
+      }
+      if (perp < 0.0001) perp = 0.0001;
+      depth[x] = perp;
+    }
+    return depth;
+  }
+
+  _isOccluded(dungeon, x0, y0, x1, y1) {
+    const w = dungeon.w, h = dungeon.h, grid = dungeon.grid;
+    const dx = x1 - x0, dy = y1 - y0;
+    const dist = Math.hypot(dx, dy);
+    const steps = Math.max(4, (dist * 12) | 0);
+    for (let i = 1; i < steps; i++) {
+      const t = i / steps;
+      if (t < 0.06 || t > 0.94) continue;
+      const x = x0 + dx * t, y = y0 + dy * t;
+      const ix = Math.floor(x), iy = Math.floor(y);
+      if (ix < 0 || iy < 0 || ix >= w || iy >= h) return true;
+      if (grid[iy * w + ix] !== 0) return true;
+    }
+    return false;
+  }
+
+  _isSpriteOccluded(dungeon, camX, camY, sprite, depthBuffer, renderAngle) {
+    const dirX = Math.cos(renderAngle), dirY = Math.sin(renderAngle);
+    const planeLen = Math.tan((this._fovCache || 1.0) * 0.5);
+    const planeX = -dirY * planeLen, planeY = dirX * planeLen;
+    const dx = sprite.x - camX, dy = sprite.y - camY;
+    const invDet = 1.0 / (planeX * dirY - dirX * planeY);
+    const tx = invDet * (dirY * dx - dirX * dy);
+    const ty = invDet * (-planeY * dx + planeX * dy);
+    if (ty <= 0.15) return true; // behind
+    const screenX = ( (this.canvas.width||640) * 0.5) * (1 + tx / ty);
+    const mid = screenX | 0;
+    if (mid >= 0 && mid < depthBuffer.length) {
+      if (ty > depthBuffer[mid] - 0.18) return true; // behind wall column
+    }
+    // Second check: raymarch from camera to sprite world pos, see if wall in between
+    if (this._isOccluded(dungeon, camX, camY, sprite.x, sprite.y)) return true;
+    return false;
+  }
+
+
   _resolveToggles(cfg){
     const fogCfg = cfg.fog || {};
     this.fogEnabled = (fogCfg.enabled !== false) ? 1 : 0;
@@ -648,23 +725,53 @@ export class GPURenderer {
     if (ul.u_cornerRoughMul) gl.uniform1f(ul.u_cornerRoughMul, roughMulC);
     if (ul.u_cornerAoMul) gl.uniform1f(ul.u_cornerAoMul, aoMulC);
 
-    // ---- Task 6: multi-light upload (player + environment) ----
+    // ---- Task 6: multi-light upload (player + environment) - smart 12 closest with room awareness ----
     const playerLight = player.getLightSource();
-    // Build world light list nearest to player
     let envLights = [];
     try {
       if (this.lightManager) {
-        const camPosForLight = { x: camX, y: camY };
-        // get nearest ignoring player for now, we'll add player explicitly as first
-        envLights = this.lightManager.getNearest(camPosForLight, Math.max(0, this.maxLights - 1)) || [];
+        // Get all env lights, then score by distance + visibility + front facing + room role boost
+        const all = this.lightManager.lights || [];
+        const camPos = { x: camX, y: camY };
+        const dirX = Math.cos(renderAngle), dirY = Math.sin(renderAngle);
+        const scored = all.map(L => {
+          const dx = L.pos[0] - camX, dy = L.pos[1] - camY;
+          const d2 = dx*dx + dy*dy;
+          const dist = Math.sqrt(d2);
+          // Front check: dot forward with to light (positive = in front)
+          const frontDot = dx * dirX + dy * dirY;
+          let score = dist;
+          // Penalize behind camera (since you don't need to light behind you as strongly)
+          if (frontDot < 0) score += 4.5; // behind penalty
+          // Occlusion check: if wall between camera and light, add penalty but don't discard (soft)
+          let occluded = false;
+          try { occluded = this._isOccluded(dungeon, camX, camY, L.pos[0], L.pos[1]); } catch {}
+          if (occluded) {
+            // If occluded and far beyond wall, likely from other room - heavy penalty
+            score += 6.0 + dist * 0.15;
+          }
+          // Room boost: if light is in same room as player, slight boost (reduce score)
+          try {
+            const playerRoom = dungeon.rooms ? dungeon.rooms.find(r => camX >= r.x && camX < r.x + r.w && camY >= r.y && camY < r.y + r.h) : null;
+            const lightRoomIdx = L.roomIndex ?? -1;
+            if (playerRoom && dungeon.rooms && dungeon.rooms[lightRoomIdx] === playerRoom) score -= 1.2;
+          } catch {}
+          // Type boost: braziers/treasure lights more important in current room? Keep simple
+          return { L, score, dist, frontDot, occluded };
+        });
+        // Sort by score, then take closest maxLights-1
+        scored.sort((a,b) => a.score - b.score);
+        envLights = scored.slice(0, Math.max(0, this.maxLights - 1)).map(s => s.L);
       } else if (dungeon.lights) {
         envLights = dungeon.lights.map(l => {
-          // convert plain light object to Light-like for flicker calc
           const pos = l.pos || [l.x||0, l.y||0, l.z||0.5];
-          return { pos, color: l.color, intensity: l.intensity, radius: l.radius, flickerSpeed: l.flickerSpeed, flickerAmount: l.flickerAmount, phase: l.phase, type: l.type||'flicker', dir: l.dir||[0,0,-1], coneInner: l.coneInner||0.85, coneOuter: l.coneOuter||0.65, pulseSpeed: l.pulseSpeed||0, pulseAmount: l.pulseAmount||0, noShadow: !!l.noShadow };
+          return { pos, color: l.color, intensity: l.intensity, radius: l.radius, flickerSpeed: l.flickerSpeed, flickerAmount: l.flickerAmount, phase: l.phase, type: l.type||'flicker', dir: l.dir||[0,0,-1], coneInner: l.coneInner||0.85, coneOuter: l.coneOuter||0.65, pulseSpeed: l.pulseSpeed||0, pulseAmount: l.pulseAmount||0, noShadow: !!l.noShadow, roomIndex: l.roomIndex };
         });
+        // still sort by distance smart?
+        const dirX = Math.cos(renderAngle), dirY = Math.sin(renderAngle);
+        envLights = envLights.map(L=>{ const dx=L.pos[0]-camX, dy=L.pos[1]-camY; const dist=Math.hypot(dx,dy); const front=dx*dirX+dy*dirY; const occ=this._isOccluded? (this._isOccluded(dungeon,camX,camY,L.pos[0],L.pos[1])?6:0):0; const behind=front<0?4.5:0; return {L, score:dist+occ+behind}; }).sort((a,b)=>a.score-b.score).slice(0, Math.max(0,this.maxLights-1)).map(o=>o.L);
       }
-    } catch {}
+    } catch (e) { console.warn('[lights smart select] failed', e); }
 
     // Compute flickered intensities via LightManager logic or organic factor inline
     const time = timeSec;
@@ -773,11 +880,16 @@ export class GPURenderer {
     gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
     gl.bindVertexArray(null);
 
-    // ---- Task 6: render sprites as PBR billboards on top of raycast scene, before quantize ----
-    // Note: we render sprites into same sceneFBO (additive on top of walls/floors)
+    // ---- Task 6: render sprites with proper wall/floor/ceil occlusion ----
+    // Sprites from other rooms must not show through walls. Use CPU depth buffer
+    // DDA (matches shader) + line-of-sight check. Also cull far sprites.
+    // Light occlusion already handled via traceRay shadows in shader.
+    // Smart handling >12 lights: LightManager.getNearest chooses 12 closest including player as slot 0.
     if (this.spriteRenderer && this._sprites && this._sprites.length > 0) {
       try {
-        const eyeZ = baseHeight + 0.15 * 0; // player floor height already accounted? Use baseHeight as eyeZ approximation
+        const eyeZ = baseHeight;
+        // cache FOV for depth buffer compute
+        this._fovCache = fov;
         const camera = {
           x: camX,
           y: camY,
@@ -787,22 +899,34 @@ export class GPURenderer {
           planeLen: Math.tan(fov*0.5),
           resolution: [this.canvas.width, this.canvas.height],
         };
-        // Build sprite render list from dungeon sprites that are near enough
-        const spritesForRender = this._sprites.map(s => ({
-          x: s.x,
-          y: s.y,
-          z: s.z,
-          spriteId: s.spriteId || s.type || 'torch_wall',
-          type: s.spriteId || s.type,
-          frame: 0,
-          scale: 1,
-          alpha: s.alpha ?? 1,
-          visible: true,
-          material: s.material || null,
-        })).filter(s => {
-          const dx = s.x - camX, dy = s.y - camY;
-          return dx*dx + dy*dy < 22*22; // cull far sprites
-        });
+
+        // Compute depth buffer this frame for occlusion (cheap CPU DDA per column)
+        const depthBuffer = this._computeDepthBuffer(dungeon, camX, camY, renderAngle);
+
+        // Build sprite render list with 3 culls: distance, depth buffer, LOS
+        const spritesForRender = [];
+        for (const orig of this._sprites) {
+          const dx = orig.x - camX, dy = orig.y - camY;
+          const d2 = dx*dx + dy*dy;
+          if (d2 >= 22*22) continue; // far cull
+          // Rough behind check via inverse determinant
+          // compute ty quickly: dot dir with to sprite
+          // reuse helper: if sprite occluded by walls, skip
+          if (this._isSpriteOccluded(dungeon, camX, camY, orig, depthBuffer, renderAngle)) continue;
+
+          spritesForRender.push({
+            x: orig.x,
+            y: orig.y,
+            z: orig.z,
+            spriteId: orig.spriteId || orig.type || 'torch_wall',
+            type: orig.spriteId || orig.type,
+            frame: orig.frame || 0,
+            scale: orig.scale || 1,
+            alpha: orig.alpha ?? 1,
+            visible: orig.visible !== false,
+            material: orig.material || null,
+          });
+        }
 
         // Render into sceneFBO still bound
         gl.bindFramebuffer(gl.FRAMEBUFFER, this.sceneFBO);

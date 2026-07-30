@@ -145,13 +145,9 @@ export async function loadSpriteGL(gl, id) {
   const entry = { albedo: null, normal: null, orm: null, height: null, meta, loaded: false };
   cache.set(id, entry);
 
-  // Placeholders immediately so rendering works before async load
+  // Placeholders immediately so rendering works before async load — now procedural for all types, no magenta unless truly missing
   const fallbackType = getSpriteFallbackType(id);
-  if (fallbackType === 'torch' || fallbackType === 'brazier') {
-    entry.albedo = proceduralTorchAlbedo(gl);
-  } else {
-    entry.albedo = placeholderTex(gl);
-  }
+  entry.albedo = proceduralAlbedoForType(gl, fallbackType);
   entry.normal = neutralNormalTex(gl);
   entry.orm = neutralORMTex(gl);
   entry.height = neutralNormalTex(gl);

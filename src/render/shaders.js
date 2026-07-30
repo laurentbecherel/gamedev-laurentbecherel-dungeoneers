@@ -366,7 +366,7 @@ vec3 debugShowPBR(int mode, vec3 albedoRaw, vec3 normalRaw, vec3 worldN, float h
   return albedoRaw;
 }
 vec3 pbrShade(vec3 albedo, vec3 N, float rough, float metal, float ao, vec3 emissive, vec3 worldPos, vec3 viewDir) {
-  if (u_lightingEnabled == 0) { return albedo; }
+  if (u_lightingEnabled == 0) { return albedo + emissive; }
   float aoSunEff = mix(1.0, ao, clamp(u_aoSun, 0.0, 1.0));
   float aoPointEff = mix(1.0, ao, clamp(u_aoPoint, 0.0, 1.0));
   float aoAmbEff = mix(1.0, ao, clamp(u_aoAmbient, 0.0, 1.0));
@@ -388,11 +388,67 @@ vec3 pbrShade(vec3 albedo, vec3 N, float rough, float metal, float ao, vec3 emis
   float sunMax = u_shadowSunMax > 0.0 ? u_shadowSunMax : 20.0;
   float pointEps = u_shadowPointEps >= 0.0 ? u_shadowPointEps : 0.1;
 
+  // ——— PBR OFF: diffuse-only Lambert, but still multi-light + sun + shadows ———
+  if (u_pbrEnabled == 0) {
+    vec3 sunDir = normalize(vec3(u_sunDir.xy, u_sunDirZ));
+    vec3 Lsun = -sunDir;
+    float sunShadow = 1.0;
+    {
+      vec2 sDirSun = normalize(Lsun.xy);
+      vec2 sOriginSun = worldPos.xy + traceN.xy * biasN + sDirSun * biasDir;
+      if (length(sDirSun) > 0.01 && traceRay(sOriginSun, sDirSun, sunMax)) sunShadow = sunShadFactor;
+    }
+    float NdotLsun = max(dot(N, Lsun), 0.0);
+    vec3 sunContrib = albedo * u_sunColor * u_sunIntensity * NdotLsun * sunShadow * aoSunEff;
+    vec3 pointContrib = vec3(0.0);
+    for (int i=0;i<12;i++){
+      if (i>=u_numLights) break;
+      if (u_lightIntensity[i]<=0.001) continue;
+      vec3 lPos = u_lightPos[i];
+      vec3 Lp = lPos - worldPos;
+      float dist = length(Lp);
+      float rad = u_lightRadius[i];
+      if (dist>rad) continue;
+      Lp /= dist;
+      float atten = clamp(1.0 - dist/rad, 0.0, 1.0); atten*=atten;
+      float shadow=1.0;
+      if (u_lightNoShadow[i]==0){
+        vec2 sd = normalize(Lp.xy);
+        vec2 so = worldPos.xy + traceN.xy * biasN + sd * biasDir;
+        if (length(sd)>0.01 && traceRay(so, sd, dist-pointEps)) shadow = pointShadFactor;
+      }
+      int lt = u_lightType[i];
+      if (lt==1){
+        vec3 sDir = normalize(u_lightDir[i]);
+        float cT = dot(-Lp, sDir);
+        float spot = smoothstep(u_lightConeOuter[i], u_lightConeInner[i], cT);
+        atten*=spot;
+        if (spot<=0.01) continue;
+      }
+      // cheap flicker/pulse still applied as attenuation modulation (intensity already flickered on CPU)
+      if (lt==2){
+        float fs = u_lightFlickerSpeed[i]>0.1?u_lightFlickerSpeed[i]:6.0;
+        float fa = u_lightFlickerAmount[i]>0.001?u_lightFlickerAmount[i]:0.12;
+        float ph = u_lightPhase[i];
+        float flickAdd = 0.92 + 0.08 * sin(u_time * fs + ph*1.7 + float(i)*0.9) + 0.05 * sin(u_time*fs*1.9+ph*2.3);
+        atten *= clamp(flickAdd, 0.68, 1.22);
+      } else if (lt==3){
+        float ps = u_lightPulseSpeed[i]; float pa = u_lightPulseAmt[i];
+        if (ps>0.1 && pa>0.01){ atten *= (1.0 + pa * sin(u_time * ps + u_lightPhase[i] + float(i)*0.7)); }
+      }
+      float NdotLp = max(dot(N, Lp), 0.0);
+      pointContrib += albedo * u_lightColor[i] * u_lightIntensity[i] * atten * NdotLp * shadow * aoPointEff;
+    }
+    vec3 ambient = u_ambientColor * albedo * u_ambientLevel * u_worldAmbientMul * aoAmbEff;
+    return ambient + sunContrib + pointContrib + emissive;
+  }
+
+  // ——— PBR ON: full GGX ———
   float f0d = u_pbrF0 > 0.0 ? u_pbrF0 : 0.04;
   vec3 F0 = mix(vec3(f0d), albedo, metal);
   vec3 Lo = vec3(0.0);
 
-  // Sun
+  // Sun PBR
   vec3 sunDir = normalize(vec3(u_sunDir.xy, u_sunDirZ));
   vec3 Lsun = -sunDir;
   float sunShadow = 1.0;
@@ -414,11 +470,10 @@ vec3 pbrShade(vec3 albedo, vec3 N, float rough, float metal, float ao, vec3 emis
     Lo += (kD * albedo / 3.14159265 + specular) * u_sunColor * u_sunIntensity * NdotL * sunShadow * aoSunEff;
   }
 
-  // Many point lights (torches/braziers) — Task 6
+  // Many point lights PBR
   for (int i = 0; i < 12; i++) {
     if (i >= u_numLights) break;
     vec3 lPos = u_lightPos[i];
-    // skip zeroed lights
     if (u_lightIntensity[i] <= 0.001) continue;
     vec3 Lvec = lPos - worldPos;
     float dist = length(Lvec);
@@ -427,11 +482,9 @@ vec3 pbrShade(vec3 albedo, vec3 N, float rough, float metal, float ao, vec3 emis
     if (dist < 0.001) continue;
     Lvec /= dist;
     float atten = clamp(1.0 - dist / radius, 0.0, 1.0);
-    // quadratic falloff + configurable quad factor if present, else simple square
     atten *= atten;
     atten = atten / (1.0 + (dist/radius)*(dist/radius) * max(u_pbrAttenQuad, 0.0));
 
-    // Shadow: skip if flagged noShadow (emissive/ambient/crystal)
     float shadow = 1.0;
     if (u_lightNoShadow[i] == 0) {
       vec2 shDir = normalize(Lvec.xy);
@@ -439,7 +492,6 @@ vec3 pbrShade(vec3 albedo, vec3 N, float rough, float metal, float ao, vec3 emis
       if (length(shDir) > 0.01 && traceRay(shOrigin, shDir, dist - pointEps)) shadow = pointShadFactor;
     }
 
-    // Spot cone
     int lType = u_lightType[i];
     if (lType == 1) {
       vec3 spotDir = normalize(u_lightDir[i]);
@@ -451,10 +503,7 @@ vec3 pbrShade(vec3 albedo, vec3 N, float rough, float metal, float ao, vec3 emis
       if (spotAtt <= 0.01) continue;
     }
 
-    // Flicker / Pulse already baked into intensity on CPU via organic factor,
-    // but shader retains cheap visual flicker for extra liveliness when type==flicker
     if (lType == 2) {
-      // cheap extra flicker (sin) layered on top of CPU organic intensity
       float fSpeed = u_lightFlickerSpeed[i] > 0.1 ? u_lightFlickerSpeed[i] : 6.0;
       float fAmt = u_lightFlickerAmount[i] > 0.001 ? u_lightFlickerAmount[i] : 0.12;
       float ph = u_lightPhase[i];
@@ -484,6 +533,7 @@ vec3 pbrShade(vec3 albedo, vec3 N, float rough, float metal, float ao, vec3 emis
   vec3 color = ambient + Lo + emissive;
   return color;
 }
+
 
 void main() {
   // Task 4: vertical bob as screen-space pixel offset like mygame — u_bobPixels = viewBobOffset * h * 0.8
