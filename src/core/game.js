@@ -149,6 +149,16 @@ export class Game {
       if (cfg.logNewRoom && newly.length > 5) {
         console.log("New area discovered", newly.length, "cells");
       }
+      // Bug fix: if discovery happens while minimap is open, mark as seen immediately
+      // so close+reopen does not re-trigger fade-in animation for cells already seen live
+      if (this.showMap) {
+        // Merge into current pending for live dither and update max so next open is clean
+        if (this.discovery.addPendingWhileMapOpen) {
+          this.discovery.addPendingWhileMapOpen(newly);
+        } else if (this.discovery.setLastOpenMaxToCurrent) {
+          this.discovery.setLastOpenMaxToCurrent();
+        }
+      }
     }
     this._lastPlayerGridX = px;
     this._lastPlayerGridY = py;

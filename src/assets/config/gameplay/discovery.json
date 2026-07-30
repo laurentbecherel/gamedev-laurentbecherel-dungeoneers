@@ -1,5 +1,5 @@
 {
-  "_readme": "Minimap discovery/fog-of-war + trail settings. All numbers here, no hardcode in JS. Editor-tracked via recursive walk. For task5-minimap-reveal: peekDistance=1, corridor reveal incremental, retro dither on M open, dashed transparent trail.",
+  "_readme": "Minimap discovery/fog-of-war + trail + player direction. All tunable, no hardcode. Editor-tracked via recursive walk. Task5: peekDistance=1, corridor reveal 4, dither random/bayer, trail dashed gold 0.5, player dir triangle white.",
   "version": 1,
   "reveal": {
     "enabled": true,
@@ -14,11 +14,16 @@
       "dotSize": 2,
       "bayerSize": 4
     },
-    "undiscovered": {
-      "hide": true
-    },
+    "undiscovered": { "hide": true },
     "currentRoomBoost": 0.15,
-    "oldRoomOpacity": 0.85
+    "oldRoomOpacity": 0.85,
+    "playerDir": {
+      "enabled": true,
+      "size": 0,
+      "color": [255, 255, 255],
+      "opacity": 0.95,
+      "note": "size 0 = auto based on cell size and dot radius, color white triangle with dark stroke for direction"
+    }
   },
   "trail": {
     "enabled": true,
@@ -32,7 +37,12 @@
     "maxPoints": 1024,
     "onlyDiscovered": true
   },
-  "debug": {
-    "logNewRoom": false
-  }
+  "playerDir": {
+    "enabled": true,
+    "size": 0,
+    "color": [255, 255, 255],
+    "opacity": 0.95,
+    "note": "Small triangle caret showing player facing on minimap. Size 0 auto, color white, editable via editor"
+  },
+  "debug": { "logNewRoom": false }
 }

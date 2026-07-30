@@ -1,9 +1,8 @@
 // map-ui.js — generates map texture RGBA data for WebGL UI overlay.
-// Extended for Task5 minimap-reveal: fog-of-war discovery with 1-tile peek, retro dither reveal on M open, dashed transparent trail.
+// Extended for Task5 minimap-reveal: fog-of-war discovery with 1-tile peek, retro dither reveal on M open, dashed transparent trail, player direction triangle.
 // Restored from Task 2 MinimapRenderer to fix regression: colors, alignment, text labels.
 // Uses Canvas2D rendering path when document is available (browser), falls back to raw buffer for Node tests.
-// Fully configurable via src/assets/config/ui/map.json (parchment) + src/assets/config/gameplay/discovery.json (reveal/trail).
-// Architecture: pure rendering, no mutation of discovery (only reads), no magic numbers — reveal/trail from injected discoveryCfg or discovery._cfg.
+// Fully configurable via src/assets/config/ui/map.json (parchment) + src/assets/config/gameplay/discovery.json (reveal/trail/playerDir).
 
 const DEFAULT_PALETTE = {
   canvasBg: "#e8dcc4",
@@ -90,12 +89,12 @@ function resolvePaletteConfig(uiCfg) {
   if (uiCfg?.parchmentBg) out.canvasBg = toHexOrCss(uiCfg.parchmentBg, out.canvasBg);
   if (uiCfg?.parchmentScan) out.canvasScan = toHexOrCss(uiCfg.parchmentScan, out.canvasScan);
   if (colors.wallDark) out.wallDark = toHexOrCss(colors.wallDark, out.wallDark);
-  if (colors.gold) out.gold = toHexOrCss(colors.gold, out.gold);
-  if (colors.goldDim) out.goldDim = toHexOrCss(colors.goldDim, out.goldDim);
-  if (colors.parchmentPanel) out.parchmentPanel = toHexOrCss(colors.parchmentPanel, out.parchmentPanel);
-  if (colors.parchmentBorder) out.parchmentPanelBorder = toHexOrCss(colors.parchmentBorder, out.parchmentPanelBorder);
-  if (colors.textLight) out.textLight = toHexOrCss(colors.textLight, out.textLight);
-  if (colors.textDim) out.textDim = toHexOrCss(colors.textDim, out.textDim);
+  if (colors.gold) out.gold = toCssColor(colors.gold, out.gold);
+  if (colors.goldDim) out.goldDim = toCssColor(colors.goldDim, out.goldDim);
+  if (colors.parchmentPanel) out.parchmentPanel = toCssColor(colors.parchmentPanel, out.parchmentPanel);
+  if (colors.parchmentBorder) out.parchmentPanelBorder = toCssColor(colors.parchmentBorder, out.parchmentPanelBorder);
+  if (colors.textLight) out.textLight = toCssColor(colors.textLight, out.textLight);
+  if (colors.textDim) out.textDim = toCssColor(colors.textDim, out.textDim);
   if (colors.parchmentPanel && Array.isArray(colors.parchmentPanel)) out.parchmentPanelRGB = colors.parchmentPanel;
   if (colors.parchmentBorder && Array.isArray(colors.parchmentBorder)) out.parchmentBorderRGB = colors.parchmentBorder;
   if (colors.textLight && Array.isArray(colors.textLight)) out.textLightRGB = colors.textLight;
@@ -120,6 +119,8 @@ function resolveLayout(uiCfg) {
       minRad: layout.playerDot?.minRad ?? 3,
       sizeFactor: layout.playerDot?.sizeFactor ?? 0.5,
       color: uiCfg?.colors?.player || [15,220,15],
+      dirSize: layout.playerDot?.dirSize ?? 0,
+      dirColor: layout.playerDot?.dirColor || null,
     },
     legend: {
       swatch: layout.legend?.swatch ?? 12,
@@ -148,26 +149,28 @@ function roundRectPath(ctx, x, y, w, h, r) {
   ctx.arcTo(x, y, x+w, y, rr);
   ctx.closePath();
 }
-
-// --- Task5 helpers: dither + discovery ---
 function resolveDiscoveryCfg(discovery, discoveryCfg) {
-  // Merge: discovery instance cfg takes priority, then passed discoveryCfg, then defaults
   const fromInstance = discovery?._cfg || {};
   const fromFile = discoveryCfg || {};
   const reveal = fromFile.reveal || fromInstance.reveal || {};
   const trail = fromFile.trail || fromInstance.trail || {};
   const dither = reveal.dither || fromInstance.reveal?.dither || {};
+  const pDirFile = fromFile.playerDir || reveal.playerDir || {};
+  const pDirInst = fromInstance.playerDir || fromInstance.reveal?.playerDir || {};
+  const playerDir = { ...pDirInst, ...pDirFile };
   return {
     reveal: {
       enabled: reveal.enabled ?? fromInstance.reveal?.enabled ?? true,
       peekDistance: reveal.peekDistance ?? fromInstance.reveal?.peekDistance ?? 1,
       animationDuration: reveal.animationDuration ?? fromInstance.reveal?.animationDuration ?? 400,
-      dither: {
-        enabled: dither.enabled ?? true,
-        pattern: dither.pattern ?? "random",
-        bayerSize: dither.bayerSize ?? 4,
-      },
+      dither: { enabled: dither.enabled ?? true, pattern: dither.pattern ?? "random", bayerSize: dither.bayerSize ?? 4 },
       undiscovered: { hide: reveal.undiscovered?.hide ?? true },
+      playerDir: {
+        enabled: playerDir.enabled ?? pDirInst.enabled ?? true,
+        size: playerDir.size ?? pDirInst.size ?? 0,
+        color: playerDir.color ?? pDirInst.color ?? [255, 255, 255],
+        opacity: playerDir.opacity ?? pDirInst.opacity ?? 0.95,
+      },
     },
     trail: {
       enabled: trail.enabled ?? fromInstance.trail?.enabled ?? true,
@@ -179,21 +182,16 @@ function resolveDiscoveryCfg(discovery, discoveryCfg) {
       join: trail.join ?? fromInstance.trail?.join ?? "miter",
       onlyDiscovered: trail.onlyDiscovered ?? fromInstance.trail?.onlyDiscovered ?? true,
     },
+    playerDir: {
+      enabled: playerDir.enabled ?? pDirInst.enabled ?? true,
+      size: playerDir.size ?? pDirInst.size ?? 0,
+      color: playerDir.color ?? pDirInst.color ?? [255, 255, 255],
+      opacity: playerDir.opacity ?? pDirInst.opacity ?? 0.95,
+    },
   };
 }
-function bayerMatrix4() {
-  return [
-    [0, 8, 2, 10],
-    [12, 4, 14, 6],
-    [3, 11, 1, 9],
-    [15, 7, 13, 5],
-  ];
-}
-function hash01(x, y, order = 0) {
-  // deterministic 0..1
-  const sin = Math.sin(x * 12.9898 + y * 78.233 + order * 0.037) * 43758.5453;
-  return sin - Math.floor(sin);
-}
+function bayerMatrix4() { return [[0,8,2,10],[12,4,14,6],[3,11,1,9],[15,7,13,5]]; }
+function hash01(x, y, order = 0) { const sin = Math.sin(x * 12.9898 + y * 78.233 + order * 0.037) * 43758.5453; return sin - Math.floor(sin); }
 function shouldDrawCell(x, y, discovery, newlySet, animProgress, cfg) {
   if (!discovery) return true;
   const revealEnabled = cfg?.reveal?.enabled;
@@ -201,7 +199,7 @@ function shouldDrawCell(x, y, discovery, newlySet, animProgress, cfg) {
   if (!discovery.isDiscovered(x, y)) return false;
   if (animProgress >= 1) return true;
   const key = x + "," + y;
-  if (!newlySet.has(key)) return true; // old discovered
+  if (!newlySet.has(key)) return true;
   const pattern = cfg?.reveal?.dither?.pattern || "random";
   if (pattern === "bayer") {
     const b = bayerMatrix4();
@@ -213,28 +211,62 @@ function shouldDrawCell(x, y, discovery, newlySet, animProgress, cfg) {
     return h < animProgress;
   }
 }
-function trailColorToCss(color) {
-  if (!color) return "#c9a84c";
-  if (typeof color === "string") return color;
-  if (Array.isArray(color) && color.length >= 3) return `rgb(${color[0]|0},${color[1]|0},${color[2]|0})`;
-  return "#c9a84c";
+function trailColorToCss(color) { if (!color) return "#c9a84c"; if (typeof color === "string") return color; if (Array.isArray(color) && color.length >= 3) return `rgb(${color[0]|0},${color[1]|0},${color[2]|0})`; return "#c9a84c"; }
+function playerDirColorToCss(color, fallback) { return trailColorToCss(color) || fallback; }
+function getPlayerAngle(player) {
+  if (!player) return 0;
+  if (typeof player.getAngle === "function") return player.getAngle();
+  if (typeof player.angle === "number") return player.angle;
+  if (typeof player.gridTargetAngle === "number" && player.gridMode) return player.gridTargetAngle;
+  return 0;
+}
+function drawPlayerDirection(ctx, cx, cy, angle, cs, pr, cfg, L) {
+  const pDirCfg = cfg?.playerDir || cfg?.reveal?.playerDir || {};
+  const enabled = pDirCfg.enabled ?? true;
+  if (!enabled) return;
+  const sizeFromCfg = pDirCfg.size ?? 0;
+  // size 0 means auto based on cell size and dot radius (retro small triangle)
+  const baseSize = sizeFromCfg > 0 ? sizeFromCfg : Math.max(6, cs * 0.9, pr * 2.2);
+  const color = playerDirColorToCss(pDirCfg.color || [255,255,255], "#ffffff");
+  const opacity = pDirCfg.opacity ?? 0.95;
+
+  const dirX = Math.cos(angle);
+  const dirY = Math.sin(angle);
+  const perpX = -Math.sin(angle);
+  const perpY = Math.cos(angle);
+
+  const tipX = cx + dirX * baseSize * 0.8;
+  const tipY = cy + dirY * baseSize * 0.8;
+  const baseLen = baseSize * 0.45;
+  const baseWidth = baseSize * 0.5;
+  const blX = cx - dirX * baseLen + perpX * baseWidth * 0.5;
+  const blY = cy - dirY * baseLen + perpY * baseWidth * 0.5;
+  const brX = cx - dirX * baseLen - perpX * baseWidth * 0.5;
+  const brY = cy - dirY * baseLen - perpY * baseWidth * 0.5;
+
+  ctx.save();
+  ctx.globalAlpha = opacity;
+  ctx.fillStyle = color;
+  ctx.strokeStyle = "#1a1a1a";
+  ctx.lineWidth = 1;
+  ctx.beginPath();
+  ctx.moveTo(tipX, tipY);
+  ctx.lineTo(blX, blY);
+  ctx.lineTo(brX, brY);
+  ctx.closePath();
+  ctx.fill();
+  ctx.globalAlpha = opacity * 0.9;
+  ctx.stroke();
+  ctx.restore();
 }
 
 export function generateMapTextureData(dungeon, mode = "role", player = null, uiCfg = {}, discovery = null, animProgress = 1, discoveryCfg = null) {
-  // Backward compat: if 5th arg is number, it is animProgress and discovery is null
-  if (typeof discovery === "number") {
-    animProgress = discovery;
-    discovery = null;
-  }
-  // If uiCfg actually contains discovery as 4th param shift? Keep simple.
-
+  if (typeof discovery === "number") { animProgress = discovery; discovery = null; }
   const PALETTE = resolvePaletteConfig(uiCfg);
   const L = resolveLayout(uiCfg);
   const cfg = resolveDiscoveryCfg(discovery, discoveryCfg);
   const w = 640, h = 360;
-
   const hasDocument = typeof document !== "undefined" && typeof document.createElement === "function";
-
   const discoveryEnabled = discovery && cfg.reveal.enabled;
   const newlyList = discovery && discovery.getNewlyDiscoveredSinceLastOpen ? discovery.getNewlyDiscoveredSinceLastOpen() : [];
   const newlySet = new Set();
@@ -247,8 +279,6 @@ export function generateMapTextureData(dungeon, mode = "role", player = null, ui
       const ctx = canvas.getContext("2d");
       if (!ctx) throw new Error("no 2d");
       ctx.imageSmoothingEnabled = false;
-
-      // Parchment background
       ctx.fillStyle = toCssColor(PALETTE.canvasBg, DEFAULT_PALETTE.canvasBg);
       ctx.fillRect(0,0,w,h);
       ctx.fillStyle = toCssColor(PALETTE.canvasScan, DEFAULT_PALETTE.canvasScan);
@@ -299,11 +329,9 @@ export function generateMapTextureData(dungeon, mode = "role", player = null, ui
         const hasFloorNeighbor = (x, y) => isFloor(x-1,y)||isFloor(x+1,y)||isFloor(x,y-1)||isFloor(x,y+1);
 
         if (discoveryEnabled) {
-          // Fog path: per-cell drawing respecting discovery + dither
           for (let y=0;y<d.h;y++) for (let x=0;x<d.w;x++) {
             if (!shouldDrawCell(x,y,discovery,newlySet,animProgress,cfg)) continue;
             const i=y*d.w+x, gv=d.grid[i], room=roomByCell.get(i);
-            // Skip interior walls not adjacent to floor? Keep hasFloorNeighbor for walls
             if (gv===0) {
               const col = getCellColor(x,y,0,room);
               ctx.fillStyle = toCssColor(col, "#6a6a6a");
@@ -316,7 +344,6 @@ export function generateMapTextureData(dungeon, mode = "role", player = null, ui
             }
           }
         } else {
-          // Original path: rounded rooms + per-cell corridors/walls
           const wallT = Math.max(1, cs * 0.18);
           const roomCornerR = Math.max(2, Math.min(8, cs * 0.5));
           d.rooms.forEach(r => {
@@ -352,7 +379,6 @@ export function generateMapTextureData(dungeon, mode = "role", player = null, ui
           }
         }
 
-        // Stair indicators — only if discovered
         const drawStairArrow = (r, isExit) => {
           if (!r.stairWall) return;
           if (discoveryEnabled) {
@@ -376,7 +402,6 @@ export function generateMapTextureData(dungeon, mode = "role", player = null, ui
         d.rooms.filter(r=>r.role==="entrance").forEach(r=>drawStairArrow(r,false));
         d.rooms.filter(r=>r.role==="exit").forEach(r=>drawStairArrow(r,true));
 
-        // Trail — dashed transparent retro line
         if (cfg.trail.enabled && discovery) {
           const path = discovery.getPath ? discovery.getPath() : [];
           if (path.length > 1) {
@@ -398,7 +423,6 @@ export function generateMapTextureData(dungeon, mode = "role", player = null, ui
               }
               const dist = Math.hypot(b.x-a.x, b.y-a.y);
               if (dist > 2) { started = false; continue; }
-              // Optional dither for trail? Keep trail fully visible even if newly discovered
               const ax = ox + a.x*cs + cs*0.5;
               const ay = oy + a.y*cs + cs*0.5;
               const bx = ox + b.x*cs + cs*0.5;
@@ -411,7 +435,6 @@ export function generateMapTextureData(dungeon, mode = "role", player = null, ui
           }
         }
 
-        // Player dot — always visible even if undiscovered? Draw always
         if (player) {
           const px = Math.floor(ox + player.x*cs);
           const py = Math.floor(oy + player.y*cs);
@@ -419,9 +442,11 @@ export function generateMapTextureData(dungeon, mode = "role", player = null, ui
           const pCol = Array.isArray(L.player.color) ? `rgb(${L.player.color[0]},${L.player.color[1]},${L.player.color[2]})` : toCssColor(L.player.color, "rgb(15,220,15)");
           ctx.fillStyle = pCol;
           ctx.beginPath(); ctx.arc(px, py, pr, 0, Math.PI*2); ctx.fill();
+          // Direction triangle (caret)
+          const ang = getPlayerAngle(player);
+          drawPlayerDirection(ctx, px, py, ang, cs, pr, cfg, L);
         }
 
-        // Legend — unchanged
         const items = mode==="role"
           ? Object.entries(PALETTE.roles).filter(([k])=>k!=="corridor").map(([k,c])=>[ROLE_DISPLAY[k]||k, toCssColor(c, "#888")])
           : mode==="zone"
@@ -435,7 +460,6 @@ export function generateMapTextureData(dungeon, mode = "role", player = null, ui
         const totalW = items.length * itemW - gap;
         const startX = Math.max(20, Math.floor((w - totalW)/2));
         const ly = legendY;
-
         ctx.font = `12px "${L.fontFamily}", ${L.fontFallback}`;
         ctx.textBaseline = "middle";
         let lx = startX;
@@ -462,7 +486,6 @@ export function generateMapTextureData(dungeon, mode = "role", player = null, ui
     }
   }
 
-  // Fallback raw buffer path (Node tests) — now respects discovery
   const buf = new Uint8Array(w*h*4);
   const alpha = L.parchment.alpha;
   const bg = hexToRgbArray(PALETTE.canvasBg);
@@ -483,7 +506,6 @@ export function generateMapTextureData(dungeon, mode = "role", player = null, ui
   const gridW = d.w*cs, gridH = d.h*cs;
   const ox = Math.floor((w - gridW)/2);
   const oy = Math.floor((availH - gridH)/2) + 20;
-  // const legendY = oy + gridH + legendGap;
 
   const roomByCell = new Map();
   d.rooms.forEach(r=>{ for(let dy=0;dy<r.h;dy++)for(let dx=0;dx<r.w;dx++) roomByCell.set((r.y+dy)*d.w+(r.x+dx), r); });
@@ -498,12 +520,10 @@ export function generateMapTextureData(dungeon, mode = "role", player = null, ui
   const isFloor = (x,y)=> x>=0&&y>=0&&x<d.w&&y<d.h&&d.grid[y*d.w+x]===0;
   const hasFloorNeighbor = (x,y)=> isFloor(x-1,y)||isFloor(x+1,y)||isFloor(x,y-1)||isFloor(x,y+1);
 
-  // Fog-aware drawing for buffer fallback
   for(let y=0;y<d.h;y++) for(let x=0;x<d.w;x++){
     if (!shouldDrawCell(x,y,discovery,newlySet,animProgress,cfg)) continue;
     const i=y*d.w+x, gv=d.grid[i], r=roomByCell.get(i);
     if (r) {
-      // For buffer path we still draw per-cell to respect fog and 1-tile peek
       const c=getCellColor(x,y,0,r);
       fillRect(buf,w,h,ox+x*cs,oy+y*cs,cs,cs,c[0],c[1],c[2],255);
     } else {
@@ -512,7 +532,6 @@ export function generateMapTextureData(dungeon, mode = "role", player = null, ui
     }
   }
 
-  // stair gold circles fallback
   const gold = hexToRgbArray(PALETTE.gold), wallDark = hexToRgbArray(PALETTE.wallDark);
   d.rooms.filter(r=>r.role==="entrance"||r.role==="exit").forEach(r=>{
     if(!r.stairWall) return;
@@ -533,9 +552,18 @@ export function generateMapTextureData(dungeon, mode = "role", player = null, ui
     const pr=Math.max(L.player.minRad, Math.floor(cs*L.player.sizeFactor));
     const pCol = Array.isArray(L.player.color) ? L.player.color : (typeof L.player.color === "string" ? hexToRgbArray(L.player.color) : [15,220,15]);
     fillCircle(buf,w,h,px,py,pr,pCol[0],pCol[1],pCol[2],255);
+    // Direction triangle for fallback buffer: approximate with small pixels
+    const ang = getPlayerAngle(player);
+    const size = Math.max(4, Math.floor(cs * 0.9));
+    const dirX = Math.cos(ang), dirY = Math.sin(ang);
+    const tipX = Math.floor(px + dirX * size * 0.8);
+    const tipY = Math.floor(py + dirY * size * 0.8);
+    const pDir = cfg.playerDir || cfg.reveal.playerDir || { color:[255,255,255] };
+    const col = Array.isArray(pDir.color) ? pDir.color : [255,255,255];
+    const a = Math.floor((pDir.opacity ?? 0.95) * 255);
+    fillRect(buf,w,h,tipX-1,tipY-1,3,3,col[0],col[1],col[2],a);
   }
 
-  // Trail in buffer fallback: draw as pixels along path (approximate)
   if (cfg.trail.enabled && discovery) {
     const path = discovery.getPath ? discovery.getPath() : [];
     const trailRgb = Array.isArray(cfg.trail.color) ? cfg.trail.color : [201,168,76];
@@ -547,7 +575,6 @@ export function generateMapTextureData(dungeon, mode = "role", player = null, ui
       if (!shouldDrawCell(a.x,a.y,discovery,newlySet,animProgress,cfg) && !shouldDrawCell(b.x,b.y,discovery,newlySet,animProgress,cfg)) continue;
       const ax = Math.floor(ox + a.x*cs + cs*0.5), ay = Math.floor(oy + a.y*cs + cs*0.5);
       const bx = Math.floor(ox + b.x*cs + cs*0.5), by = Math.floor(oy + b.y*cs + cs*0.5);
-      // simple line using bresenham-like steps
       const steps = Math.max(Math.abs(bx-ax), Math.abs(by-ay));
       for (let s=0;s<=steps;s++) {
         if (cfg.trail.dash && cfg.trail.dash.length===2) {
@@ -561,7 +588,6 @@ export function generateMapTextureData(dungeon, mode = "role", player = null, ui
     }
   }
 
-  // legend swatches unchanged — always visible
   const items = Object.entries(PALETTE.roles).filter(([k])=>k!=="corridor").map(([k,c])=>[ROLE_DISPLAY[k]||k, hexToRgbArray(c)]);
   const swatch=L.legend.swatch, gap=L.legend.gap, itemW=L.legend.itemWidth;
   const totalW = items.length*itemW - gap;

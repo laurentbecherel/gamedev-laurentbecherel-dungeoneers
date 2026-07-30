@@ -40,6 +40,7 @@ export class DiscoveryManager {
     const reveal = src.reveal || {};
     const trail = src.trail || {};
     const dither = reveal.dither || {};
+    const playerDir = src.playerDir || reveal.playerDir || {};
     this._cfg = {
       reveal: {
         enabled: reveal.enabled ?? true,
@@ -49,6 +50,12 @@ export class DiscoveryManager {
         animationDuration: reveal.animationDuration ?? 400,
         dither: { enabled: dither.enabled ?? true, pattern: dither.pattern ?? "random", bayerSize: dither.bayerSize ?? 4, dotSize: dither.dotSize ?? 2 },
         undiscovered: { hide: reveal.undiscovered?.hide ?? true },
+        playerDir: {
+          enabled: playerDir.enabled ?? true,
+          size: playerDir.size ?? 0,
+          color: playerDir.color ?? [15, 220, 15],
+          opacity: playerDir.opacity ?? 0.95,
+        },
       },
       trail: {
         enabled: trail.enabled ?? true,
@@ -59,7 +66,15 @@ export class DiscoveryManager {
         lineWidth: trail.lineWidth ?? 1.8,
         color: trail.color ?? [201, 168, 76],
       },
+      playerDir: {
+        enabled: (src.playerDir?.enabled) ?? (reveal.playerDir?.enabled) ?? true,
+        size: (src.playerDir?.size) ?? (reveal.playerDir?.size) ?? 0,
+        color: (src.playerDir?.color) ?? (reveal.playerDir?.color) ?? [15, 220, 15],
+        opacity: (src.playerDir?.opacity) ?? (reveal.playerDir?.opacity) ?? 0.95,
+      }
     };
+    // normalize playerDir at top level too for UI
+    if (!this._cfg.playerDir) this._cfg.playerDir = this._cfg.reveal.playerDir;
   }
   reset(dungeon, cfg = null) {
     if (cfg) this._resolveCfg(cfg);
@@ -101,12 +116,13 @@ export class DiscoveryManager {
     for (let dy = -1; dy <= 1; dy++) for (let dx = -1; dx <= 1; dx++) {
       const x = cx + dx, y = cy + dy;
       if (!this._inBounds(x, y)) continue;
-      // Only reveal walls around peek, not floors beyond, to enforce 1-tile peek invariant
-      // Check if cell is walkable — if floor, only reveal if it is the doorway or peek itself (already handled), not diagonal floors beyond
-      const isFloor = (() => { const w = dungeon ? dungeon.w : 0; const h = dungeon ? dungeon.h : 0; if (x < 0 || y < 0 || x >= w || y >= h) return false; const idx = y * w + x; return dungeon.grid && dungeon.grid[idx] === 0; })();
+      const w = dungeon ? dungeon.w : 0;
+      const hh = dungeon ? dungeon.h : 0;
+      if (x < 0 || y < 0 || x >= w || y >= hh) continue;
+      const idx = y * w + x;
+      const isFloor = dungeon.grid && dungeon.grid[idx] === 0;
       if (isFloor) {
-        // Skip floor cells that are not the center itself — we only want walls to show shape, floors are revealed via explicit _markCell for doorway/peek
-        if (x === cx && y === cy) continue; // center already marked
+        if (x === cx && y === cy) continue;
         continue;
       }
       this._markCell(x, y, newly);
@@ -266,4 +282,24 @@ export class DiscoveryManager {
     return out;
   }
   setConfig(cfg) { this._resolveCfg(cfg); }
+  // Bug fix: when discovery happens while map is open, mark as seen immediately so close+reopen does not re-animate
+  setLastOpenMaxToCurrent() {
+    let maxOrd = this._lastMapOpenMaxOrder;
+    for (let i = 0; i < this._order.length; i++) if (this._order[i] > maxOrd) maxOrd = this._order[i];
+    this._lastMapOpenMaxOrder = maxOrd;
+  }
+  // Live update while map open: merge newly discovered into pending for current dither, but also mark as seen for next open
+  addPendingWhileMapOpen(newly) {
+    if (!newly || newly.length === 0) return;
+    const existing = new Set(this._pendingNewSinceLastOpen.map(function(c){ return c.x + "," + c.y; }));
+    for (let i=0;i<newly.length;i++) {
+      const cell = newly[i];
+      const key = cell.x + "," + cell.y;
+      if (!existing.has(key)) {
+        this._pendingNewSinceLastOpen.push(cell);
+        existing.add(key);
+      }
+    }
+    this.setLastOpenMaxToCurrent();
+  }
 }
