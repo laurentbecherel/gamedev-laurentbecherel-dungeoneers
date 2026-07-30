@@ -1,77 +1,58 @@
 # Task: player-controller-polish
 
 ## Description
-Full FPS controller polish on top of Task 3's WebGL2 raycaster (single-material atlas). Brings back the prototype's authentic **Grimrock grid-step mode** as default ON: discrete tile-to-tile stepping with smoothstep lerp `t*t*(3-2*t)`, hold-to-repeat (0.18 initial / 0.06 repeat), buffered input (0.3s FIFO), 90° cardinal snap N/E/S/W. Plus **Doom free-roam**: WASD/ZQSD + QE turn + mouse look via Pointer Lock API (canvas click), slide collision full→X→Y, diagonal clamp to prevent sprint.
+Full FPS controller polish on top of Task 3's WebGL2 raycaster. Brings back the prototype's authentic **Grimrock grid-step mode** as default ON (discrete tile-to-tile stepping with smooth lerp, hold-to-repeat for chaining, buffered turn for fluid corridors) plus **Doom free-roam** (continuous WASD/ZQSD + QE turn + mouse look with slide collision). Adds **figure-8 view bob** (vertical twice horizontal + roll) with tunable params and presets. Fixes AZERTY layout bug (use `event.code` not `key`).
 
-**Figure-8 view bob**: vertical `sin(phase*2)*ampY`, horizontal `sin(phase)*ampX`, roll `sin(phase)*ampRoll + strafe*0.5*ampRoll*0.8`, exponential decay `dt*8`, target 0.7 moving grid / min(1,speed/moveSpeed) free, 5 tunable params `ampY,ampX,ampRollDeg,freq,speedScale` + presets subtle/default/heavy/disabled. Bob applied as `u_bobPixels = offsetY * h * 0.8` (screen pixel shift), lateral via right vector, roll via angle.
+Grid mode defaults ON for retro authenticity, G toggles to free FPS. V/B toggles bob, P cycles presets, R regen, M map, 1-8 debug — all via physical codes so ZQSD works on AZERTY and 1-8 works without Shift.
 
-**AZERTY-safe**: `event.code` only — forward `KeyW|KeyZ|ArrowUp`, back `KeyS|ArrowDown`, strafe left `KeyA` exclusive, strafe right `KeyD`, turn left `KeyQ|ArrowLeft`, turn right `KeyE|ArrowRight`, debug `Digit1-8` not `key==="1"`. Documented in `systems/input.js CODE_MAP`.
+## Why
 
-**Config**: `assets/config/gameplay/player.json` v2 — all tunables via generic editor persisting to disk. Toggled via G (grid), V/B (bob), P (presets), R (regen), M (map), 1-8 debug, all via `code`.
+- **Two modes**: Prototype shipped both. Grid-step feels tactical and retro, free FPS feels modern. Players/reviewers should feel both.
+- **View bob**: Without it, first-person feels like floating camera. Bob driven by movement speed, decays when idle, leans into strafe.
+- **Layout-agnostic**: Prototype used `e.key` breaking French keyboards. Games should use positional codes.
 
-## Implementation Highlights
-- `entities/player.js`: dual state machine, `setPosition` clears intent `_forward/_strafe/_turn/_mouseDX` to avoid drift after regen, `getPosition()` base height only (bob via uniform avoids double), `getAngle()` raw, `getAngleWithRoll()` legacy, light steady no bob, 8-point + precise AABB slide.
-- `systems/input.js`: exclusive code map, hold dict f/b/ls/rs/tl/tr, buffer FIFO only if empty, mouseDX only when !gridMode, blur/visibility clear, pointerlockchange/mousemove.
-- `core/game.js`: wires Input, code-only shortcuts, HUD, preset cycling `(P)`, bob offsets to renderer.
-- `render/renderer-gpu.js`: `u_bobPixels` uniform, lateral shift via right vector, roll added to angle.
+## Implementation (what was built)
 
-## Tests
+- `entities/player.js`: dual mode, tile-center lerp, 90° cardinal snap shortest-angle, busy rejection, hold repeat (initial + repeat overridable), buffer FIFO, slide collision, bob figure-8 with decay, presets merging, light steady, setPosition clears intent.
+- `systems/input.js`: code-based Set of `e.code`, edge detection, mouseDX only when pointerLocked, canvas click → requestPointerLock, blur/visibility clear, hold timers, buffer timeout, update drives grid discrete via player methods or free continuous normalized + mouseDX.
+- `core/game.js`: wires Input(canvas), code-only shortcuts, HUD, bob offsets to renderer (`u_bobPixels`).
+- `assets/config/gameplay/player.json` v2: speeds, sensitivity, radius, height, grid timings, bob params + presets, collision, light.
+- `main.js`: exposes `window.game`/`_gamePlayer` for E2E bob verification (debug aid).
 
-### Unit (103 total, 100% pass, 30 in player.test.js for Task4)
-```
-cd src && npm run test:unit
-# 103/103 pass (serial --test-concurrency=1 due to random ports)
-```
+## Tests (proper coverage for Task4)
 
-**Task4 player.test.js 30 tests:**
-- spawn, forward, wall block, slide, turn, light, config alias
-- setPosition resets lerp, bob, AND input intent
-- grid default ON, tryMove blocks wall/allows free, lerp progresses/snaps, turn 90deg facing, toggle snaps center+cardinal
-- diagonal clamp prevents sprint
-- bob disabled zero offsets, enabled figure-8 non-zero, decays idle, setBobParams merges, presets shape valid
-- 8-point collision, mouse look free vs ignored grid
-- **Enhanced bob:**
-  - figure-8: vertical 2x freq horizontal — quarter phase proof
-  - presets subtle<default<heavy, disabled zero, applying via setBobParams
-  - roll strafe influence
-  - getPosition base height without bob
-  - getAngle raw, getAngleWithRoll includes roll
-  - light does NOT bob
-  - setPosition clears intent
-  - speedScale affects phase
-  - grid bob target 0.7 moving, decays idle
+**Unit — 103/103 100% pass (`npm run test:unit -- --test-concurrency=1 --test-timeout=20000`):**
+- 30 in `player.test.js` dedicated to Task4:
+  - spawn, forward, wall block, slide, turn, light, config alias
+  - setPosition resets lerp+bonus **and input intent**
+  - grid: tryMove blocks wall/allows free, lerp progresses/snaps center, turn 90° facing, toggle snaps nearest center+cardinal
+  - free: diagonal clamp, mouse look free vs ignored grid
+  - bob disabled zero, enabled moving non-zero, decays idle, merges, presets shape valid
+  - **Enhanced:** figure-8 vertical 2× horizontal proof (PI/2 quarter phase), presets subtle<default<heavy / disabled zero, roll strafe influence, getPosition base height (bob via uniform), getAngle raw vs withRoll, light steady no bob, clear intent, speedScale phase, grid bob 0.7 moving vs idle decay
 
-### Playwright E2E (47 total, 100% pass, 8 in game-controller.spec.js for Task4)
-```
-cd src
-npx playwright test tests/e2e/game-controller.spec.js --reporter=list
-# 8/8 Task4, 47/47 all
-# Config runs on 8005 to avoid manual 8000 collision (see playwright.config.js)
-```
+**Playwright E2E — 47/47 100% pass (`npx playwright test --workers=4`, runs on 8005 so manual 8000 stays free):**
+- 8 in `game-controller.spec.js` for Task4:
+  - G toggles grid HUD, V/B toggles bob HUD, P cycles presets HUD
+  - **head bob observable**: uses `window.game.player` to capture `bobAmount`, `viewBobOffset` while walking W: ON >0, OFF zero + canvas dataURL sanity
+  - presets API via fetch player.json: subtle<default<heavy, disabled zero
+  - bob toggle B/V in both grid/free modes, no console errors
+  - AZERTY ZQSD via code mapping, Digit1-8 via code
+  - pointer lock click + mouse move + Escape
+  - player.json v2 schema via API + editor tree
+  - CONFIG_PATHS includes player
+- Tests use `KeyW`, `Digit1` code presses not character `w`/`1`, proving AZERTY safety.
 
-**Task4 E2E:**
-1. G toggles grid HUD, V/B toggles bob HUD, P cycles presets HUD
-2. head bob observable — `window.game.player.getViewBobState()` exposed for E2E: bobAmount>0, offset non-zero ON, zero OFF while walking
-3. presets API — fetch player.json, subtle<default<heavy, disabled zero
-4. bob toggle B/V in both grid/free modes, no console errors
-5. AZERTY ZQSD works via code mapping, Digit1-8 via code
-6. pointer lock click + mouse move + Escape
-7. player.json v2 schema via API + editor tree has player
-8. CONFIG_PATHS includes player
+## Screenshots (Playwright-generated, actual game)
 
-**How bob is verified as observable:**
-Renderer uses `u_bobPixels` shifting fragCoord, lateral via right vector. E2E captures `viewBobOffset` state while holding W: ON produces non-zero offsets, OFF zero. Canvas dataURL length >100 sanity.
+> These are for README / catalog, **not required by instruction.md** (author-only). Generated 2026-07-30 via temporary E2E that does `page.screenshot()`.
 
-## Screenshots
-Generated via Playwright 2026-07-30 (actual running game, not mocked):
+### Grid ON (Grimrock tile step ZQSD+AE)
+![Game Grid ON](./screenshots/game-grid-on.png)
 
-### Grid Mode ON (Grimrock tile step ZQSD+AE)
-![Grid ON](./screenshots/game-grid-on.png)
+### Grid OFF (Free FPS WASD+mouse)
+![Game Grid OFF](./screenshots/game-grid-off.png)
 
-### Grid Mode OFF (Free FPS WASD+mouse)
-![Grid OFF](./screenshots/game-grid-off.png)
-
-### Head Bob OFF while walking (steady)
+### Head Bob OFF while walking (steady camera)
 ![Bob OFF](./screenshots/game-bob-off.png)
 
 ### Head Bob ON while walking (figure-8 via u_bobPixels)
@@ -83,62 +64,84 @@ Generated via Playwright 2026-07-30 (actual running game, not mocked):
 ### Editor showing player.json v2 with bob presets
 ![Editor Player Config](./screenshots/editor-player-config.png)
 
-To regenerate:
-```bash
-cd src
-npx playwright test tests/e2e/gen-shot.spec.js # we used temporary test, now integrated as manual steps in game-controller.spec.js
-# Or use code in generate task:
-# await page.screenshot({ path: "../tasks/player-controller-polish/screenshots/game-grid-on.png" })
-```
-
-## Video
-**Why video?** Head bob figure-8 is best shown as motion, not static screenshot. Task requires video uploaded to PixelCloud, not stored in repo.
-
-**Recorded locally via Playwright video:**
-- 640x360 webm, 11s, shows: grid ON tile steps forward/back/strafe/turn, G toggle to free FPS, bob OFF walk steady, V toggle bob ON walk figure-8, P cycles subtle/default/heavy/disabled HUD, canvas click pointer lock + mouse look, R regen.
-- Local file (not committed): `src/test-results/record-video-record-Task4-video/video.webm` (320KB) — removed per no-binaries rule, but can be re-recorded:
-
-```bash
-cd src
-# Create temp test with video: { mode: "on", size: {width:640,height:360}}
-# npx playwright test --config=playwright.config.js tests/e2e/record-video.spec.js
-# Upload to PixelCloud https://pxl.cl -> get short link
-```
-
-**For submission, add to task.toml:**
-```toml
-videos = ["https://pxl.cl/XXXX", "https://pxl.cl/YYYY"] # full demo + 10s teaser
-teaser = "https://pxl.cl/XXXX" # 10s highlight bob ON/OFF
-```
-
-And embed in README:
-```md
-![Demo Video](https://pxl.cl/XXXX)
-```
-
-Local generation command used:
+**How regenerated:**
 ```js
+// tests/e2e/gen-shot.spec.js (temporary)
+await page.goto("/game.html");
+await page.keyboard.press("KeyG"); // toggle
+await page.screenshot({ path: "../tasks/player-controller-polish/screenshots/game-grid-on.png" });
+await page.evaluate(() => window.game.player.setViewBobEnabled(true));
+await page.keyboard.down("KeyW"); // walk with bob
+await page.screenshot({ path: "../tasks/player-controller-polish/screenshots/game-bob-on.png" });
+await canvas.click(); // pointer lock
+await page.screenshot({ path: "../tasks/player-controller-polish/screenshots/game-mouse-look.png" });
+await page.goto("/editor.html");
+await page.screenshot({ path: "../tasks/player-controller-polish/screenshots/editor-player-config.png", fullPage:true });
+```
+
+## Video (Playwright-recorded, for README)
+
+> Also author-only, not required by instruction. Shows motion best (bob figure-8).
+
+**Captured:** 640×360 webm, 11s, 325KB via `test.use({video:{mode:"on",size:{640,360}}})`
+
+**Contents:**
+- Grid ON tile step forward/back/strafe left-right/turn left-right
+- G toggle → free FPS
+- Bob OFF walk steady → V toggle bob ON walk figure-8
+- P cycles subtle/default/heavy/disabled HUD
+- Canvas click pointer lock + mouse look
+- R regen
+
+**Files generated (local, not committed as binary per GameDev PixelCloud rule, but kept here for your convenience per your request):**
+- `./screenshots/task4-demo.webm` — full demo
+- `./screenshots/task4-bob-demo.webm` — bob focus (same content)
+
+**Preview:**
+<video src="./screenshots/task4-demo.webm" controls width="640" height="360"></video>
+
+*If markdown video unsupported, use link:* [Download demo video](./screenshots/task4-demo.webm)
+
+**How recorded:**
+```bash
+# src/tests/e2e/record-final.spec.js
 test.use({ video: { mode: "on", size: { width:640, height:360 } } });
 await page.goto("/game.html");
 await page.keyboard.press("KeyW"); // walk
-await page.keyboard.press("KeyG"); // grid OFF
-await page.keyboard.press("KeyV"); // bob OFF/ON
-await page.keyboard.press("KeyP"); // preset cycle
+await page.keyboard.press("KeyG"); // free FPS
+await page.keyboard.press("KeyV"); // bob toggle
+await page.keyboard.press("KeyP"); // preset
 await canvas.click(); // pointer lock
+# → test-results/.../video.webm → copy to screenshots/
 ```
 
+**For final submission (PixelCloud):**
+Per guidelines videos should be uploaded to PixelCloud, not stored as repo binaries, but we kept local copies per your request. For official catalog, upload:
+
+```bash
+# Upload to https://pxl.cl
+# Then in task.toml:
+videos = ["https://pxl.cl/XXXX", "https://pxl.cl/YYYY"]
+teaser = "https://pxl.cl/XXXX" # 10s highlight
+```
+
+Current `task.toml` uses local paths for your local review, and teaser set to `game-bob-on.png`.
+
 ## Avocado vs Claude Performance
-TBD — draft phase. Expected failure modes: mix roll into yaw (getAngle should be raw), use key not code for AZERTY, missing diagonal clamp, buffer overwrite. All fixed in this task.
+TBD — draft. Expected: Avocado handles dual mode + figure-8 reasoning; failure modes: mixing roll into yaw, using key not code, missing diagonal clamp, buffer overwrite.
 
 ## Trajectory
-- Unit: 103/103 100% (`npm run test:unit -- --test-concurrency=1`)
-- E2E: 47/47 100% on 8005 (`npx playwright test --workers=4`)
-- Key fixes: setPosition clears intent, getPosition base height, getAngle raw, game.js code-only, input buffer FIFO, server.test.js random ports to avoid EADDRINUSE from stuck 8000, main.js+game.js expose window.game for E2E bob verification.
+- Unit: 103/103 100%
+- E2E: 47/47 100% (8/8 Task4)
+- Fixes: setPosition clears intent, getPosition base height (bob via u_bobPixels), getAngle raw, game.js code-only, input buffer FIFO, server.test.js random ports avoids EADDRINUSE, main.js/game.js expose window.game for bob verification
 
 ## Running
 ```bash
 cd src && npm install
-npm start # http://localhost:8000/game.html (manual)
-# Playwright uses http://localhost:8005/game.html (auto, see playwright.config.js env.PORT)
-# Game loads grid ON. G: toggle grid/free, V/B: bob, P: presets, R: regen, M: map, 1-8: debug (code-based)
+npm start                                    # manual → http://localhost:8000/game.html
+npx playwright test --workers=4 --reporter=list # E2E → auto starts on 8005 (see playwright.config.js)
+npm run test:unit -- --test-concurrency=1    # unit 103/103
+# Game loads grid ON. G toggle free, click locks pointer for mouse look.
+# V/B bob, P presets, R regen, M map, 1-8 debug (code-based AZERTY safe)
+# Editor: http://localhost:8000/editor.html → assets → config → gameplay → player.json
 ```
