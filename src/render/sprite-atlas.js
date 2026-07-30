@@ -121,6 +121,79 @@ function proceduralTorchAlbedo(gl) {
   }
 }
 
+function proceduralAlbedoForType(gl, type) {
+  try {
+    if (type === 'torch') return proceduralTorchAlbedo(gl);
+    if (typeof document === 'undefined') return placeholderTex(gl);
+    const c = document.createElement('canvas');
+    c.width = 64; c.height = 64;
+    const ctx = c.getContext('2d');
+    if (!ctx) return placeholderTex(gl);
+    ctx.clearRect(0, 0, 64, 64);
+
+    if (type === 'brazier') {
+      const grad = ctx.createLinearGradient(0, 64, 0, 0);
+      grad.addColorStop(0, '#0d0d0d');
+      grad.addColorStop(0.25, '#2a1a0f');
+      grad.addColorStop(0.5, '#6b3a18');
+      grad.addColorStop(0.75, '#d86a18');
+      grad.addColorStop(0.9, '#ff9a32');
+      grad.addColorStop(1, '#ffdd88');
+      ctx.fillStyle = grad;
+      ctx.fillRect(10, 6, 44, 44);
+      ctx.fillStyle = 'rgba(255,220,120,0.3)';
+      for (let i = 0; i < 10; i++) {
+        ctx.fillRect(14 + Math.random() * 36, 8 + Math.random() * 24, 2, 2);
+      }
+    } else if (type === 'crystal') {
+      const grad = ctx.createLinearGradient(0, 64, 0, 0);
+      grad.addColorStop(0, '#0a1230');
+      grad.addColorStop(0.35, '#2a1e6a');
+      grad.addColorStop(0.65, '#6a4fde');
+      grad.addColorStop(0.85, '#8ec8ff');
+      grad.addColorStop(1, '#d0f0ff');
+      ctx.fillStyle = grad;
+      ctx.beginPath();
+      ctx.moveTo(32, 4);
+      ctx.lineTo(50, 28);
+      ctx.lineTo(44, 56);
+      ctx.lineTo(20, 56);
+      ctx.lineTo(14, 28);
+      ctx.closePath();
+      ctx.fill();
+      ctx.fillStyle = 'rgba(180,220,255,0.5)';
+      for (let i = 0; i < 8; i++) {
+        ctx.fillRect(22 + Math.random() * 20, 12 + Math.random() * 28, 2, 2);
+      }
+    } else if (type === 'lantern') {
+      const grad = ctx.createLinearGradient(0, 64, 0, 0);
+      grad.addColorStop(0, '#1a160a');
+      grad.addColorStop(0.3, '#3d3218');
+      grad.addColorStop(0.6, '#8a6a28');
+      grad.addColorStop(0.8, '#d4b14a');
+      grad.addColorStop(1, '#fff2b0');
+      ctx.fillStyle = grad;
+      ctx.fillRect(18, 10, 28, 42);
+      ctx.strokeStyle = '#2a2210';
+      ctx.lineWidth = 2;
+      ctx.strokeRect(18, 10, 28, 42);
+    } else {
+      return proceduralTorchAlbedo(gl);
+    }
+
+    const tex = gl.createTexture();
+    gl.bindTexture(gl.TEXTURE_2D, tex);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+    gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, c);
+    return tex;
+  } catch {
+    return placeholderTex(gl);
+  }
+}
+
 export function getSpriteFallbackType(id) {
   if (id.includes('brazier')) return 'brazier';
   if (id.includes('crystal')) return 'crystal';
