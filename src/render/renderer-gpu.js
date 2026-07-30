@@ -293,7 +293,10 @@ export class GPURenderer {
     return [t0, t1];
   }
 
-  // --- Task 6: CPU depth buffer for sprite occlusion — now corner-aware, matches shader DDA ---
+  // --- Task 6: CPU depth buffer for sprite occlusion — full-square conservative test ---
+  // Previous version matched shader's rounded-corner cutting which let rays slip through
+  // outer convex corners (pillar edges) creating thin slits where torch sprites behind
+  // walls became visible. For sprite occlusion we must treat walls as full solid cells.
   _computeDepthBuffer(dungeon, posX, posY, angle) {
     const w = this.canvas.width || 640;
     this._depthBuffer = this._depthBuffer && this._depthBuffer.length === w ? this._depthBuffer : new Float32Array(w);
@@ -304,76 +307,27 @@ export class GPURenderer {
     const planeX = -dirY * planeLen;
     const planeY = dirX * planeLen;
     const mapW = dungeon.w, mapH = dungeon.h;
-    const cornerR = 0.15;
-    const cornerEnabled = 1;
     for (let x = 0; x < w; x++) {
       const cameraX = 2 * x / w - 1;
       const rayDirX = dirX + planeX * cameraX;
       const rayDirY = dirY + planeY * cameraX;
       let mapX = Math.floor(posX);
       let mapY = Math.floor(posY);
-      const deltaDistX = Math.abs(1 / rayDirX);
-      const deltaDistY = Math.abs(1 / rayDirY);
+      const deltaDistX = Math.abs(1 / rayDirX) || 1e30;
+      const deltaDistY = Math.abs(1 / rayDirY) || 1e30;
       let stepX, stepY;
       let sideDistX, sideDistY;
       if (rayDirX < 0) { stepX = -1; sideDistX = (posX - mapX) * deltaDistX; } else { stepX = 1; sideDistX = (mapX + 1 - posX) * deltaDistX; }
       if (rayDirY < 0) { stepY = -1; sideDistY = (posY - mapY) * deltaDistY; } else { stepY = 1; sideDistY = (mapY + 1 - posY) * deltaDistY; }
-      let hit = 0, side = 0, perp = 0;
+      let hit = 0, perp = 0;
       for (let iter = 0; iter < 96; iter++) {
-        let curSide;
-        if (sideDistX < sideDistY) { sideDistX += deltaDistX; mapX += stepX; curSide = 0; side = 0; } else { sideDistY += deltaDistY; mapY += stepY; curSide = 1; side = 1; }
+        if (sideDistX < sideDistY) { sideDistX += deltaDistX; mapX += stepX; } else { sideDistY += deltaDistY; mapY += stepY; }
         if (mapX < 0 || mapY < 0 || mapX >= mapW || mapY >= mapH) { perp = 20; hit = 1; break; }
         if (dungeon.grid[mapY * mapW + mapX] === 0) continue;
-        // flat hit distance
-        let flatPerp = curSide === 0 ? sideDistX - deltaDistX : sideDistY - deltaDistY;
-        const hitPosX = posX + rayDirX * flatPerp;
-        const hitPosY = posY + rayDirY * flatPerp;
-        if (cornerEnabled !== 1 || cornerR <= 0.01) { perp = flatPerp; hit = 1; break; }
-        // check outer convex corners
-        let skipped = false;
-        for (let k = 0; k < 2; k++) {
-          const off = k === 0 ? -1 : 1;
-          let P, interiorDir, E, W2, D, coordAlong, cornerCoord;
-          if (curSide === 0) {
-            cornerCoord = mapY + (k === 0 ? 0 : 1);
-            coordAlong = hitPosY;
-            P = { x: mapX + (stepX > 0 ? 0 : 1), y: cornerCoord };
-            interiorDir = { x: stepX, y: -off };
-            E = { x: mapX - stepX, y: mapY };
-            W2 = { x: mapX, y: mapY + off };
-            D = { x: mapX - stepX, y: mapY + off };
-          } else {
-            cornerCoord = mapX + (k === 0 ? 0 : 1);
-            coordAlong = hitPosX;
-            P = { x: cornerCoord, y: mapY + (stepY > 0 ? 0 : 1) };
-            interiorDir = { x: -off, y: stepY };
-            E = { x: mapX, y: mapY - stepY };
-            W2 = { x: mapX + off, y: mapY };
-            D = { x: mapX + off, y: mapY - stepY };
-          }
-          const outer = !this._isWallCell(dungeon, E.x, E.y) && !this._isWallCell(dungeon, W2.x, W2.y) && !this._isWallCell(dungeon, D.x, D.y);
-          if (!outer) continue;
-          if (Math.abs(coordAlong - cornerCoord) >= cornerR) continue;
-          const Cx = P.x + interiorDir.x * cornerR;
-          const Cy = P.y + interiorDir.y * cornerR;
-          const tHits = this._rayCircleHit(posX, posY, rayDirX, rayDirY, Cx, Cy, cornerR);
-          if (!tHits) { skipped = true; break; }
-          let hitArc = false;
-          for (const t of tHits) {
-            if (t <= 0.01) continue;
-            const qx = posX + rayDirX * t;
-            const qy = posY + rayDirY * t;
-            const offPx = qx - Cx, offPy = qy - Cy;
-            if (offPx * interiorDir.x > 0 || offPy * interiorDir.y > 0) continue;
-            perp = t; hit = 1; hitArc = true; break;
-          }
-          if (hitArc) break;
-          // cut region missed -> ray goes through, no hit
-          skipped = true; break;
-        }
-        if (skipped) continue;
-        if (hit === 1) break;
-        perp = flatPerp; hit = 1; break;
+        const flatPerp = sideDistX < sideDistY ? sideDistX - deltaDistX : sideDistY - deltaDistY;
+        perp = flatPerp;
+        hit = 1;
+        break;
       }
       if (hit === 0) perp = 20;
       if (perp < 0.0001) perp = 0.0001;
@@ -384,74 +338,36 @@ export class GPURenderer {
 
   _isOccluded(dungeon, x0, y0, x1, y1) {
     const w = dungeon.w, h = dungeon.h;
+    const grid = dungeon.grid;
     const dx = x1 - x0, dy = y1 - y0;
     const dist = Math.hypot(dx, dy);
     if (dist < 0.001) return false;
     const dirX = dx / dist, dirY = dy / dist;
-    const cornerR = 0.15;
     let mapX = Math.floor(x0), mapY = Math.floor(y0);
     const targetMapX = Math.floor(x1), targetMapY = Math.floor(y1);
-    const deltaDistX = Math.abs(1 / dirX);
-    const deltaDistY = Math.abs(1 / dirY);
+    const deltaDistX = Math.abs(1 / dirX) || 1e30;
+    const deltaDistY = Math.abs(1 / dirY) || 1e30;
     let stepX, stepY, sideDistX, sideDistY;
     if (dirX < 0) { stepX = -1; sideDistX = (x0 - mapX) * deltaDistX; } else { stepX = 1; sideDistX = (mapX + 1 - x0) * deltaDistX; }
     if (dirY < 0) { stepY = -1; sideDistY = (y0 - mapY) * deltaDistY; } else { stepY = 1; sideDistY = (mapY + 1 - y0) * deltaDistY; }
     for (let i = 0; i < 96; i++) {
       if (mapX === targetMapX && mapY === targetMapY) break;
-      let curSide;
-      if (sideDistX < sideDistY) { sideDistX += deltaDistX; mapX += stepX; curSide = 0; } else { sideDistY += deltaDistY; mapY += stepY; curSide = 1; }
+      if (sideDistX < sideDistY) { sideDistX += deltaDistX; mapX += stepX; } else { sideDistY += deltaDistY; mapY += stepY; }
       if (mapX < 0 || mapY < 0 || mapX >= w || mapY >= h) return true;
-      if (mapX === targetMapX && mapY === targetMapY) break; // reached target tile, don't test it (sprite inside)
-      if (dungeon.grid[mapY * w + mapX] === 0) continue;
-      // if wall is within 0.45 of target sprite, ignore — it's the mounting wall
+      if (mapX === targetMapX && mapY === targetMapY) break; // reached sprite tile, don't test its own floor tile
+      if (grid[mapY * w + mapX] === 0) continue;
+      // Ignore the wall the sprite is mounted on only when that wall is BEHIND the sprite
+      // relative to the camera (same room). If camera is beyond the wall, dot >0 and we must occlude.
       const wx = mapX + 0.5, wy = mapY + 0.5;
-      if (Math.hypot(wx - x1, wy - y1) < 0.85) continue;
-      // corner-aware: skip outer convex cut
-      const flatPerp = curSide === 0 ? sideDistX - deltaDistX : sideDistY - deltaDistY;
-      const hitPosX = x0 + dirX * flatPerp;
-      const hitPosY = y0 + dirY * flatPerp;
-      let skipped = false;
-      for (let k = 0; k < 2; k++) {
-        const off = k === 0 ? -1 : 1;
-        let P, interiorDir, E, W2, D, coordAlong, cornerCoord;
-        if (curSide === 0) {
-          cornerCoord = mapY + (k === 0 ? 0 : 1);
-          coordAlong = hitPosY;
-          P = { x: mapX + (stepX > 0 ? 0 : 1), y: cornerCoord };
-          interiorDir = { x: stepX, y: -off };
-          E = { x: mapX - stepX, y: mapY };
-          W2 = { x: mapX, y: mapY + off };
-          D = { x: mapX - stepX, y: mapY + off };
-        } else {
-          cornerCoord = mapX + (k === 0 ? 0 : 1);
-          coordAlong = hitPosX;
-          P = { x: cornerCoord, y: mapY + (stepY > 0 ? 0 : 1) };
-          interiorDir = { x: -off, y: stepY };
-          E = { x: mapX, y: mapY - stepY };
-          W2 = { x: mapX + off, y: mapY };
-          D = { x: mapX + off, y: mapY - stepY };
-        }
-        const outer = !this._isWallCell(dungeon, E.x, E.y) && !this._isWallCell(dungeon, W2.x, W2.y) && !this._isWallCell(dungeon, D.x, D.y);
-        if (!outer) continue;
-        if (Math.abs(coordAlong - cornerCoord) >= cornerR) continue;
-        const Cx = P.x + interiorDir.x * cornerR;
-        const Cy = P.y + interiorDir.y * cornerR;
-        const tHits = this._rayCircleHit(x0, y0, dirX, dirY, Cx, Cy, cornerR);
-        if (!tHits) { skipped = true; break; }
-        let hitArc = false;
-        for (const t of tHits) {
-          if (t <= 0.01 || t >= flatPerp - 0.0001) continue;
-          const qx = x0 + dirX * t;
-          const qy = y0 + dirY * t;
-          const offPx = qx - Cx, offPy = qy - Cy;
-          if (offPx * interiorDir.x > 0 || offPy * interiorDir.y > 0) continue;
-          hitArc = true; break;
-        }
-        if (hitArc) break;
-        skipped = true; break;
+      if (Math.hypot(wx - x1, wy - y1) < 0.85) {
+        const swx = wx - x1, swy = wy - y1; // wall from sprite
+        const scx = x0 - x1, scy = y0 - y1; // camera from sprite
+        const dot = swx * scx + swy * scy;
+        if (dot < 0) continue; // wall behind sprite, camera in front -> ignore mounting wall
+        // else camera is behind wall -> do NOT ignore, it blocks
       }
-      if (skipped) continue;
-      return true; // solid wall in between
+      // Full square wall blocks — no corner cut skipping for sprite LOS
+      return true;
     }
     return false;
   }
