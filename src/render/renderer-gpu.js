@@ -275,7 +275,25 @@ export class GPURenderer {
   }
 
 
-  // --- Task 6: CPU depth buffer for sprite occlusion (matches shader DDA, per screen column) ---
+  // --- Helpers for corner-aware occlusion (matches shader resolveWallHit) ---
+  _isWallCell(dungeon, x, y) {
+    if (x < 0 || y < 0 || x >= dungeon.w || y >= dungeon.h) return false;
+    return dungeon.grid[y * dungeon.w + x] !== 0;
+  }
+  _rayCircleHit(ox, oy, dx, dy, cx, cy, r) {
+    const ocx = ox - cx, ocy = oy - cy;
+    const a = dx * dx + dy * dy;
+    const b = 2 * (ocx * dx + ocy * dy);
+    const c = ocx * ocx + ocy * ocy - r * r;
+    const disc = b * b - 4 * a * c;
+    if (disc < 0) return null;
+    const sd = Math.sqrt(disc);
+    const t0 = (-b - sd) / (2 * a);
+    const t1 = (-b + sd) / (2 * a);
+    return [t0, t1];
+  }
+
+  // --- Task 6: CPU depth buffer for sprite occlusion — now corner-aware, matches shader DDA ---
   _computeDepthBuffer(dungeon, posX, posY, angle) {
     const w = this.canvas.width || 640;
     this._depthBuffer = this._depthBuffer && this._depthBuffer.length === w ? this._depthBuffer : new Float32Array(w);
@@ -286,7 +304,8 @@ export class GPURenderer {
     const planeX = -dirY * planeLen;
     const planeY = dirX * planeLen;
     const mapW = dungeon.w, mapH = dungeon.h;
-    const grid = dungeon.grid;
+    const cornerR = 0.15;
+    const cornerEnabled = 1;
     for (let x = 0; x < w; x++) {
       const cameraX = 2 * x / w - 1;
       const rayDirX = dirX + planeX * cameraX;
@@ -300,15 +319,63 @@ export class GPURenderer {
       if (rayDirX < 0) { stepX = -1; sideDistX = (posX - mapX) * deltaDistX; } else { stepX = 1; sideDistX = (mapX + 1 - posX) * deltaDistX; }
       if (rayDirY < 0) { stepY = -1; sideDistY = (posY - mapY) * deltaDistY; } else { stepY = 1; sideDistY = (mapY + 1 - posY) * deltaDistY; }
       let hit = 0, side = 0, perp = 0;
-      for (let i = 0; i < 64; i++) {
-        if (sideDistX < sideDistY) { sideDistX += deltaDistX; mapX += stepX; side = 0; } else { sideDistY += deltaDistY; mapY += stepY; side = 1; }
+      for (let iter = 0; iter < 96; iter++) {
+        let curSide;
+        if (sideDistX < sideDistY) { sideDistX += deltaDistX; mapX += stepX; curSide = 0; side = 0; } else { sideDistY += deltaDistY; mapY += stepY; curSide = 1; side = 1; }
         if (mapX < 0 || mapY < 0 || mapX >= mapW || mapY >= mapH) { perp = 20; hit = 1; break; }
-        if (grid[mapY * mapW + mapX] !== 0) {
-          hit = 1;
-          if (side === 0) perp = sideDistX - deltaDistX; else perp = sideDistY - deltaDistY;
-          break;
+        if (dungeon.grid[mapY * mapW + mapX] === 0) continue;
+        // flat hit distance
+        let flatPerp = curSide === 0 ? sideDistX - deltaDistX : sideDistY - deltaDistY;
+        const hitPosX = posX + rayDirX * flatPerp;
+        const hitPosY = posY + rayDirY * flatPerp;
+        if (cornerEnabled !== 1 || cornerR <= 0.01) { perp = flatPerp; hit = 1; break; }
+        // check outer convex corners
+        let skipped = false;
+        for (let k = 0; k < 2; k++) {
+          const off = k === 0 ? -1 : 1;
+          let P, interiorDir, E, W2, D, coordAlong, cornerCoord;
+          if (curSide === 0) {
+            cornerCoord = mapY + (k === 0 ? 0 : 1);
+            coordAlong = hitPosY;
+            P = { x: mapX + (stepX > 0 ? 0 : 1), y: cornerCoord };
+            interiorDir = { x: stepX, y: -off };
+            E = { x: mapX - stepX, y: mapY };
+            W2 = { x: mapX, y: mapY + off };
+            D = { x: mapX - stepX, y: mapY + off };
+          } else {
+            cornerCoord = mapX + (k === 0 ? 0 : 1);
+            coordAlong = hitPosX;
+            P = { x: cornerCoord, y: mapY + (stepY > 0 ? 0 : 1) };
+            interiorDir = { x: -off, y: stepY };
+            E = { x: mapX, y: mapY - stepY };
+            W2 = { x: mapX + off, y: mapY };
+            D = { x: mapX + off, y: mapY - stepY };
+          }
+          const outer = !this._isWallCell(dungeon, E.x, E.y) && !this._isWallCell(dungeon, W2.x, W2.y) && !this._isWallCell(dungeon, D.x, D.y);
+          if (!outer) continue;
+          if (Math.abs(coordAlong - cornerCoord) >= cornerR) continue;
+          const Cx = P.x + interiorDir.x * cornerR;
+          const Cy = P.y + interiorDir.y * cornerR;
+          const tHits = this._rayCircleHit(posX, posY, rayDirX, rayDirY, Cx, Cy, cornerR);
+          if (!tHits) { skipped = true; break; }
+          let hitArc = false;
+          for (const t of tHits) {
+            if (t <= 0.01) continue;
+            const qx = posX + rayDirX * t;
+            const qy = posY + rayDirY * t;
+            const offPx = qx - Cx, offPy = qy - Cy;
+            if (offPx * interiorDir.x > 0 || offPy * interiorDir.y > 0) continue;
+            perp = t; hit = 1; hitArc = true; break;
+          }
+          if (hitArc) break;
+          // cut region missed -> ray goes through, no hit
+          skipped = true; break;
         }
+        if (skipped) continue;
+        if (hit === 1) break;
+        perp = flatPerp; hit = 1; break;
       }
+      if (hit === 0) perp = 20;
       if (perp < 0.0001) perp = 0.0001;
       depth[x] = perp;
     }
@@ -316,17 +383,75 @@ export class GPURenderer {
   }
 
   _isOccluded(dungeon, x0, y0, x1, y1) {
-    const w = dungeon.w, h = dungeon.h, grid = dungeon.grid;
+    const w = dungeon.w, h = dungeon.h;
     const dx = x1 - x0, dy = y1 - y0;
     const dist = Math.hypot(dx, dy);
-    const steps = Math.max(4, (dist * 12) | 0);
-    for (let i = 1; i < steps; i++) {
-      const t = i / steps;
-      if (t < 0.06 || t > 0.94) continue;
-      const x = x0 + dx * t, y = y0 + dy * t;
-      const ix = Math.floor(x), iy = Math.floor(y);
-      if (ix < 0 || iy < 0 || ix >= w || iy >= h) return true;
-      if (grid[iy * w + ix] !== 0) return true;
+    if (dist < 0.001) return false;
+    const dirX = dx / dist, dirY = dy / dist;
+    const cornerR = 0.15;
+    let mapX = Math.floor(x0), mapY = Math.floor(y0);
+    const targetMapX = Math.floor(x1), targetMapY = Math.floor(y1);
+    const deltaDistX = Math.abs(1 / dirX);
+    const deltaDistY = Math.abs(1 / dirY);
+    let stepX, stepY, sideDistX, sideDistY;
+    if (dirX < 0) { stepX = -1; sideDistX = (x0 - mapX) * deltaDistX; } else { stepX = 1; sideDistX = (mapX + 1 - x0) * deltaDistX; }
+    if (dirY < 0) { stepY = -1; sideDistY = (y0 - mapY) * deltaDistY; } else { stepY = 1; sideDistY = (mapY + 1 - y0) * deltaDistY; }
+    for (let i = 0; i < 96; i++) {
+      if (mapX === targetMapX && mapY === targetMapY) break;
+      let curSide;
+      if (sideDistX < sideDistY) { sideDistX += deltaDistX; mapX += stepX; curSide = 0; } else { sideDistY += deltaDistY; mapY += stepY; curSide = 1; }
+      if (mapX < 0 || mapY < 0 || mapX >= w || mapY >= h) return true;
+      if (mapX === targetMapX && mapY === targetMapY) break; // reached target tile, don't test it (sprite inside)
+      if (dungeon.grid[mapY * w + mapX] === 0) continue;
+      // if wall is within 0.45 of target sprite, ignore — it's the mounting wall
+      const wx = mapX + 0.5, wy = mapY + 0.5;
+      if (Math.hypot(wx - x1, wy - y1) < 0.85) continue;
+      // corner-aware: skip outer convex cut
+      const flatPerp = curSide === 0 ? sideDistX - deltaDistX : sideDistY - deltaDistY;
+      const hitPosX = x0 + dirX * flatPerp;
+      const hitPosY = y0 + dirY * flatPerp;
+      let skipped = false;
+      for (let k = 0; k < 2; k++) {
+        const off = k === 0 ? -1 : 1;
+        let P, interiorDir, E, W2, D, coordAlong, cornerCoord;
+        if (curSide === 0) {
+          cornerCoord = mapY + (k === 0 ? 0 : 1);
+          coordAlong = hitPosY;
+          P = { x: mapX + (stepX > 0 ? 0 : 1), y: cornerCoord };
+          interiorDir = { x: stepX, y: -off };
+          E = { x: mapX - stepX, y: mapY };
+          W2 = { x: mapX, y: mapY + off };
+          D = { x: mapX - stepX, y: mapY + off };
+        } else {
+          cornerCoord = mapX + (k === 0 ? 0 : 1);
+          coordAlong = hitPosX;
+          P = { x: cornerCoord, y: mapY + (stepY > 0 ? 0 : 1) };
+          interiorDir = { x: -off, y: stepY };
+          E = { x: mapX, y: mapY - stepY };
+          W2 = { x: mapX + off, y: mapY };
+          D = { x: mapX + off, y: mapY - stepY };
+        }
+        const outer = !this._isWallCell(dungeon, E.x, E.y) && !this._isWallCell(dungeon, W2.x, W2.y) && !this._isWallCell(dungeon, D.x, D.y);
+        if (!outer) continue;
+        if (Math.abs(coordAlong - cornerCoord) >= cornerR) continue;
+        const Cx = P.x + interiorDir.x * cornerR;
+        const Cy = P.y + interiorDir.y * cornerR;
+        const tHits = this._rayCircleHit(x0, y0, dirX, dirY, Cx, Cy, cornerR);
+        if (!tHits) { skipped = true; break; }
+        let hitArc = false;
+        for (const t of tHits) {
+          if (t <= 0.01 || t >= flatPerp - 0.0001) continue;
+          const qx = x0 + dirX * t;
+          const qy = y0 + dirY * t;
+          const offPx = qx - Cx, offPy = qy - Cy;
+          if (offPx * interiorDir.x > 0 || offPy * interiorDir.y > 0) continue;
+          hitArc = true; break;
+        }
+        if (hitArc) break;
+        skipped = true; break;
+      }
+      if (skipped) continue;
+      return true; // solid wall in between
     }
     return false;
   }
@@ -339,13 +464,19 @@ export class GPURenderer {
     const invDet = 1.0 / (planeX * dirY - dirX * planeY);
     const tx = invDet * (dirY * dx - dirX * dy);
     const ty = invDet * (-planeY * dx + planeX * dy);
-    if (ty <= 0.15) return true; // behind
-    const screenX = ( (this.canvas.width||640) * 0.5) * (1 + tx / ty);
-    const mid = screenX | 0;
+    if (ty <= 0.12) return true; // behind camera, more lenient
+    const w = this.canvas.width || 640;
+    const screenX = w * 0.5 * (1 + tx / ty);
+    const mid = (screenX | 0);
     if (mid >= 0 && mid < depthBuffer.length) {
-      if (ty > depthBuffer[mid] - 0.18) return true; // behind wall column
+      // increased margin from 0.18 to 0.55 to account for corner cut havin longer distance than CPU
+      // before fix this caused sprites visible head-on but culled perpendicularly
+      if (ty > depthBuffer[mid] - 0.55) {
+        // double-check with LOS, don't immediately cull purely on depth — depth is conservative
+        // only cull if also LOS says occluded, otherwise allow
+        if (this._isOccluded(dungeon, camX, camY, sprite.x, sprite.y)) return true;
+      }
     }
-    // Second check: raymarch from camera to sprite world pos, see if wall in between
     if (this._isOccluded(dungeon, camX, camY, sprite.x, sprite.y)) return true;
     return false;
   }
