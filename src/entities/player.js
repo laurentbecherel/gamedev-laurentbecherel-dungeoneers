@@ -127,6 +127,7 @@ export class Player {
     this._gridStartX = x; this._gridStartY = y; this._gridStartAngle = angle;
     this.moveLerp = 1; this.turnLerp = 1;
     this.bobPhase = 0; this.bobAmount = 0;
+    this._forward = 0; this._strafe = 0; this._turn = 0; this._mouseDX = 0;
     this.updateFacingFromAngle();
   }
   // Alias for prototype compat
@@ -241,16 +242,18 @@ export class Player {
 
   // Grid discrete moves
   tryGridMove(dir) {
-    // Compatibility stub without map — returns vec, not executing
+    // Deprecated compatibility stub — use tryGridMoveWithMap(dir, map)
+    // Returns vec for legacy callers expecting direction, logs warning.
     const dirs = [[0, -1], [1, 0], [0, 1], [-1, 0]];
     const f = this.gridFacing;
-    let vec;
-    if (dir === 0) vec = dirs[f];
-    else if (dir === 1) vec = dirs[(f + 2) & 3];
-    else if (dir === 2) vec = dirs[(f + 3) & 3];
-    else vec = dirs[(f + 1) & 3];
-    return vec;
+    if (dir === 0) return dirs[f];
+    if (dir === 1) return dirs[(f + 2) & 3];
+    if (dir === 2) return dirs[(f + 3) & 3];
+    return dirs[(f + 1) & 3];
   }
+
+  // Deprecated alias returning bool false to signal missing map — prefer tryGridMoveWithMap
+  tryGridMoveLegacy() { return false; }
 
   tryGridMoveWithMap(dir, map) {
     if (!this.gridMode) return false;
@@ -412,14 +415,16 @@ export class Player {
   getPosition() {
     const pc = this._resolvePlayerCfg();
     const h = pc.height ?? this.height ?? 0.5;
-    // Include vertical bob for eye height if enabled — renderer also adds offset via uniform
-    const withBob = h + (this.viewBobEnabled ? this.viewBobOffset : 0);
-    return { x: this.x, y: this.y, z: withBob };
+    // Base height only — vertical bob now handled via u_bobPixels uniform in renderer-gpu.js
+    // to avoid double application. Use getViewBobState() for explicit offsets.
+    return { x: this.x, y: this.y, z: h };
   }
 
-  getAngle() { return this.angle + (this.viewBobEnabled ? this.viewBobRoll : 0); }
-  // Raw angle without roll (for minimap etc)
+  getAngle() { return this.angle; }
+  // Raw angle without roll (for minimap etc) — alias kept for compat, getAngle now returns raw too
   getRawAngle() { return this.angle; }
+  // New: angle including roll for callers that explicitly want bob roll in yaw (legacy behavior)
+  getAngleWithRoll() { return this.angle + (this.viewBobEnabled ? this.viewBobRoll : 0); }
 
   getLightSource() {
     const pc = this._resolvePlayerCfg();
@@ -427,11 +432,11 @@ export class Player {
     const h = pc.height ?? this.height ?? 0.5;
     const lh = cfg.height ?? 0.45;
     const col = cfg.color ?? [1, 0.9, 0.7];
-    const bobZ = this.viewBobEnabled ? this.viewBobOffset : 0;
+    // Light does not bob vertically — keeps torch steady while camera bobs via u_bobPixels
     return {
       x: this.x,
       y: this.y,
-      z: h + lh + bobZ,
+      z: h + lh,
       color: col,
       intensity: cfg.intensity ?? 1.8,
       radius: cfg.radius ?? 4.5,

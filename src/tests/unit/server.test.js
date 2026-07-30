@@ -3,17 +3,35 @@ import assert from "node:assert/strict";
 import fs from "fs/promises";
 import path from "path";
 
-const BASE = "http://localhost:8001";
+function getFreePort() {
+  return 18001 + Math.floor(Math.random() * 20000);
+}
 
 async function startServer() {
   const { spawn } = await import("child_process");
-  const proc = spawn("node", ["server/server.js"], { env: { ...process.env, PORT: "8001" }, stdio: "ignore" });
-  for (let i = 0; i < 30; i++) { try { const r = await fetch(BASE + "/api/assets"); if (r.ok) break; } catch {} await new Promise(r => setTimeout(r, 200)); }
+  const port = getFreePort();
+  const base = "http://localhost:" + port;
+  const proc = spawn("node", ["server/server.js"], { env: { ...process.env, PORT: String(port) }, stdio: "ignore" });
+  proc._base = base;
+  proc._port = port;
+  for (let i = 0; i < 50; i++) {
+    try {
+      const r = await fetch(base + "/api/assets");
+      if (r.ok) break;
+    } catch {}
+    await new Promise(r => setTimeout(r, 200));
+  }
   return proc;
 }
 
+function getBase(proc) {
+  return proc._base;
+}
+
 test("unit: countItems heuristic via API", async () => {
+  try { await fs.rm(path.join("assets", "_testcat"), { recursive: true, force: true }); } catch {}
   const p = await startServer();
+  const BASE = getBase(p);
   try {
     const tmpDir = path.join("assets", "_testcat");
     await fs.mkdir(tmpDir, { recursive: true });
@@ -31,41 +49,46 @@ test("unit: countItems heuristic via API", async () => {
     assert.equal(ok.itemCount, 3, "object keys");
     assert.equal(emp.itemCount, 0, "empty");
     await fs.rm(tmpDir, { recursive: true, force: true });
-  } finally { p.kill(); }
+  } finally { p.kill(); await new Promise(r=>setTimeout(r,300)); }
 });
 
 test("unit: path traversal blocked", async () => {
   const p = await startServer();
+  const BASE = getBase(p);
   try {
     const r1 = await fetch(BASE + "/api/assets/../../../etc/passwd");
     assert([400, 404].includes(r1.status), `traversal should be 400 or 404, got ${r1.status}`);
     const r2 = await fetch(BASE + "/api/assets/..%2f..%2fsecret/foo");
     assert([400, 404].includes(r2.status), `encoded traversal should be 400 or 404, got ${r2.status}`);
-  } finally { p.kill(); }
+  } finally { p.kill(); await new Promise(r=>setTimeout(r,300)); }
 });
 
 test("unit: invalid category rejected", async () => {
   const p = await startServer();
+  const BASE = getBase(p);
   try { const r = await fetch(BASE + "/api/assets/invalid$cat/name"); assert([400, 404].includes(r.status), `invalid cat should be 400 or 404, got ${r.status}`); }
-  finally { p.kill(); }
+  finally { p.kill(); await new Promise(r=>setTimeout(r,300)); }
 });
 
 test("unit: malformed JSON returns 400", async () => {
   const p = await startServer();
+  const BASE = getBase(p);
   try {
     const r = await fetch(BASE + "/api/assets/config/main", { method: "PUT", headers: { "Content-Type": "application/json" }, body: "{ invalid" });
     assert.equal(r.status, 400); const body = await r.json(); assert.ok(body.error);
-  } finally { p.kill(); }
+  } finally { p.kill(); await new Promise(r=>setTimeout(r,300)); }
 });
 
 test("unit: missing asset returns 404", async () => {
   const p = await startServer();
+  const BASE = getBase(p);
   try { const r = await fetch(BASE + "/api/assets/nonexistent/missing"); assert.equal(r.status, 404); const b = await r.json(); assert(b.error.includes("Asset not found"), `error should include 'Asset not found', got ${b.error}`); }
-  finally { p.kill(); }
+  finally { p.kill(); await new Promise(r=>setTimeout(r,300)); }
 });
 
 test("unit: save and load roundtrip with pretty print", async () => {
   const p = await startServer();
+  const BASE = getBase(p);
   try {
     const orig = await (await fetch(BASE + "/api/assets/config/main")).json();
     const testData = { version: 99, foo: "bar", nested: { x: 1 } };
@@ -76,11 +99,18 @@ test("unit: save and load roundtrip with pretty print", async () => {
     const onDisk = await fs.readFile("assets/config/main.json", "utf8");
     assert.ok(onDisk.includes('  "version": 99')); assert.ok(onDisk.includes("\n"));
     await fetch(BASE + "/api/assets/config/main", { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify(orig) });
-  } finally { p.kill(); }
+  } finally { p.kill(); await new Promise(r=>setTimeout(r,300)); }
 });
 
 test("unit: new category folder auto-discovered", async () => {
+  try {
+    const dirs = await fs.readdir("assets");
+    for (const d of dirs) {
+      if (d.startsWith("_newcat_")) await fs.rm(path.join("assets", d), { recursive: true, force: true }).catch(()=>{});
+    }
+  } catch {}
   const p = await startServer();
+  const BASE = getBase(p);
   try {
     const newCat = "_newcat_" + Date.now(); const dir = path.join("assets", newCat);
     await fs.mkdir(dir, { recursive: true }); await fs.writeFile(path.join(dir, "test.json"), JSON.stringify({ hello: "world" }));
@@ -88,13 +118,13 @@ test("unit: new category folder auto-discovered", async () => {
     const found = list.find(x => x.category === newCat && x.name === "test");
     assert.ok(found, "new category auto-discovered"); assert.equal(found.path, newCat + "/test.json");
     await fs.rm(dir, { recursive: true, force: true });
-  } finally { p.kill(); }
+  } finally { p.kill(); await new Promise(r=>setTimeout(r,300)); }
 });
 
 test("unit: nested config API supports slash in category", async () => {
   const p = await startServer();
+  const BASE = getBase(p);
   try {
-    // Test all new dedicated configs accessible via nested path
     const nestedTargets = [
       "config/rendering/pom",
       "config/rendering/pbr",
@@ -114,37 +144,37 @@ test("unit: nested config API supports slash in category", async () => {
       "config/ui/debug"
     ];
     for (const target of nestedTargets) {
-      const r = await fetch(`${BASE}/api/assets/${target}`);
-      assert.equal(r.status, 200, `${target} should be 200, got ${r.status}`);
+      const r = await fetch(BASE + "/api/assets/" + target);
+      assert.equal(r.status, 200, target + " should be 200, got " + r.status);
       const j = await r.json();
-      assert(j.version === 1 || j.version === 2 || j.version === 3, `${target} should have version 1/2/3, got ${j.version}`);
+      assert(j.version === 1 || j.version === 2 || j.version === 3, target + " should have version 1/2/3, got " + j.version);
     }
-  } finally { p.kill(); }
+  } finally { p.kill(); await new Promise(r=>setTimeout(r,300)); }
 });
 
 test("unit: recursive walkJsonFiles lists nested categories", async () => {
   const p = await startServer();
+  const BASE = getBase(p);
   try {
     const r = await fetch(BASE + "/api/assets");
     const list = await r.json();
-    // should have categories with slashes
     const rendering = list.filter(x => x.category === "config/rendering");
     const lighting = list.filter(x => x.category === "config/lighting");
     const geometry = list.filter(x => x.category === "config/geometry");
     assert(rendering.length >= 7, `config/rendering should have >=7 files, got ${rendering.length}`);
     assert(lighting.length >= 3, `config/lighting >=3, got ${lighting.length}`);
     assert(geometry.length >= 2, `config/geometry >=2, got ${geometry.length}`);
-    // check hierarchical names exist
     assert(rendering.some(x => x.name === "pom"), "rendering/pom.json listed");
     assert(rendering.some(x => x.name === "ao"), "rendering/ao.json listed");
     assert(lighting.some(x => x.name === "fog"), "lighting/fog.json listed");
     assert(geometry.some(x => x.name === "chamfer"), "geometry/chamfer.json listed");
     assert(geometry.some(x => x.name === "corners"), "geometry/corners.json listed");
-  } finally { p.kill(); }
+  } finally { p.kill(); await new Promise(r=>setTimeout(r,300)); }
 });
 
 test("unit: nested config save roundtrip PUT /api/assets/config/rendering/pom", async () => {
   const p = await startServer();
+  const BASE = getBase(p);
   try {
     const orig = await (await fetch(BASE + "/api/assets/config/rendering/pom")).json();
     const testData = { ...orig, _testField: "unit_test_" + Date.now() };
@@ -152,21 +182,19 @@ test("unit: nested config save roundtrip PUT /api/assets/config/rendering/pom", 
     assert.equal(put.status, 200, "PUT nested should succeed");
     const loaded = await (await fetch(BASE + "/api/assets/config/rendering/pom")).json();
     assert.equal(loaded._testField, testData._testField, "roundtrip field preserved");
-    // restore
     delete orig._testField;
     await fetch(BASE + "/api/assets/config/rendering/pom", { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify(orig) });
-  } finally { p.kill(); }
+  } finally { p.kill(); await new Promise(r=>setTimeout(r,300)); }
 });
 
 test("unit: favicon.ico returns 204 not 404", async () => {
   const p = await startServer();
+  const BASE = getBase(p);
   try {
     const r = await fetch(BASE + "/favicon.ico");
-    // Due to port reuse race, allow 204 expected but also verify server.js contains 204 logic as fallback (covered by config.test)
     if (r.status === 204) {
       assert.equal(r.status, 204);
     } else {
-      // fallback: check file content has favicon 204 handling, which is the actual requirement
       const serverContent = await fs.readFile(path.join(process.cwd(), "server", "server.js"), "utf8");
       assert(serverContent.includes("favicon") && serverContent.includes("204"), "server.js should contain favicon 204 handling");
       assert([204, 404].includes(r.status), `favicon should ideally be 204, got ${r.status} but impl exists`);
@@ -174,17 +202,18 @@ test("unit: favicon.ico returns 204 not 404", async () => {
     const r2 = await fetch(BASE + "/favicon.png");
     if (r2.status === 204) assert.equal(r2.status, 204);
     else assert([204, 404].includes(r2.status));
-  } finally { p.kill(); }
+  } finally { p.kill(); await new Promise(r=>setTimeout(r,300)); }
 });
 
 test("unit: API assets include itemCount for nested configs", async () => {
   const p = await startServer();
+  const BASE = getBase(p);
   try {
     const r = await fetch(BASE + "/api/assets");
     const list = await r.json();
     const entry = list.find(x => x.category === "config/rendering" && x.name === "pom");
     assert(entry, "pom entry exists in list");
-    assert(typeof entry.itemCount === 'number', "itemCount should be number");
+    assert(typeof entry.itemCount === "number", "itemCount should be number");
     assert(entry.path === "config/rendering/pom.json", `path should be nested config/rendering/pom.json got ${entry.path}`);
-  } finally { p.kill(); }
+  } finally { p.kill(); await new Promise(r=>setTimeout(r,300)); }
 });

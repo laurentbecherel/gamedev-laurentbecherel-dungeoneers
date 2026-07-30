@@ -143,7 +143,9 @@ export class Input {
       let acted = false;
       const tryImmediate = (type, fn, holdKey) => {
         if (fn()) { acted = true; this._hold[holdKey] = 0; this._buffer = null; return true; }
-        if (player.moveLerp < 1 || player.turnLerp < 1) { this._buffer = { type, age: 0 }; }
+        if (player.moveLerp < 1 || player.turnLerp < 1) {
+          if (!this._buffer) this._buffer = { type, age: 0 };
+        }
         return false;
       };
 

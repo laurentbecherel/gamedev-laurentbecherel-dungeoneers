@@ -116,6 +116,8 @@ export class Game {
   }
 
   async init() {
+    try { window._gameEarly = this; window.game = this; } catch(e) {}
+
     this.cfg = await this._loadAllConfigs();
     if (!isWebGL2Supported()) {
       this.hud.textContent = "WebGL2 not supported";
@@ -150,6 +152,8 @@ export class Game {
     this.ui = new UI(this.cfg);
     this.ui.setDungeon(this.dungeon);
     this.hud.style.display = "none";
+    // Expose for E2E tests (bob state, grid mode) - ensure after player exists
+    try { window.game = this; window._gamePlayer = this.player; window._gameRenderer = this.renderer; console.log("Game exposed for E2E in game.js", !!window.game); } catch(e) { console.warn("expose failed in game.js", e); }
     this._resize();
     window.addEventListener("resize", () => this._resize());
     window.addEventListener("keydown", this._onKeyDown);
@@ -213,9 +217,9 @@ export class Game {
 
   async _onKeyDown(e) {
     const code = e.code || "";
-    const key = (e.key || "").toLowerCase();
-    if (code === "KeyR" || key === "r") { await this.regen(null); return; }
-    if (code === "KeyM" || key === "m") { this.showMap = !this.showMap; this._showHud("Map: " + (this.showMap ? "ON (parchment overlay)" : "OFF")); return; }
+    // AZERTY-safe: use code only for gameplay, not key — see input.js CODE_MAP
+    if (code === "KeyR") { await this.regen(null); return; }
+    if (code === "KeyM") { this.showMap = !this.showMap; this._showHud("Map: " + (this.showMap ? "ON (parchment overlay)" : "OFF")); return; }
     if (code === "KeyG") {
       const newMode = !this.player.gridMode;
       this.player.setGridMode(newMode);
@@ -237,14 +241,14 @@ export class Game {
       this._showHud("Bob preset: " + name + " — P to cycle, V/B to toggle");
       return;
     }
-    if (code === "Digit1" || code === "Numpad1" || key === "1") { const v = this.renderer.toggleGridDebug(); this._showHud("Grid debug: " + (v ? "ON (floor green / wall red / ceil blue)" : "OFF")); return; }
-    if (code === "Digit2" || code === "Numpad2" || key === "2") { const v = this.renderer.toggleLighting(); this._showHud("Lighting: " + (v ? "ON" : "OFF (flat albedo)")); return; }
-    if (code === "Digit3" || code === "Numpad3" || key === "3") { const v = this.renderer.togglePBR(); this._showHud("PBR: " + (v ? "ON" : "OFF (diffuse only)")); return; }
-    if (code === "Digit4" || code === "Numpad4" || key === "4") { const v = this.renderer.togglePOM(); this._showHud("POM: " + (v ? "ON" : "OFF")); return; }
-    if (code === "Digit5" || code === "Numpad5" || key === "5") { const v = this.renderer.toggleFog(); this._showHud("Fog: " + (v ? "ON" : "OFF")); return; }
-    if (code === "Digit6" || code === "Numpad6" || key === "6") { const v = this.renderer.cyclePBRDebug(); const names=["OFF","Albedo","Normal raw","World Normal","Height","Rough","Metal","AO","Emissive"]; this._showHud("PBR Debug: " + names[v] + " (" + v + ")"); return; }
-    if (code === "Digit7" || code === "Numpad7" || key === "7") { const v = this.renderer.toggleChamfer(); this._showHud("Chamfer: " + (v ? "ON (floor/ceil baseboard + vertical edges)" : "OFF (sharp 90°)")); return; }
-    if (code === "Digit8" || code === "Numpad8" || key === "8") { const v = this.renderer.toggleCorner(); this._showHud("Corner Geometry: " + (v ? "ON (rounded intruding r=0.15 outer+inner)" : "OFF")); return; }
+    if (code === "Digit1" || code === "Numpad1") { const v = this.renderer.toggleGridDebug(); this._showHud("Grid debug: " + (v ? "ON (floor green / wall red / ceil blue)" : "OFF")); return; }
+    if (code === "Digit2" || code === "Numpad2") { const v = this.renderer.toggleLighting(); this._showHud("Lighting: " + (v ? "ON" : "OFF (flat albedo)")); return; }
+    if (code === "Digit3" || code === "Numpad3") { const v = this.renderer.togglePBR(); this._showHud("PBR: " + (v ? "ON" : "OFF (diffuse only)")); return; }
+    if (code === "Digit4" || code === "Numpad4") { const v = this.renderer.togglePOM(); this._showHud("POM: " + (v ? "ON" : "OFF")); return; }
+    if (code === "Digit5" || code === "Numpad5") { const v = this.renderer.toggleFog(); this._showHud("Fog: " + (v ? "ON" : "OFF")); return; }
+    if (code === "Digit6" || code === "Numpad6") { const v = this.renderer.cyclePBRDebug(); const names=["OFF","Albedo","Normal raw","World Normal","Height","Rough","Metal","AO","Emissive"]; this._showHud("PBR Debug: " + names[v] + " (" + v + ")"); return; }
+    if (code === "Digit7" || code === "Numpad7") { const v = this.renderer.toggleChamfer(); this._showHud("Chamfer: " + (v ? "ON (floor/ceil baseboard + vertical edges)" : "OFF (sharp 90°)")); return; }
+    if (code === "Digit8" || code === "Numpad8") { const v = this.renderer.toggleCorner(); this._showHud("Corner Geometry: " + (v ? "ON (rounded intruding r=0.15 outer+inner)" : "OFF")); return; }
   }
 
   _showHud(msg) {
