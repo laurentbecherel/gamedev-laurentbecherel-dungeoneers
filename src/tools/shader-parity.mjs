@@ -24,15 +24,17 @@ if (!['baseline', 'after'].includes(MODE) || !OUT) {
 }
 
 const LIGHTS_MODE = process.env.LIGHTS_FROM_TEX == null ? null : (process.env.LIGHTS_FROM_TEX === '1');
+const RENDER_MODE = process.env.RENDER_MODE || null;
 
 const capture = async (page) => {
-  return await page.evaluate(async ({ seed, T, lightsMode }) => {
+  return await page.evaluate(async ({ seed, T, lightsMode, renderMode }) => {
     const g = window.game;
     const canvas = document.getElementById('game-canvas');
     const r = () => window._gameRenderer;
     // Deterministic dungeon + camera
     await g.regen(seed);
     if (lightsMode !== null && typeof r().setLightsFromTex === 'function') r().setLightsFromTex(lightsMode);
+    if (renderMode && typeof r().setRenderMode === 'function') r().setRenderMode(renderMode);
     const d = window._gameDungeon;
     const p = window._gamePlayer;
     const sx = Math.floor(d.startX) + 0.5;
@@ -69,7 +71,7 @@ const capture = async (page) => {
       setPbrDbg(0);
     }
     return frames;
-  }, { seed: SEED, T: FROZEN_T, lightsMode: LIGHTS_MODE });
+  }, { seed: SEED, T: FROZEN_T, lightsMode: LIGHTS_MODE, renderMode: RENDER_MODE });
 };
 
 const diff = async (page, baselineFrames, afterFrames) => {

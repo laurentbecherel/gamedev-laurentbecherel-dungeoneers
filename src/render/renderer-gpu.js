@@ -136,6 +136,283 @@ export class GPURenderer {
     return ok;
   }
 
+  // Upload the per-frame world uniforms onto a program's location map `ul`
+  // (forward / geometry / lighting all share this; unused uniforms are null and
+  // ignored). Mirrors the forward render() block. Returns the sprite-pass ctx.
+  _uploadWorldUniforms(ul, dungeon, cfg, camX, camY, renderAngle, bobPixels) {
+    const gl = this.gl;
+    gl.uniform2f(ul.u_resolution, this.canvas.width, this.canvas.height);
+    gl.uniform2f(ul.u_playerPos, camX, camY);
+    gl.uniform1f(ul.u_playerAngle, renderAngle);
+    if (ul.u_bobPixels) gl.uniform1f(ul.u_bobPixels, bobPixels);
+
+    const fov = this._resolveConfigValue(cfg, ['rendering.fov','renderer.fov'], 1.0);
+    const baseHeight = this._resolveConfigValue(cfg, ['player.height','rendering.eye.height','renderer.eyeHeight'], 0.5);
+    const eyeFactor = this._resolveConfigValue(cfg, ['rendering.eye.playerHeightFactor','rendering.eyeFactor','debug.overlay.eyeFactor'], 0.15);
+    gl.uniform1f(ul.u_fov, fov);
+    gl.uniform1f(ul.u_playerHeight, baseHeight);
+    if(ul.u_renderEyeFactor) gl.uniform1f(ul.u_renderEyeFactor, eyeFactor);
+
+    gl.uniform2f(ul.u_mapSize, dungeon.w, dungeon.h);
+    gl.activeTexture(gl.TEXTURE0); gl.bindTexture(gl.TEXTURE_2D, this.mapTex);
+    gl.uniform1i(ul.u_mapTex, 0);
+    gl.activeTexture(gl.TEXTURE0 + 13); gl.bindTexture(gl.TEXTURE_2D, this.matMapTex);
+    gl.uniform1i(ul.u_matMap, 13);
+
+    const a = this.atlases;
+    const bind = (tex, unit, locName) => { gl.activeTexture(gl.TEXTURE0 + unit); gl.bindTexture(gl.TEXTURE_2D, tex); if (ul[locName]) gl.uniform1i(ul[locName], unit); };
+    bind(a.wa, 1, 'u_wallAlbedo'); bind(a.wn, 2, 'u_wallNormal'); bind(a.wh, 3, 'u_wallHeight'); bind(a.wrma, 4, 'u_wallRoughMetal');
+    bind(a.fa, 5, 'u_floorAlbedo'); bind(a.fn, 6, 'u_floorNormal'); bind(a.fh, 7, 'u_floorHeight'); bind(a.frma, 8, 'u_floorRoughMetal');
+    bind(a.ca, 9, 'u_ceilAlbedo'); bind(a.cn, 10, 'u_ceilNormal'); bind(a.ch, 11, 'u_ceilHeight'); bind(a.crma, 12, 'u_ceilRoughMetal');
+
+    const ai = this.atlasInfo;
+    gl.uniform1f(ul.u_texSize, ai.texSize);
+    gl.uniform1f(ul.u_atlasWalls, ai.wallAtlasW);
+    gl.uniform1f(ul.u_atlasFloors, ai.floorAtlasW);
+    gl.uniform1f(ul.u_atlasCeils, ai.ceilAtlasW);
+
+    const ambientLevel = this._resolveConfigValue(cfg, ['lighting.ambient.level','lights.ambient','renderer.ambient'], 0.36);
+    const ambientColor = this._resolveConfigValue(cfg, ['lighting.ambient.color','lights.ambientColor'], [1,1,1]);
+    const worldMul = this._resolveConfigValue(cfg, ['lighting.ambient.worldMul','lights.worldAmbientMul'], 0.38);
+    const sunDir = this._resolveConfigValue(cfg, ['lighting.sun.dir','lights.sunDir'], [-0.55,-0.45,-0.7]);
+    const sunColor = this._resolveConfigValue(cfg, ['lighting.sun.color','lights.sunColor'], [1,1,1]);
+    const sunIntensity = this._resolveConfigValue(cfg, ['lighting.sun.intensity','lights.sunIntensity'], 1.5);
+    gl.uniform3f(ul.u_ambientColor, ambientColor[0], ambientColor[1], ambientColor[2]);
+    gl.uniform1f(ul.u_ambientLevel, ambientLevel);
+    if (ul.u_worldAmbientMul) gl.uniform1f(ul.u_worldAmbientMul, worldMul);
+    const sunLen = Math.hypot(sunDir[0], sunDir[1], sunDir[2]) || 1;
+    if (ul.u_sunDir) gl.uniform2f(ul.u_sunDir, sunDir[0] / sunLen, sunDir[1] / sunLen);
+    if (ul.u_sunDirZ) gl.uniform1f(ul.u_sunDirZ, sunDir[2] / sunLen);
+    if (ul.u_sunIntensity) gl.uniform1f(ul.u_sunIntensity, sunIntensity);
+    if (ul.u_sunColor) gl.uniform3f(ul.u_sunColor, sunColor[0], sunColor[1], sunColor[2]);
+
+    const fogCfg = cfg.fog || {};
+    gl.uniform1f(ul.u_fogBase, fogCfg.base ?? 0.06);
+    gl.uniform1f(ul.u_fogSquared, fogCfg.squared ?? 0.005);
+    const fogC = fogCfg.color || [0.05, 0.05, 0.08];
+    gl.uniform3f(ul.u_fogColor, fogC[0], fogC[1], fogC[2]);
+    if (ul.u_fogEnabled) gl.uniform1i(ul.u_fogEnabled, this.fogEnabled ? 1 : 0);
+
+    const pomWall = this._resolveConfigValue(cfg, ['pom.strength.wall','pom.wall','rendering.pom.wall','renderer.pom.wall'], 0.06);
+    const pomFloor = this._resolveConfigValue(cfg, ['pom.strength.floor','pom.floor','rendering.pom.floor','renderer.pom.floor'], 0.07);
+    const pomCeil = this._resolveConfigValue(cfg, ['pom.strength.ceil','pom.ceil','rendering.pom.ceil','renderer.pom.ceil'], 0.035);
+    const pomSteps = this._resolveConfigValue(cfg, ['pom.steps','rendering.pom.steps'], 8);
+    const pomMaxOffset = this._resolveConfigValue(cfg, ['pom.clamping.maxOffset','pom.maxOffset'], 0.10);
+    const pomMinVz = this._resolveConfigValue(cfg, ['pom.clamping.minViewZ','pom.minVz'], 0.08);
+    const pomMinEff = this._resolveConfigValue(cfg, ['pom.clamping.minEffectiveVz','pom.minEffectiveVz'], 0.18);
+    const pomFadeStart = this._resolveConfigValue(cfg, ['pom.fading.fadeStart','pom.fadeStart'], 0.08);
+    const pomFadeEnd = this._resolveConfigValue(cfg, ['pom.fading.fadeEnd','pom.fadeEnd'], 0.22);
+    const pomOn = this.pomEnabled ? 1 : 0;
+    gl.uniform1f(ul.u_pomWall, pomWall * pomOn);
+    gl.uniform1f(ul.u_pomFloor, pomFloor * pomOn);
+    gl.uniform1f(ul.u_pomCeil, pomCeil * pomOn);
+    gl.uniform1i(ul.u_pomSteps, pomSteps | 0);
+    if (ul.u_pomMaxOffset) gl.uniform1f(ul.u_pomMaxOffset, pomMaxOffset);
+    if (ul.u_pomMinVz) gl.uniform1f(ul.u_pomMinVz, pomMinVz);
+    if (ul.u_pomMinEffVz) gl.uniform1f(ul.u_pomMinEffVz, pomMinEff);
+    if (ul.u_pomFadeStart) gl.uniform1f(ul.u_pomFadeStart, pomFadeStart);
+    if (ul.u_pomFadeEnd) gl.uniform1f(ul.u_pomFadeEnd, pomFadeEnd);
+
+    if (ul.u_gridDebug) gl.uniform1i(ul.u_gridDebug, this.gridDebug ? 1 : 0);
+    if (ul.u_lightingEnabled) gl.uniform1i(ul.u_lightingEnabled, this.lightingEnabled ? 1 : 0);
+    if (ul.u_pbrEnabled) gl.uniform1i(ul.u_pbrEnabled, this.pbrEnabled ? 1 : 0);
+    if (ul.u_pomEnabled) gl.uniform1i(ul.u_pomEnabled, this.pomEnabled ? 1 : 0);
+    if (ul.u_pbrDebugMode) gl.uniform1i(ul.u_pbrDebugMode, this.pbrDebugMode);
+
+    const aoSun = this._resolveConfigValue(cfg, ['ao.affect.sun','pbr.ao.affectSun','ao.affectSun'], 0.25);
+    const aoPoint = this._resolveConfigValue(cfg, ['ao.affect.point','pbr.ao.affectPoint','ao.affectPoint'], 0.35);
+    const aoAmbient = this._resolveConfigValue(cfg, ['ao.affect.ambient','pbr.ao.affectAmbient','ao.affectAmbient'], 1.0);
+    if (ul.u_aoSun) gl.uniform1f(ul.u_aoSun, aoSun);
+    if (ul.u_aoPoint) gl.uniform1f(ul.u_aoPoint, aoPoint);
+    if (ul.u_aoAmbient) gl.uniform1f(ul.u_aoAmbient, aoAmbient);
+
+    const pbrEmissiveAlbedo = this._resolveConfigValue(cfg, ['pbr.emissive.albedoMul','pbr.emissiveAlbedoMul'], 0.8);
+    const pbrEmissiveStrength = this._resolveConfigValue(cfg, ['pbr.emissive.strengthMul','pbr.missiveStrength'], 2.5);
+    const pbrF0 = this._resolveConfigValue(cfg, ['pbr.fresnel.f0Dielectric','pbr.F0','pbr.f0Dielectric'], 0.04);
+    const pbrAtten = this._resolveConfigValue(cfg, ['pbr.pointAttenuation.quadraticFactor','pbr.attenQuad','pbr.pointAttenuation'], 0.25);
+    const pbrEps = this._resolveConfigValue(cfg, ['pbr.ggx.epsilon','pbr.epsilon'], 0.0001);
+    if (ul.u_pbrEmissiveAlbedoMul) gl.uniform1f(ul.u_pbrEmissiveAlbedoMul, pbrEmissiveAlbedo);
+    if (ul.u_pbrEmissiveStrength) gl.uniform1f(ul.u_pbrEmissiveStrength, pbrEmissiveStrength);
+    if (ul.u_pbrF0) gl.uniform1f(ul.u_pbrF0, pbrF0);
+    if (ul.u_pbrAttenQuad) gl.uniform1f(ul.u_pbrAttenQuad, pbrAtten);
+    if (ul.u_pbrGGXEps) gl.uniform1f(ul.u_pbrGGXEps, pbrEps);
+
+    const floorMul = this._resolveConfigValue(cfg, ['rendering.surface.floorAlbedoMul','renderer.floorAlbedoMul'], 0.7);
+    const ceilMul = this._resolveConfigValue(cfg, ['rendering.surface.ceilAlbedoMul','renderer.ceilAlbedoMul'], 0.8);
+    const wallDarken = this._resolveConfigValue(cfg, ['rendering.surface.wallDarkenSide','renderer.wallDarkenSide'], 0.85);
+    if (ul.u_renderFloorMul) gl.uniform1f(ul.u_renderFloorMul, floorMul);
+    if (ul.u_renderCeilMul) gl.uniform1f(ul.u_renderCeilMul, ceilMul);
+    if (ul.u_renderWallDarken) gl.uniform1f(ul.u_renderWallDarken, wallDarken);
+
+    const shBiasN = this._resolveConfigValue(cfg, ['shadows.bias.traceNormalOffset','shadows.traceNormalOffset'], 0.10);
+    const shBiasDir = this._resolveConfigValue(cfg, ['shadows.bias.dirOffset','shadows.dirOffset'], 0.06);
+    const shSunFactor = this._resolveConfigValue(cfg, ['shadows.sun.shadowFactor','shadows.sunShadowFactor'], 0.25);
+    const shPointFactor = this._resolveConfigValue(cfg, ['shadows.point.shadowFactor','shadows.pointShadowFactor'], 0.15);
+    const shSunMax = this._resolveConfigValue(cfg, ['shadows.sun.maxDist','shadows.sunMaxDist'], 20.0);
+    const shPointEps = this._resolveConfigValue(cfg, ['shadows.point.distEpsilon','shadows.pointEps'], 0.10);
+    const shNormalThresh = this._resolveConfigValue(cfg, ['shadows.traceNormal.threshold','shadows.normalThresh'], 0.02);
+    if (ul.u_shadowBiasN) gl.uniform1f(ul.u_shadowBiasN, shBiasN);
+    if (ul.u_shadowBiasDir) gl.uniform1f(ul.u_shadowBiasDir, shBiasDir);
+    if (ul.u_shadowSunFactor) gl.uniform1f(ul.u_shadowSunFactor, shSunFactor);
+    if (ul.u_shadowPointFactor) gl.uniform1f(ul.u_shadowPointFactor, shPointFactor);
+    if (ul.u_shadowSunMax) gl.uniform1f(ul.u_shadowSunMax, shSunMax);
+    if (ul.u_shadowPointEps) gl.uniform1f(ul.u_shadowPointEps, shPointEps);
+    if (ul.u_shadowNormalThresh) gl.uniform1f(ul.u_shadowNormalThresh, shNormalThresh);
+
+    const chCfg = cfg.chamfer || {};
+    const chLegacy = cfg.pbr?.chamfer || {};
+    const cfgChamEnabled = chCfg.enabled ?? chLegacy.enabled ?? true;
+    const chamEnabled = cfgChamEnabled && (this.chamferEnabled !== 0);
+    if (ul.u_chamferEnabled) gl.uniform1i(ul.u_chamferEnabled, chamEnabled ? 1 : 0);
+    const fSize = this._resolveConfigValue(cfg, ['chamfer.size.floor','pbr.chamfer.floorSize','pbr.chamfer.floor'], 0.30);
+    const cSize = this._resolveConfigValue(cfg, ['chamfer.size.ceil','pbr.chamfer.ceilSize','pbr.chamfer.ceil'], 0.24);
+    const wSize = this._resolveConfigValue(cfg, ['chamfer.size.wall','pbr.chamfer.wallSize','pbr.chamfer.wall'], 0.28);
+    const cr = this._resolveConfigValue(cfg, ['chamfer.size.cornerRadius','pbr.chamfer.cornerRadius'], 0.22);
+    const dark = this._resolveConfigValue(cfg, ['chamfer.shading.darken','pbr.chamfer.darken'], 0.55);
+    const round = this._resolveConfigValue(cfg, ['chamfer.shading.roundCorners','pbr.chamfer.roundCorners'], false) ? 1 : 0;
+    const bFloor = this._resolveConfigValue(cfg, ['chamfer.shading.floorToWallBlend','pbr.chamfer.floorToWallBlend','pbr.chamfer.blendFloor'], 0.92);
+    const bWall = this._resolveConfigValue(cfg, ['chamfer.shading.wallToWallBlend','pbr.chamfer.wallToWallBlend','pbr.chamfer.blendWall'], 0.88);
+    const chRough = this._resolveConfigValue(cfg, ['chamfer.shading.affectRoughness','pbr.chamfer.affectRoughness'], 0.35);
+    if (ul.u_chamferFloorSize) gl.uniform1f(ul.u_chamferFloorSize, fSize);
+    if (ul.u_chamferCeilSize) gl.uniform1f(ul.u_chamferCeilSize, cSize);
+    if (ul.u_chamferWallSize) gl.uniform1f(ul.u_chamferWallSize, wSize);
+    if (ul.u_chamferCornerRadius) gl.uniform1f(ul.u_chamferCornerRadius, cr);
+    if (ul.u_chamferDarken) gl.uniform1f(ul.u_chamferDarken, dark);
+    if (ul.u_chamferRoundCorners) gl.uniform1i(ul.u_chamferRoundCorners, round);
+    if (ul.u_chamferBlendFloor) gl.uniform1f(ul.u_chamferBlendFloor, bFloor);
+    if (ul.u_chamferBlendWall) gl.uniform1f(ul.u_chamferBlendWall, bWall);
+    if (ul.u_chamferRough) gl.uniform1f(ul.u_chamferRough, chRough);
+    if (ul.u_chamferFloor) gl.uniform1f(ul.u_chamferFloor, fSize);
+    if (ul.u_chamferCeil) gl.uniform1f(ul.u_chamferCeil, cSize);
+    if (ul.u_chamferWall) gl.uniform1f(ul.u_chamferWall, wSize);
+    const trimFloor = this._resolveConfigValue(cfg, ['chamfer.trim.floorStrength','chamfer.shading.trimFloor'], 0.22);
+    const trimCeil = this._resolveConfigValue(cfg, ['chamfer.trim.ceilStrength'], 0.18);
+    const trimWall = this._resolveConfigValue(cfg, ['chamfer.trim.wallStrength'], 0.16);
+    const trimFloorAlt = this._resolveConfigValue(cfg, ['chamfer.trim.floorAltStrength'], 0.18);
+    const trimCeilAlt = this._resolveConfigValue(cfg, ['chamfer.trim.ceilAltStrength'], 0.14);
+    const creviceEnd = this._resolveConfigValue(cfg, ['chamfer.ranges.creviceEnd'], 0.12);
+    const creviceSmooth = this._resolveConfigValue(cfg, ['chamfer.ranges.creviceSmoothEnd'], 0.30);
+    const trimStart = this._resolveConfigValue(cfg, ['chamfer.ranges.trimStart'], 0.08);
+    const trimMid = this._resolveConfigValue(cfg, ['chamfer.ranges.trimMid'], 0.35);
+    const trimEnd = this._resolveConfigValue(cfg, ['chamfer.ranges.trimEnd'], 1.0);
+    if (ul.u_chamferTrimFloor) gl.uniform1f(ul.u_chamferTrimFloor, trimFloor);
+    if (ul.u_chamferTrimCeil) gl.uniform1f(ul.u_chamferTrimCeil, trimCeil);
+    if (ul.u_chamferTrimWall) gl.uniform1f(ul.u_chamferTrimWall, trimWall);
+    if (ul.u_chamferTrimFloorAlt) gl.uniform1f(ul.u_chamferTrimFloorAlt, trimFloorAlt);
+    if (ul.u_chamferTrimCeilAlt) gl.uniform1f(ul.u_chamferTrimCeilAlt, trimCeilAlt);
+    if (ul.u_chamferCreviceEnd) gl.uniform1f(ul.u_chamferCreviceEnd, creviceEnd);
+    if (ul.u_chamferCreviceSmoothEnd) gl.uniform1f(ul.u_chamferCreviceSmoothEnd, creviceSmooth);
+    if (ul.u_chamferTrimStart) gl.uniform1f(ul.u_chamferTrimStart, trimStart);
+    if (ul.u_chamferTrimMid) gl.uniform1f(ul.u_chamferTrimMid, trimMid);
+    if (ul.u_chamferTrimEnd) gl.uniform1f(ul.u_chamferTrimEnd, trimEnd);
+
+    const gridCfg = chCfg.grid || {};
+    const cfgGridEnabled = gridCfg.enabled ?? true;
+    const gridEnabledUpload = cfgGridEnabled && chamEnabled ? 1 : 0;
+    if (ul.u_chamferGridEnabled) gl.uniform1i(ul.u_chamferGridEnabled, gridEnabledUpload);
+    const gFloorSize = this._resolveConfigValue(cfg, ['chamfer.grid.floorSize','chamfer.grid.floorSize'], 0.07);
+    const gCeilSize = this._resolveConfigValue(cfg, ['chamfer.grid.ceilSize'], 0.06);
+    const gFloorDarken = this._resolveConfigValue(cfg, ['chamfer.grid.floorDarken'], 0.88);
+    const gCeilDarken = this._resolveConfigValue(cfg, ['chamfer.grid.ceilDarken'], 0.90);
+    const gFloorTrim = this._resolveConfigValue(cfg, ['chamfer.grid.floorTrim','chamfer.grid.floorTrim'], 0.06);
+    const gCeilTrim = this._resolveConfigValue(cfg, ['chamfer.grid.ceilTrim'], 0.04);
+    const gFloorRough = this._resolveConfigValue(cfg, ['chamfer.grid.floorRoughness','chamfer.grid.floorRough'], 0.35);
+    const gCeilRough = this._resolveConfigValue(cfg, ['chamfer.grid.ceilRoughness','chamfer.grid.ceilRough'], 0.30);
+    const gFloorBlend = this._resolveConfigValue(cfg, ['chamfer.grid.floorBlend','chamfer.grid.floorBlend'], 0.85);
+    const gCeilBlend = this._resolveConfigValue(cfg, ['chamfer.grid.ceilBlend'], 0.80);
+    const gCreviceEnd = this._resolveConfigValue(cfg, ['chamfer.gridRanges.creviceEnd','chamfer.grid.ranges.creviceEnd'], 0.10);
+    const gCreviceSmooth = this._resolveConfigValue(cfg, ['chamfer.gridRanges.creviceSmoothEnd','chamfer.grid.ranges.creviceSmoothEnd'], 0.30);
+    const gTrimStart = this._resolveConfigValue(cfg, ['chamfer.gridRanges.trimStart','chamfer.grid.ranges.trimStart'], 0.10);
+    const gTrimMid = this._resolveConfigValue(cfg, ['chamfer.gridRanges.trimMid','chamfer.grid.ranges.trimMid'], 0.35);
+    const gTrimEnd = this._resolveConfigValue(cfg, ['chamfer.gridRanges.trimEnd','chamfer.grid.ranges.trimEnd'], 1.0);
+    if (ul.u_chamferGridFloorSize) gl.uniform1f(ul.u_chamferGridFloorSize, gFloorSize);
+    if (ul.u_chamferGridCeilSize) gl.uniform1f(ul.u_chamferGridCeilSize, gCeilSize);
+    if (ul.u_chamferGridFloorDarken) gl.uniform1f(ul.u_chamferGridFloorDarken, gFloorDarken);
+    if (ul.u_chamferGridCeilDarken) gl.uniform1f(ul.u_chamferGridCeilDarken, gCeilDarken);
+    if (ul.u_chamferGridFloorTrim) gl.uniform1f(ul.u_chamferGridFloorTrim, gFloorTrim);
+    if (ul.u_chamferGridCeilTrim) gl.uniform1f(ul.u_chamferGridCeilTrim, gCeilTrim);
+    if (ul.u_chamferGridFloorRough) gl.uniform1f(ul.u_chamferGridFloorRough, gFloorRough);
+    if (ul.u_chamferGridCeilRough) gl.uniform1f(ul.u_chamferGridCeilRough, gCeilRough);
+    if (ul.u_chamferGridFloorBlend) gl.uniform1f(ul.u_chamferGridFloorBlend, gFloorBlend);
+    if (ul.u_chamferGridCeilBlend) gl.uniform1f(ul.u_chamferGridCeilBlend, gCeilBlend);
+    if (ul.u_chamferGridCreviceEnd) gl.uniform1f(ul.u_chamferGridCreviceEnd, gCreviceEnd);
+    if (ul.u_chamferGridCreviceSmoothEnd) gl.uniform1f(ul.u_chamferGridCreviceSmoothEnd, gCreviceSmooth);
+    if (ul.u_chamferGridTrimStart) gl.uniform1f(ul.u_chamferGridTrimStart, gTrimStart);
+    if (ul.u_chamferGridTrimMid) gl.uniform1f(ul.u_chamferGridTrimMid, gTrimMid);
+    if (ul.u_chamferGridTrimEnd) gl.uniform1f(ul.u_chamferGridTrimEnd, gTrimEnd);
+
+    const cornerCfg = cfg.corners || cfg.corner || {};
+    const cornerLegacy = cfg.pbr?.corner || cfg.pbr?.cornerGeometry || {};
+    const cfgCornerEnabled = cornerCfg.enabled ?? cornerLegacy.enabled ?? true;
+    const cornerEnabled = cfgCornerEnabled && (this.cornerEnabled !== 0);
+    const cornerRadius = this._resolveConfigValue(cfg, ['corners.radius','pbr.corner.radius','pbr.corner.cornerRadius'], 0.15);
+    const cornerModeRaw = this._resolveConfigValue(cfg, ['corners.mode','pbr.corner.mode'], 2);
+    const cornerMode = (cornerModeRaw === 'bevel' ? 0 : (cornerModeRaw === 'round' ? 1 : (cornerModeRaw | 0)));
+    const cornerInner = this._resolveConfigValue(cfg, ['corners.inner','pbr.corner.inner'], true) ? 1 : 0;
+    const bandNear = this._resolveConfigValue(cfg, ['corners.search.bandNear','corners.bandNear'], 0.08);
+    const bandFarExtra = this._resolveConfigValue(cfg, ['corners.search.bandFarExtra','corners.bandFarExtra'], 0.15);
+    const bandFarFactor = this._resolveConfigValue(cfg, ['corners.search.bandFarFactor','corners.bandFarFactor'], 2.0);
+    const sectorThresh = this._resolveConfigValue(cfg, ['corners.search.sectorThreshold','corners.sectorThresh'], 0.02);
+    const normalMix = this._resolveConfigValue(cfg, ['corners.shading.normalMix','corners.normalMix'], 0.92);
+    const albedoBoost = this._resolveConfigValue(cfg, ['corners.shading.albedoBoost','corners.albedoBoost'], 0.05);
+    const roughMulC = this._resolveConfigValue(cfg, ['corners.shading.roughnessMul','corners.roughMul'], 0.82);
+    const aoMulC = this._resolveConfigValue(cfg, ['corners.shading.aoMul','corners.aoMul'], 0.96);
+    if (ul.u_cornerEnabled) gl.uniform1i(ul.u_cornerEnabled, cornerEnabled ? 1 : 0);
+    if (ul.u_cornerRadius) gl.uniform1f(ul.u_cornerRadius, cornerRadius);
+    if (ul.u_cornerMode) gl.uniform1i(ul.u_cornerMode, cornerMode);
+    if (ul.u_cornerInner) gl.uniform1i(ul.u_cornerInner, cornerInner);
+    if (ul.u_cornerBandNear) gl.uniform1f(ul.u_cornerBandNear, bandNear);
+    if (ul.u_cornerBandFarExtra) gl.uniform1f(ul.u_cornerBandFarExtra, bandFarExtra);
+    if (ul.u_cornerBandFarFactor) gl.uniform1f(ul.u_cornerBandFarFactor, bandFarFactor);
+    if (ul.u_cornerSectorThresh) gl.uniform1f(ul.u_cornerSectorThresh, sectorThresh);
+    if (ul.u_cornerNormalMix) gl.uniform1f(ul.u_cornerNormalMix, normalMix);
+    if (ul.u_cornerAlbedoBoost) gl.uniform1f(ul.u_cornerAlbedoBoost, albedoBoost);
+    if (ul.u_cornerRoughMul) gl.uniform1f(ul.u_cornerRoughMul, roughMulC);
+    if (ul.u_cornerAoMul) gl.uniform1f(ul.u_cornerAoMul, aoMulC);
+
+    return { fov, baseHeight, eyeFactor, sunDir, sunLen, sunIntensity, sunColor, ambientLevel, fogCfg };
+  }
+
+  // Deferred world pass: geometry -> G-buffer, then lighting -> sceneFBO. Reuses
+  // the light texture + light list already packed by render() this frame.
+  _deferredWorldPass(dungeon, player, cfg, camX, camY, renderAngle, bobPixels, timeSec) {
+    const gl = this.gl;
+    // Pass 1: geometry -> G-buffer
+    gl.useProgram(this.geoProgram);
+    gl.bindVertexArray(this.vao);
+    this._uploadWorldUniforms(this.uLocGeo, dungeon, cfg, camX, camY, renderAngle, bobPixels);
+    if (this.uLocGeo.u_authentic) gl.uniform1i(this.uLocGeo.u_authentic, this.authentic ? 1 : 0);
+    if (this.uLocGeo.u_time) gl.uniform1f(this.uLocGeo.u_time, timeSec);
+    gl.bindFramebuffer(gl.FRAMEBUFFER, this.gBufferFBO);
+    gl.drawBuffers([gl.COLOR_ATTACHMENT0, gl.COLOR_ATTACHMENT1, gl.COLOR_ATTACHMENT2, gl.COLOR_ATTACHMENT3]);
+    gl.viewport(0, 0, this.canvas.width, this.canvas.height);
+    gl.clearColor(0, 0, 0, 0); gl.clear(gl.COLOR_BUFFER_BIT);
+    gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
+
+    // Pass 2: lighting -> sceneFBO
+    gl.useProgram(this.lightProgram);
+    this._uploadWorldUniforms(this.uLocLight, dungeon, cfg, camX, camY, renderAngle, bobPixels);
+    if (this.uLocLight.u_authentic) gl.uniform1i(this.uLocLight.u_authentic, this.authentic ? 1 : 0);
+    if (this.uLocLight.u_bandLevels) gl.uniform1i(this.uLocLight.u_bandLevels, this.bandLevels);
+    if (this.uLocLight.u_time) gl.uniform1f(this.uLocLight.u_time, timeSec);
+    const numLights = Math.min((this._lightsCache || []).length, this.maxLights);
+    if (this.uLocLight.u_numLights) gl.uniform1i(this.uLocLight.u_numLights, numLights);
+    if (this.uLocLight.u_lightsFromTex) gl.uniform1i(this.uLocLight.u_lightsFromTex, 1);
+    // Bind G-buffer (units 4-7 — unused as atlases by the lighting shader), map (0), light tex (14)
+    gl.activeTexture(gl.TEXTURE0 + 4); gl.bindTexture(gl.TEXTURE_2D, this.gTextures[0]);
+    gl.activeTexture(gl.TEXTURE0 + 5); gl.bindTexture(gl.TEXTURE_2D, this.gTextures[1]);
+    gl.activeTexture(gl.TEXTURE0 + 6); gl.bindTexture(gl.TEXTURE_2D, this.gTextures[2]);
+    gl.activeTexture(gl.TEXTURE0 + 7); gl.bindTexture(gl.TEXTURE_2D, this.gTextures[3]);
+    gl.activeTexture(gl.TEXTURE0); gl.bindTexture(gl.TEXTURE_2D, this.mapTex);
+    gl.activeTexture(gl.TEXTURE0 + 14); gl.bindTexture(gl.TEXTURE_2D, this.lightTex);
+    gl.bindFramebuffer(gl.FRAMEBUFFER, this.sceneFBO);
+    gl.drawBuffers([gl.COLOR_ATTACHMENT0]);
+    gl.viewport(0, 0, this.canvas.width, this.canvas.height);
+    gl.clearColor(0, 0, 0, 1); gl.clear(gl.COLOR_BUFFER_BIT);
+    gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
+    gl.bindVertexArray(null);
+  }
+
   async init(dungeon, config) {
     const gl = this.gl;
     this.program = createProgram(gl, vsSource, fsSource);
@@ -573,6 +850,8 @@ export class GPURenderer {
   toggleCorner() { this.cornerEnabled ^= 1; return this.cornerEnabled; }
   setLightsFromTex(v) { this.lightsFromTex = !!v; return this.lightsFromTex; }
   toggleLightsFromTex() { this.lightsFromTex = !this.lightsFromTex; return this.lightsFromTex; }
+  setRenderMode(m) { if (m === 'deferred' && !this.deferredSupported) return this.renderMode; this.renderMode = m; return this.renderMode; }
+  toggleRenderMode() { return this.setRenderMode(this.renderMode === 'deferred' ? 'forward' : 'deferred'); }
   cyclePBRDebug() { this.pbrDebugMode = (this.pbrDebugMode + 1) % 9; return this.pbrDebugMode; }
 
   // ── Live-edit update hooks (Tier 1 & 2) ──
@@ -1222,7 +1501,14 @@ export class GPURenderer {
     if (ul.u_bandLevels) gl.uniform1i(ul.u_bandLevels, this.bandLevels);
     gl.uniform1f(ul.u_time, timeSec);
 
-    gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
+    if (this.renderMode === 'deferred' && this.deferredSupported) {
+      // Deferred: geometry->G-buffer, lighting->sceneFBO (reuses the light tex
+      // packed above). Forward uniform setup above is harmless/unused this frame.
+      this._deferredWorldPass(dungeon, player, cfg, camX, camY, renderAngle, bobPixels, timeSec);
+      gl.bindFramebuffer(gl.FRAMEBUFFER, this.sceneFBO);
+    } else {
+      gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
+    }
     gl.bindVertexArray(null);
 
     // ---- Task 6: render sprites with proper wall/floor/ceil occlusion ----

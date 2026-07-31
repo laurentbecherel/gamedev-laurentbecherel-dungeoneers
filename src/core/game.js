@@ -662,6 +662,7 @@ export class Game {
     if (code === "Digit7" || code === "Numpad7") { const v = this.renderer.toggleChamfer(); this._showHud("Chamfer: " + (v ? "ON (floor/ceil baseboard + vertical edges)" : "OFF (sharp 90°)")); return; }
     if (code === "Digit8" || code === "Numpad8") { const v = this.renderer.toggleCorner(); this._showHud("Corner Geometry: " + (v ? "ON (rounded intruding r=0.15 outer+inner)" : "OFF")); return; }
     if (code === "Digit9" || code === "Numpad9") { const v = this.renderer.toggleLightsFromTex(); this._showHud("Lights source: " + (v ? "TEXTURE (RGBA32F data tex)" : "ARRAYS (uniform arrays)") + " — should look identical"); return; }
+    if (code === "KeyK") { const v = this.renderer.toggleRenderMode(); this._showHud("Renderer: " + (v === 'deferred' ? "DEFERRED (G-buffer split)" : "FORWARD") + (this.renderer.deferredSupported ? "" : " — deferred unavailable")); return; }
   }
 
   _showHud(msg) {
