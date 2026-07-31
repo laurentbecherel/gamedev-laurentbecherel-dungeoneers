@@ -185,6 +185,7 @@ export class GPURenderer {
       'u_aoSun','u_aoPoint','u_aoAmbient',
       'u_chamferEnabled','u_chamferFloorSize','u_chamferCeilSize','u_chamferWallSize','u_chamferCornerRadius','u_chamferDarken','u_chamferRoundCorners','u_chamferBlendFloor','u_chamferBlendWall','u_chamferRough','u_chamferFloor','u_chamferCeil','u_chamferWall',
       'u_chamferTrimFloor','u_chamferTrimCeil','u_chamferTrimWall','u_chamferTrimFloorAlt','u_chamferTrimCeilAlt','u_chamferCreviceEnd','u_chamferCreviceSmoothEnd','u_chamferTrimStart','u_chamferTrimMid','u_chamferTrimEnd',
+      'u_chamferGridEnabled','u_chamferGridFloorSize','u_chamferGridCeilSize','u_chamferGridFloorDarken','u_chamferGridCeilDarken','u_chamferGridFloorTrim','u_chamferGridCeilTrim','u_chamferGridFloorRough','u_chamferGridCeilRough','u_chamferGridFloorBlend','u_chamferGridCeilBlend','u_chamferGridCreviceEnd','u_chamferGridCreviceSmoothEnd','u_chamferGridTrimStart','u_chamferGridTrimMid','u_chamferGridTrimEnd',
       'u_cornerEnabled','u_cornerRadius','u_cornerMode','u_cornerInner',
       'u_cornerBandNear','u_cornerBandFarExtra','u_cornerBandFarFactor','u_cornerSectorThresh','u_cornerNormalMix','u_cornerAlbedoBoost','u_cornerRoughMul','u_cornerAoMul',
       'u_shadowBiasN','u_shadowBiasDir','u_shadowSunFactor','u_shadowPointFactor','u_shadowSunMax','u_shadowPointEps','u_shadowNormalThresh',
@@ -866,6 +867,42 @@ export class GPURenderer {
     if (ul.u_chamferTrimStart) gl.uniform1f(ul.u_chamferTrimStart, trimStart);
     if (ul.u_chamferTrimMid) gl.uniform1f(ul.u_chamferTrimMid, trimMid);
     if (ul.u_chamferTrimEnd) gl.uniform1f(ul.u_chamferTrimEnd, trimEnd);
+
+    // --- Task 8: grid tile chamfer (floor/ceiling 1m grout) — subtle, live-editable ---
+    const gridCfg = chCfg.grid || {};
+    const cfgGridEnabled = gridCfg.enabled ?? true;
+    const gridEnabledUpload = cfgGridEnabled && chamEnabled ? 1 : 0; // respect global chamfer enable
+    if (ul.u_chamferGridEnabled) gl.uniform1i(ul.u_chamferGridEnabled, gridEnabledUpload);
+    const gFloorSize = this._resolveConfigValue(cfg, ['chamfer.grid.floorSize','chamfer.grid.floorSize'], 0.07);
+    const gCeilSize = this._resolveConfigValue(cfg, ['chamfer.grid.ceilSize'], 0.06);
+    const gFloorDarken = this._resolveConfigValue(cfg, ['chamfer.grid.floorDarken'], 0.88);
+    const gCeilDarken = this._resolveConfigValue(cfg, ['chamfer.grid.ceilDarken'], 0.90);
+    const gFloorTrim = this._resolveConfigValue(cfg, ['chamfer.grid.floorTrim','chamfer.grid.floorTrim'], 0.06);
+    const gCeilTrim = this._resolveConfigValue(cfg, ['chamfer.grid.ceilTrim'], 0.04);
+    const gFloorRough = this._resolveConfigValue(cfg, ['chamfer.grid.floorRoughness','chamfer.grid.floorRough'], 0.35);
+    const gCeilRough = this._resolveConfigValue(cfg, ['chamfer.grid.ceilRoughness','chamfer.grid.ceilRough'], 0.30);
+    const gFloorBlend = this._resolveConfigValue(cfg, ['chamfer.grid.floorBlend','chamfer.grid.floorBlend'], 0.85);
+    const gCeilBlend = this._resolveConfigValue(cfg, ['chamfer.grid.ceilBlend'], 0.80);
+    const gCreviceEnd = this._resolveConfigValue(cfg, ['chamfer.gridRanges.creviceEnd','chamfer.grid.ranges.creviceEnd'], 0.10);
+    const gCreviceSmooth = this._resolveConfigValue(cfg, ['chamfer.gridRanges.creviceSmoothEnd','chamfer.grid.ranges.creviceSmoothEnd'], 0.30);
+    const gTrimStart = this._resolveConfigValue(cfg, ['chamfer.gridRanges.trimStart','chamfer.grid.ranges.trimStart'], 0.10);
+    const gTrimMid = this._resolveConfigValue(cfg, ['chamfer.gridRanges.trimMid','chamfer.grid.ranges.trimMid'], 0.35);
+    const gTrimEnd = this._resolveConfigValue(cfg, ['chamfer.gridRanges.trimEnd','chamfer.grid.ranges.trimEnd'], 1.0);
+    if (ul.u_chamferGridFloorSize) gl.uniform1f(ul.u_chamferGridFloorSize, gFloorSize);
+    if (ul.u_chamferGridCeilSize) gl.uniform1f(ul.u_chamferGridCeilSize, gCeilSize);
+    if (ul.u_chamferGridFloorDarken) gl.uniform1f(ul.u_chamferGridFloorDarken, gFloorDarken);
+    if (ul.u_chamferGridCeilDarken) gl.uniform1f(ul.u_chamferGridCeilDarken, gCeilDarken);
+    if (ul.u_chamferGridFloorTrim) gl.uniform1f(ul.u_chamferGridFloorTrim, gFloorTrim);
+    if (ul.u_chamferGridCeilTrim) gl.uniform1f(ul.u_chamferGridCeilTrim, gCeilTrim);
+    if (ul.u_chamferGridFloorRough) gl.uniform1f(ul.u_chamferGridFloorRough, gFloorRough);
+    if (ul.u_chamferGridCeilRough) gl.uniform1f(ul.u_chamferGridCeilRough, gCeilRough);
+    if (ul.u_chamferGridFloorBlend) gl.uniform1f(ul.u_chamferGridFloorBlend, gFloorBlend);
+    if (ul.u_chamferGridCeilBlend) gl.uniform1f(ul.u_chamferGridCeilBlend, gCeilBlend);
+    if (ul.u_chamferGridCreviceEnd) gl.uniform1f(ul.u_chamferGridCreviceEnd, gCreviceEnd);
+    if (ul.u_chamferGridCreviceSmoothEnd) gl.uniform1f(ul.u_chamferGridCreviceSmoothEnd, gCreviceSmooth);
+    if (ul.u_chamferGridTrimStart) gl.uniform1f(ul.u_chamferGridTrimStart, gTrimStart);
+    if (ul.u_chamferGridTrimMid) gl.uniform1f(ul.u_chamferGridTrimMid, gTrimMid);
+    if (ul.u_chamferGridTrimEnd) gl.uniform1f(ul.u_chamferGridTrimEnd, gTrimEnd);
 
     const cornerCfg = cfg.corners || cfg.corner || {};
     const cornerLegacy = cfg.pbr?.corner || cfg.pbr?.cornerGeometry || {};

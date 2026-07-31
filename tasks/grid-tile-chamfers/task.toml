@@ -16,6 +16,6 @@ screenshots = [
 ]
 videos = []
 teaser = "./screenshots/screen-floor-ceiling-wall-together.png"
-base-commit-hash = "a1124616dd93d2b852304d85243d40829bf8513e"
-commit-hash = "a1124616dd93d2b852304d85243d40829bf8513e"
+base-commit-hash = "072b75d65a8c3f65404b5a33f680e59e298885a4"
+commit-hash = "d5171b92cf1ac446e9a561fd1a44c383af8823c6"
 avocado-model = "Muse Spark 1.1"

@@ -38,5 +38,27 @@
     "wallRoughCeilMid": 0.62,
     "note": "Thresholds for smoothstep shaping: crevice AO fades, trim highlight band, roughness mix"
   },
+  "grid": {
+    "enabled": true,
+    "floorSize": 0.07,
+    "ceilSize": 0.06,
+    "floorDarken": 0.88,
+    "ceilDarken": 0.9,
+    "floorRoughness": 0.35,
+    "ceilRoughness": 0.3,
+    "floorTrim": 0.06,
+    "ceilTrim": 0.04,
+    "floorBlend": 0.85,
+    "ceilBlend": 0.8,
+    "note": "per-1m dungeon tile grooves, subtle, size in meters (groove half-width). darken near 1 = faint grout, 0.88 = subtle. Must stay subtle, not Tron. floorSize 0.07 = 7cm groove. blend = normal tilt strength toward edge."
+  },
+  "gridRanges": {
+    "creviceEnd": 0.1,
+    "creviceSmoothEnd": 0.3,
+    "trimStart": 0.1,
+    "trimMid": 0.35,
+    "trimEnd": 1,
+    "note": "smoothstep shaping for grid grooves, same logic as ranges.* but for tile grid"
+  },
   "debugToggle": "Key 7"
 }
