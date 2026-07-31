@@ -78,6 +78,14 @@ test('editor live controls UI exists and persists via localStorage', async ({ pa
 test('game page has live badge and regen banner elements', async ({ page }) => {
   await page.goto('/game.html');
   await page.waitForTimeout(1200);
+  // Ensure live enabled so badge shows (requirement: only show if ON)
+  await page.evaluate(() => {
+    try { localStorage.setItem('dungeoneers-live-enabled','1'); } catch {}
+    if (window.game?.liveManager && !window.game.liveManager.enabled) {
+      try { window.game.liveManager.enable(); } catch {}
+    }
+  });
+  await page.waitForTimeout(500);
   const badge = page.locator('#live-badge');
   await expect(badge).toBeVisible({ timeout: 5000 });
   const banner = page.locator('#regen-banner');
@@ -85,6 +93,20 @@ test('game page has live badge and regen banner elements', async ({ page }) => {
   // Check live manager exposed
   const hasLive = await page.evaluate(() => !!window.game && !!window.game.liveManager);
   expect(hasLive).toBe(true);
+
+  // Now disable live and verify badge hides completely (requirement: don't show any badge at all if no live-edit)
+  await page.evaluate(() => {
+    if (window.game?.liveManager) try { window.game.liveManager.disable(); } catch {}
+    try { localStorage.setItem('dungeoneers-live-enabled','0'); } catch {}
+  });
+  await page.waitForTimeout(300);
+  await expect(badge).toBeHidden({ timeout: 3000 });
+
+  // Re-enable for cleanup
+  await page.evaluate(() => {
+    try { localStorage.setItem('dungeoneers-live-enabled','1'); } catch {}
+    if (window.game?.liveManager) try { window.game.liveManager.enable(); } catch {}
+  });
 });
 
 test('fog live update via API PUT propagates to game without reload (SSE path)', async ({ browser }) => {
@@ -357,6 +379,9 @@ test('no regression: live OFF keeps old Save+R workflow', async ({ browser }) =>
     try { localStorage.setItem('dungeoneers-live-enabled','0'); } catch {}
     if (window.game?.liveManager) try { window.game.liveManager.disable(); } catch {}
   });
+  await gamePage.waitForTimeout(400);
+  // Badge should be hidden when live OFF (requirement)
+  await expect(gamePage.locator('#live-badge')).toBeHidden({ timeout: 3000 });
 
   // PUT fog while live disabled in game
   await editorPage.goto('/editor.html');

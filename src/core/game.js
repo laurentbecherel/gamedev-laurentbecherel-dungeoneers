@@ -55,13 +55,14 @@ export class Game {
 
   _createLiveUI() {
     try {
-      // Live badge
+      // Live badge - hidden by default when live is OFF, only shown when enabled
       if (!this._liveBadgeEl) {
         const badge = document.createElement('div');
         badge.id = 'live-badge';
         badge.className = 'live-badge live-offline';
         badge.innerHTML = `<span class="dot"></span><span class="live-text">LIVE offline</span>`;
         badge.title = 'Live-edit status: offline\nEnable Live in Editor';
+        badge.style.display = 'none'; // hidden when no live-edit
         document.body.appendChild(badge);
         this._liveBadgeEl = badge;
       }
@@ -93,6 +94,12 @@ export class Game {
     if (textEl) textEl.textContent = statusMap[status] || status;
     this._liveBadgeEl.className = `live-badge live-${status}`;
     this._liveBadgeEl.title = `Live status: ${status}\nTab: ${this.liveManager ? this.liveManager.tabId : 'n/a'}\nOpen Editor to tweak configs live`;
+    // Hide completely when offline (no live-edit), show only when live is actually ON
+    if (status === 'offline') {
+      this._liveBadgeEl.style.display = 'none';
+    } else {
+      this._liveBadgeEl.style.display = 'flex';
+    }
   }
 
   _setRegenRequired(v) {
