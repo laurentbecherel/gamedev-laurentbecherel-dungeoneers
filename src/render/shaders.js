@@ -15,13 +15,15 @@ void main() {
 }
 `;
 
-export const fsSource = `#version 300 es
+// Shared world-shader prelude: IO + uniforms + all material/lighting functions.
+// Consumed by the forward shader below and (next) the deferred geometry/lighting
+// programs, so the material pipeline lives in exactly one place.
+const GLSL_WORLD_PRELUDE = `#version 300 es
 precision highp float;
 precision highp int;
 precision highp sampler2D;
 
 in vec2 v_uv;
-out vec4 outColor;
 
 uniform vec2  u_resolution;
 uniform vec2  u_playerPos;
@@ -878,7 +880,11 @@ vec3 shadeCeilSurface(vec2 ceilWorld, vec2 ray, float surfaceZ, float eyeZ, bool
   vec3 viewDir = normalize(vec3(u_playerPos, eyeZ) - m.worldPos);
   return pbrShade(m.albedo, m.N, m.rough, m.metal, m.ao, m.emissive, m.worldPos, viewDir);
 }
+`;
 
+// Forward shader: shade directly to screen color.
+export const fsSource = GLSL_WORLD_PRELUDE + `
+out vec4 outColor;
 
 void main() {
   // Task 4: vertical bob as screen-space pixel offset like mygame — u_bobPixels = viewBobOffset * h * 0.8
