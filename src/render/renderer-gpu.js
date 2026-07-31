@@ -7,6 +7,7 @@ import { createProgram, createTexture } from './gl-utils.js';
 import { vsSource, fsSource, vsQuantize, fsQuantize, vsUI, fsUI, MAX_LIGHTS, vsSpriteSrc, fsSpritePBRSrc } from './shaders.js';
 import { uploadMapTexture, updateMapTexture } from './map-upload.js';
 import { generateMaterialAtlases } from '../world/materials.js';
+import { fsGeometrySrc, fsLightingSrc } from './shaders.js';
 import { getAsset } from '../config/config.js';
 import { genPalette, buildRGBToPal } from './palette.js';
 import { LightManager, Light } from '../systems/lights.js';
@@ -47,6 +48,12 @@ export class GPURenderer {
     this.mapUITex = null;
     this.lightTex = null;
     this.lightsFromTex = true; // Part 2: default to the bit-exact light-texture path (arrays kept as fallback)
+    // Deferred (G-buffer) split — additive; forward stays default.
+    this.renderMode = 'forward';   // 'forward' | 'deferred'
+    this.deferredSupported = false;
+    this.geoProgram = null; this.lightProgram = null;
+    this.uLocGeo = null; this.uLocLight = null;
+    this.gBufferFBO = null; this.gTextures = [];
     this.authentic = true;
     this.bandLevels = 32;
     this.paletteStyle = 'doom';
@@ -65,6 +72,68 @@ export class GPURenderer {
     this._sprites = [];
     this._lightsCache = [];
     this.maxLights = MAX_LIGHTS || 12;
+  }
+
+  // Cache world-shader uniform locations for any program built from
+  // GLSL_WORLD_PRELUDE (forward/geometry/lighting). Unused uniforms resolve to
+  // null and are silently ignored when set — so the same setter feeds all three.
+  _cacheWorldUniforms(program) {
+    const gl = this.gl;
+    const ul = {};
+    const names = [
+      'u_resolution','u_playerPos','u_playerAngle','u_fov','u_playerHeight','u_mapTex','u_matMap','u_mapSize',
+      'u_wallAlbedo','u_wallNormal','u_wallHeight','u_wallRoughMetal',
+      'u_floorAlbedo','u_floorNormal','u_floorHeight','u_floorRoughMetal',
+      'u_ceilAlbedo','u_ceilNormal','u_ceilHeight','u_ceilRoughMetal',
+      'u_texSize','u_atlasWalls','u_atlasFloors','u_atlasCeils',
+      'u_ambientColor','u_ambientLevel','u_worldAmbientMul',
+      'u_sunDir','u_sunDirZ','u_sunIntensity','u_sunColor',
+      'u_fogBase','u_fogSquared','u_fogColor','u_fogEnabled',
+      'u_pomWall','u_pomFloor','u_pomCeil','u_pomSteps','u_pomMaxOffset','u_pomMinVz','u_pomMinEffVz','u_pomFadeStart','u_pomFadeEnd',
+      'u_authentic','u_bandLevels','u_time',
+      'u_gridDebug','u_lightingEnabled','u_pbrEnabled','u_pomEnabled','u_pbrDebugMode',
+      'u_aoSun','u_aoPoint','u_aoAmbient',
+      'u_chamferEnabled','u_chamferFloorSize','u_chamferCeilSize','u_chamferWallSize','u_chamferCornerRadius','u_chamferDarken','u_chamferRoundCorners','u_chamferBlendFloor','u_chamferBlendWall','u_chamferRough','u_chamferFloor','u_chamferCeil','u_chamferWall',
+      'u_chamferTrimFloor','u_chamferTrimCeil','u_chamferTrimWall','u_chamferTrimFloorAlt','u_chamferTrimCeilAlt','u_chamferCreviceEnd','u_chamferCreviceSmoothEnd','u_chamferTrimStart','u_chamferTrimMid','u_chamferTrimEnd',
+      'u_chamferGridEnabled','u_chamferGridFloorSize','u_chamferGridCeilSize','u_chamferGridFloorDarken','u_chamferGridCeilDarken','u_chamferGridFloorTrim','u_chamferGridCeilTrim','u_chamferGridFloorRough','u_chamferGridCeilRough','u_chamferGridFloorBlend','u_chamferGridCeilBlend','u_chamferGridCreviceEnd','u_chamferGridCreviceSmoothEnd','u_chamferGridTrimStart','u_chamferGridTrimMid','u_chamferGridTrimEnd',
+      'u_cornerEnabled','u_cornerRadius','u_cornerMode','u_cornerInner',
+      'u_cornerBandNear','u_cornerBandFarExtra','u_cornerBandFarFactor','u_cornerSectorThresh','u_cornerNormalMix','u_cornerAlbedoBoost','u_cornerRoughMul','u_cornerAoMul',
+      'u_shadowBiasN','u_shadowBiasDir','u_shadowSunFactor','u_shadowPointFactor','u_shadowSunMax','u_shadowPointEps','u_shadowNormalThresh',
+      'u_pbrEmissiveAlbedoMul','u_pbrEmissiveStrength','u_pbrF0','u_pbrAttenQuad','u_pbrGGXEps',
+      'u_renderFloorMul','u_renderCeilMul','u_renderWallDarken','u_renderEyeFactor',
+      'u_bobPixels','u_numLights','u_lightTex','u_lightsFromTex',
+      // lighting-pass G-buffer samplers (null on geometry/forward programs)
+      'u_gA','u_gN','u_gP','u_gM',
+    ];
+    names.forEach(n => ul[n] = gl.getUniformLocation(program, n));
+    const arrs = ['u_lightPos','u_lightColor','u_lightIntensity','u_lightRadius','u_lightType','u_lightDir','u_lightConeInner','u_lightConeOuter','u_lightPulseSpeed','u_lightPulseAmt','u_lightNoShadow','u_lightFlickerSpeed','u_lightFlickerAmount','u_lightPhase'];
+    arrs.forEach(a => { ul[a] = []; for (let i = 0; i < this.maxLights; i++) ul[a].push(gl.getUniformLocation(program, `${a}[${i}]`)); });
+    return ul;
+  }
+
+  // Build the 4x RGBA32F G-buffer FBO at the current canvas size (deferred path).
+  _createGBuffer() {
+    const gl = this.gl;
+    const w = this.canvas.width, h = this.canvas.height;
+    if (this.gBufferFBO) { gl.deleteFramebuffer(this.gBufferFBO); this.gTextures.forEach(t => gl.deleteTexture(t)); }
+    this.gBufferFBO = gl.createFramebuffer();
+    gl.bindFramebuffer(gl.FRAMEBUFFER, this.gBufferFBO);
+    this.gTextures = [];
+    for (let i = 0; i < 4; i++) {
+      const tex = gl.createTexture();
+      gl.bindTexture(gl.TEXTURE_2D, tex);
+      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.NEAREST);
+      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.NEAREST);
+      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+      gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA32F, w, h, 0, gl.RGBA, gl.FLOAT, null);
+      gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0 + i, gl.TEXTURE_2D, tex, 0);
+      this.gTextures.push(tex);
+    }
+    gl.drawBuffers([gl.COLOR_ATTACHMENT0, gl.COLOR_ATTACHMENT1, gl.COLOR_ATTACHMENT2, gl.COLOR_ATTACHMENT3]);
+    const ok = gl.checkFramebufferStatus(gl.FRAMEBUFFER) === gl.FRAMEBUFFER_COMPLETE;
+    gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+    return ok;
   }
 
   async init(dungeon, config) {
@@ -254,6 +323,31 @@ export class GPURenderer {
     gl.uniform1i(ul.u_matMap, 13);
     const texUnits = {u_wallAlbedo:1,u_wallNormal:2,u_wallHeight:3,u_wallRoughMetal:4,u_floorAlbedo:5,u_floorNormal:6,u_floorHeight:7,u_floorRoughMetal:8,u_ceilAlbedo:9,u_ceilNormal:10,u_ceilHeight:11,u_ceilRoughMetal:12};
     Object.entries(texUnits).forEach(([name, unit]) => { if (ul[name]) gl.uniform1i(ul[name], unit); });
+
+    // --- Deferred (G-buffer) programs — additive; gated on float-render support ---
+    const cbf = gl.getExtension('EXT_color_buffer_float');
+    this.geoProgram = createProgram(gl, vsSource, fsGeometrySrc);
+    this.lightProgram = createProgram(gl, vsSource, fsLightingSrc);
+    if (cbf && this.geoProgram && this.lightProgram) {
+      this.uLocGeo = this._cacheWorldUniforms(this.geoProgram);
+      this.uLocLight = this._cacheWorldUniforms(this.lightProgram);
+      gl.useProgram(this.geoProgram);
+      if (this.uLocGeo.u_mapTex) gl.uniform1i(this.uLocGeo.u_mapTex, 0);
+      if (this.uLocGeo.u_matMap) gl.uniform1i(this.uLocGeo.u_matMap, 13);
+      Object.entries(texUnits).forEach(([name, unit]) => { if (this.uLocGeo[name]) gl.uniform1i(this.uLocGeo[name], unit); });
+      gl.useProgram(this.lightProgram);
+      if (this.uLocLight.u_gA) gl.uniform1i(this.uLocLight.u_gA, 4);
+      if (this.uLocLight.u_gN) gl.uniform1i(this.uLocLight.u_gN, 5);
+      if (this.uLocLight.u_gP) gl.uniform1i(this.uLocLight.u_gP, 6);
+      if (this.uLocLight.u_gM) gl.uniform1i(this.uLocLight.u_gM, 7);
+      if (this.uLocLight.u_mapTex) gl.uniform1i(this.uLocLight.u_mapTex, 0);
+      if (this.uLocLight.u_lightTex) gl.uniform1i(this.uLocLight.u_lightTex, 14);
+      this.deferredSupported = this._createGBuffer();
+      gl.useProgram(this.program);
+    } else {
+      this.deferredSupported = false;
+      console.warn('[GPURenderer] deferred path unavailable (EXT_color_buffer_float or program compile failed)');
+    }
 
     // Task 6: LightManager + SpriteRenderer init
     try {
