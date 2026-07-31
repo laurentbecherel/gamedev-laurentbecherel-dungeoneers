@@ -6,6 +6,27 @@ import { fileURLToPath } from 'url';
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
+// Live-edit: SSE client set and broadcast helper
+const sseClients = new Set();
+
+function broadcastAssetUpdate(category, name) {
+  const payload = JSON.stringify({
+    type: 'asset-updated',
+    category,
+    name,
+    path: `${category}/${name}`,
+    timestamp: Date.now()
+  });
+  const msg = `event: asset-updated\ndata: ${payload}\n\n`;
+  for (const res of [...sseClients]) {
+    try {
+      res.write(msg);
+    } catch {
+      try { sseClients.delete(res); } catch {}
+    }
+  }
+}
+
 const PORT = process.env.PORT || 8000;
 const SRC_DIR = path.join(__dirname, '..');
 const ASSETS_DIR = path.join(SRC_DIR, 'assets');
@@ -82,7 +103,39 @@ function safeCategory(catPath) {
 }
 function safeName(name) { return safeSegment(name); }
 
+function handleWatch(req, res) {
+  // SSE endpoint for live-edit: GET /api/watch or /api/assets/watch
+  if (req.method !== 'GET') {
+    if (!res.headersSent) { res.writeHead(405, { 'Content-Type': 'application/json' }); res.end(JSON.stringify({ error: 'Method not allowed' })); }
+    return true;
+  }
+  res.writeHead(200, {
+    'Content-Type': 'text/event-stream',
+    'Cache-Control': 'no-cache, no-transform',
+    'Connection': 'keep-alive',
+    'Access-Control-Allow-Origin': '*',
+    'Access-Control-Allow-Methods': 'GET,OPTIONS',
+    'Access-Control-Allow-Headers': 'Content-Type',
+    'X-Accel-Buffering': 'no'
+  });
+  // Send initial connected comment
+  try { res.write(`: connected ${Date.now()}\n\n`); } catch {}
+  sseClients.add(res);
+  const hb = setInterval(() => {
+    try { res.write(`: heartbeat ${Date.now()}\n\n`); } catch { clearInterval(hb); try { sseClients.delete(res); } catch {} }
+  }, 25000);
+  const cleanup = () => { clearInterval(hb); try { sseClients.delete(res); } catch {} };
+  req.on('close', cleanup);
+  res.on('close', cleanup);
+  res.on('error', cleanup);
+  return true;
+}
+
 async function handleApi(req, res, pathname) {
+  // SSE watch endpoint
+  if (pathname === '/api/watch' || pathname === '/api/assets/watch') {
+    return handleWatch(req, res);
+  }
   res.setHeader('Access-Control-Allow-Origin', '*'); res.setHeader('Access-Control-Allow-Methods', 'GET,PUT,OPTIONS'); res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
   if (req.method === 'OPTIONS') { res.writeHead(204); res.end(); return true; }
   const body = await new Promise(r => { let d = ''; req.on('data', c => d += c); req.on('end', () => r(d)); });
@@ -111,7 +164,10 @@ async function handleApi(req, res, pathname) {
       if (req.method === 'PUT') {
         if (!jb) { res.writeHead(400, { 'Content-Type': 'application/json' }); res.end(JSON.stringify({ error: 'Body required' })); return true; }
         await saveAssetFile(cat, name, jb);
-        res.writeHead(200, { 'Content-Type': 'application/json' }); res.end(JSON.stringify({ success: true })); return true;
+        res.writeHead(200, { 'Content-Type': 'application/json' }); res.end(JSON.stringify({ success: true }));
+        // Live-edit: broadcast after response (don't block)
+        try { broadcastAssetUpdate(cat, name); } catch (e) { console.warn('SSE broadcast failed', e); }
+        return true;
       }
     }
   }

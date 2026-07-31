@@ -2,9 +2,9 @@ name = "Dungeoneers: Live Edit System"
 instruction = "./instruction.md"
 
 [game]
-tags = ["tooling", "editor", "live-edit", "workflow"]
-tech-stack-tags = ["Web JS/DOM", "WebGL2", "SSE", "BroadcastChannel", "Vanilla JS"]
-assets-used = ["config-hot-reload", "sse", "broadcast-channel"]
+tags = ["tooling", "editor", "live-edit", "workflow", "sse", "broadcast-channel"]
+tech-stack-tags = ["Web JS/DOM", "WebGL2", "SSE", "BroadcastChannel", "Vanilla JS", "PBR", "Procedural"]
+assets-used = ["config-hot-reload", "sse", "broadcast-channel", "live-tiers"]
 harness = "Metacode"
 screenshots = [
   "./screenshots/live-edit-toggle.png",

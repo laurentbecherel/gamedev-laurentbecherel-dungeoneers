@@ -1,25 +1,161 @@
 import { getAssetList, getAsset, saveAsset } from "./config/config.js";
+import { getLiveConfigManager } from "./config/live-config.js";
 
 const $ = id => document.getElementById(id);
-let current = null, currentData = null, mode = "visual";
+let current = null, currentData = null, lastSavedData = null, mode = "visual";
 const collapsed = new Set();
 
+function clone(o){ try { return JSON.parse(JSON.stringify(o)); } catch { return o; } }
+function deepEqual(a,b){ try { return JSON.stringify(a)===JSON.stringify(b); } catch { return false; } }
+
 function status(msg, type = "ok") {
-  const el = $("status-area"); el.innerHTML = `<span class="status-pill ${type}">${msg}</span>`;
-  setTimeout(() => el.innerHTML = "", 3000);
+  const el = $("status-area"); if (!el) return; el.innerHTML = `<span class="status-pill ${type}">${msg}</span>`;
+  setTimeout(() => { if (el.innerHTML.includes(msg)) el.innerHTML = ""; }, 3500);
 }
+
 function formatLabel(s) { return s.replace(/[-_]/g, " ").replace(/\b\w/g, c => c.toUpperCase()); }
 function iconFor(name, isFolder) { if (isFolder) return "ph-folder"; const ext = name.split(".").pop(); const m = { json: "ph-file-code", md: "ph-file-text", png: "ph-file-png", jpg: "ph-file-jpg", js: "ph-file-js", css: "ph-file-css", html: "ph-file-html" }; return m[ext] || "ph-file"; }
 
-async function init() {
-  const list = await getAssetList();
-  const tree = $("asset-tree"); tree.innerHTML = "";
+function debounce(fn, delay){ let t; return (...args)=>{ clearTimeout(t); t=setTimeout(()=>fn(...args), delay); }; }
 
-  // Build hierarchical folder tree: config/rendering, config/lighting etc
-  // Structure: {name, children: Map<name, node>, files: []}
+// Live-edit state
+const liveManager = getLiveConfigManager();
+let autoSaveEnabled = true;
+let liveEnabled = false;
+
+function getLiveToggleEls(){
+  return { live: $('toggle-live'), auto: $('toggle-autosave'), status: $('live-status') };
+}
+
+function updateLiveStatusPill(s) {
+  const el = $('live-status'); if (!el) return;
+  el.className = 'status-pill';
+  const map = {
+    'offline': ['offline', 'warn'],
+    'connecting': ['connecting...', 'warn'],
+    'connected': ['live ✓', 'ok'],
+    'bc-only': ['bc only', 'ok'],
+    'polling': ['polling', 'warn']
+  };
+  const [txt, cls] = map[s] || [s, 'warn'];
+  el.textContent = txt;
+  el.classList.add(cls);
+  // title for tooltip
+  el.title = `Live manager status: ${s}. Tab ${liveManager.tabId}`;
+}
+
+function initLiveUI() {
+  const { live, auto, status: statusEl } = getLiveToggleEls();
+  if (!live || !auto) return;
+  try {
+    const lsLive = localStorage.getItem('dungeoneers-live-enabled');
+    const lsAuto = localStorage.getItem('dungeoneers-live-autosave');
+    liveEnabled = lsLive === null ? true : lsLive === '1'; // default true for editor
+    autoSaveEnabled = lsAuto === null ? true : lsAuto === '1';
+  } catch {
+    liveEnabled = true; autoSaveEnabled = true;
+  }
+  live.checked = liveEnabled;
+  auto.checked = autoSaveEnabled;
+  if (liveEnabled) { try { liveManager.enable(); } catch {} } else { try { liveManager.disable(); } catch {} }
+
+  liveManager.onStatus(updateLiveStatusPill);
+  updateLiveStatusPill(liveManager.getStatus());
+
+  live.onchange = () => {
+    liveEnabled = live.checked;
+    try { localStorage.setItem('dungeoneers-live-enabled', liveEnabled ? '1' : '0'); } catch {}
+    if (liveEnabled) { liveManager.enable(); status('Live ON', 'ok'); }
+    else { liveManager.disable(); status('Live OFF', 'warn'); updateLiveStatusPill('offline'); }
+  };
+  auto.onchange = () => {
+    autoSaveEnabled = auto.checked;
+    try { localStorage.setItem('dungeoneers-live-autosave', autoSaveEnabled ? '1' : '0'); } catch {}
+    status(autoSaveEnabled ? 'Auto Save ON' : 'Preview only (no disk)', autoSaveEnabled ? 'ok' : 'warn');
+  };
+
+  // Subscribe to external changes for current file handling
+  liveManager.subscribe('*', async ({ category, name, data, source }) => {
+    if (!current) return;
+    if (category !== current.category || name !== current.name) return;
+    // Ignore if same as currentData (self echo already applied)
+    if (deepEqual(data, currentData)) return;
+    // If we have unsaved preview pending and source is sse (someone else saved), prompt
+    const isDirty = !deepEqual(currentData, lastSavedData);
+    if (isDirty) {
+      status(`External change ${category}/${name} — reload?`, 'warn');
+      // Show small banner? For MVP just status, and add reload button in title?
+      const titleEl = $('editor-title');
+      if (titleEl && !titleEl.querySelector('.ext-change')) {
+        const btn = document.createElement('button');
+        btn.className = 'btn btn-sm btn-secondary ext-change';
+        btn.textContent = 'Reload external';
+        btn.style.marginLeft = '12px';
+        btn.onclick = async () => {
+          currentData = clone(data);
+          lastSavedData = clone(data);
+          render();
+          status('External reloaded', 'ok');
+          btn.remove();
+        };
+        titleEl.appendChild(btn);
+      }
+    } else {
+      // Auto reload
+      currentData = clone(data);
+      lastSavedData = clone(data);
+      render();
+      status(`External update ${name} applied`, 'ok');
+    }
+  });
+}
+
+// Debounced save for live mode
+const debouncedLiveSave = debounce(async () => {
+  if (!current || !currentData) return;
+  if (!liveEnabled || !autoSaveEnabled) return;
+  try {
+    const el = $('live-status');
+    if (el) { el.textContent = 'syncing...'; el.className = 'status-pill warn'; }
+    const ok = await saveAsset(current.category, current.name, currentData);
+    if (ok) {
+      lastSavedData = clone(currentData);
+      status('Live saved', 'ok');
+      liveManager.publishAssetUpdated(current.category, current.name);
+      // status pill will go back to connected via SSE echo or after save
+      setTimeout(() => updateLiveStatusPill(liveManager.getStatus()), 500);
+    } else {
+      status('Live save failed', 'err');
+      updateLiveStatusPill(liveManager.getStatus());
+    }
+  } catch (e) {
+    status('Live save error', 'err');
+    updateLiveStatusPill(liveManager.getStatus());
+  }
+}, 350);
+
+function triggerLiveChange() {
+  if (!liveEnabled || !current || !currentData) return;
+  // Broadcast via BC instant
+  try {
+    liveManager.publishPreview(current.category, current.name, currentData, { source: 'editor' });
+    // update path cache in memory for fast immediate? liveManager already does setPathCache for receivers, but not for editor's own getAsset? we have currentData already
+  } catch (e) { console.warn('live preview failed', e); }
+  if (autoSaveEnabled) {
+    debouncedLiveSave();
+  } else {
+    status('Preview (unsaved)', 'warn');
+  }
+}
+
+async function init() {
+  initLiveUI();
+  const list = await getAssetList();
+  const tree = $("asset-tree"); if (!tree) return; tree.innerHTML = "";
+
   const root = { name: 'assets', children: new Map(), files: [] };
   for(const a of list){
-    const parts = a.category.split('/'); // e.g. ['config','rendering']
+    const parts = a.category.split('/');
     let cur = root;
     for(const part of parts){
       if(!cur.children.has(part)){
@@ -31,7 +167,6 @@ async function init() {
     cur.files.push(a);
   }
 
-  // Root assets folder node UI
   const rootEl = document.createElement("div"); rootEl.className = "tree-node";
   const rootHdr = document.createElement("div"); rootHdr.className = "tree-folder";
   rootHdr.innerHTML = `<span class="tree-chevron">▼</span><i class="ph ph-folder tree-icon"></i><span>assets</span>`;
@@ -41,10 +176,9 @@ async function init() {
   rootEl.appendChild(rootHdr); rootEl.appendChild(rootBody); tree.appendChild(rootEl);
 
   function renderFolder(node, container, depth){
-    // depth for padding
     const sortedFolders = [...node.children.values()].sort((a,b)=>a.name.localeCompare(b.name));
     for(const child of sortedFolders){
-      const catPath = child.fullPath; // e.g. config/rendering
+      const catPath = child.fullPath;
       const folder = document.createElement("div"); folder.className = "tree-node";
       const hdr = document.createElement("div"); hdr.className = "tree-folder";
       hdr.style.paddingLeft = (20 + depth*12) + "px";
@@ -58,7 +192,6 @@ async function init() {
         nowCol ? collapsed.add(catPath) : collapsed.delete(catPath);
       };
       folder.appendChild(hdr); folder.appendChild(body);
-      // recurse subfolders first, then files
       renderFolder(child, body, depth+1);
       child.files.sort((a,b)=>a.name.localeCompare(b.name)).forEach(a => {
         const item = document.createElement("div");
@@ -70,43 +203,64 @@ async function init() {
       });
       container.appendChild(folder);
     }
-    // files directly under this node (should only happen for root assets children handling above, but include)
-    if(depth===0){
-      // handled in recursion for root children
-    }
   }
 
   renderFolder(root, rootBody, 0);
 
   const first = tree.querySelector(".tree-file"); if (first) first.click();
-  $("btn-save").onclick = saveCurrent;
+  const btnSave = $("btn-save");
+  if (btnSave) btnSave.onclick = saveCurrent;
 
-  // Resizer
   const resizer = $("sidebar-resizer"), sidebar = $("sidebar");
   let dragging = false;
-  resizer.onmousedown = e => { dragging = true; document.body.style.cursor = "col-resize"; e.preventDefault(); };
-  document.onmousemove = e => { if (!dragging) return; const w = Math.max(180, Math.min(480, e.clientX)); sidebar.style.width = w + "px"; };
-  document.onmouseup = () => { dragging = false; document.body.style.cursor = ""; };
+  if (resizer && sidebar) {
+    resizer.onmousedown = e => { dragging = true; document.body.style.cursor = "col-resize"; e.preventDefault(); };
+    document.onmousemove = e => { if (!dragging) return; const w = Math.max(180, Math.min(480, e.clientX)); sidebar.style.width = w + "px"; };
+    document.onmouseup = () => { dragging = false; document.body.style.cursor = ""; };
+  }
+
+  try { window.EditorLive = { liveManager, getCurrent: ()=>({current, currentData}), triggerLiveChange }; } catch {}
 }
 
 async function selectAsset(cat, name, el) {
   document.querySelectorAll(".tree-file").forEach(i => i.classList.remove("active"));
   if (el) el.classList.add("active");
   current = { category: cat, name };
-  $("editor-title").textContent = `assets / ${cat} / ${name}.json`;
+  const titleEl = $("editor-title");
+  if (titleEl) titleEl.textContent = `assets / ${cat} / ${name}.json`;
   currentData = await getAsset(cat, name);
+  lastSavedData = clone(currentData);
   mode = "visual"; render();
+  // Clean external change button
+  const title = $('editor-title');
+  if (title) { const ext = title.querySelector('.ext-change'); if (ext) ext.remove(); }
 }
 
 function render() {
-  const panel = $("editor-panel");
+  const panel = $("editor-panel"); if (!panel) return;
   panel.innerHTML = `<div class="tabs"><button class="tab ${mode==='visual'?'active':''}" id="tab-visual">Visual Editor</button><button class="tab ${mode==='raw'?'active':''}" id="tab-raw">Raw JSON</button></div><div id="tab-content"></div>`;
-  $("tab-visual").onclick = () => { syncFromUI(); mode = "visual"; render(); };
-  $("tab-raw").onclick = () => { syncFromUI(); mode = "raw"; render(); };
+  const tabV = $("tab-visual"), tabR = $("tab-raw");
+  if (tabV) tabV.onclick = () => { syncFromUI(); mode = "visual"; render(); };
+  if (tabR) tabR.onclick = () => { syncFromUI(); mode = "raw"; render(); };
   if (mode === "visual") renderVisual(); else renderRaw();
 }
-function renderVisual() { const c = $("tab-content"); c.innerHTML = ""; if (!currentData) return; const f = document.createElement("div"); f.className = "form-root"; buildForm(f, currentData, ""); c.appendChild(f); }
-function renderRaw() { $("tab-content").innerHTML = `<div class="field-group"><label class="field-label">JSON Definition</label><textarea class="json-editor" id="json-ta" spellcheck="false">${JSON.stringify(currentData, null, 2)}</textarea><div class="field-hint">Edit JSON directly. Must remain valid. Switch back to Visual to see structured view.</div></div>`; }
+function renderVisual() { const c = $("tab-content"); if (!c) return; c.innerHTML = ""; if (!currentData) return; const f = document.createElement("div"); f.className = "form-root"; buildForm(f, currentData, ""); c.appendChild(f); }
+function renderRaw() {
+  const tc = $("tab-content"); if (!tc) return;
+  tc.innerHTML = `<div class="field-group"><label class="field-label">JSON Definition</label><textarea class="json-editor" id="json-ta" spellcheck="false">${JSON.stringify(currentData, null, 2)}</textarea><div class="field-hint">Edit JSON directly. Must remain valid. Switch back to Visual to see structured view. Live Edit will preview on valid JSON if enabled.</div></div>`;
+  const ta = document.getElementById('json-ta');
+  if (ta) {
+    ta.oninput = () => {
+      try {
+        const parsed = JSON.parse(ta.value);
+        currentData = parsed;
+        triggerLiveChange();
+      } catch {
+        // invalid, don't broadcast
+      }
+    };
+  }
+}
 
 function buildForm(container, obj, path) {
   if (Array.isArray(obj)) {
@@ -115,40 +269,44 @@ function buildForm(container, obj, path) {
       const itemEl = document.createElement("div"); itemEl.className = "array-item";
       const header = document.createElement("div"); header.className = "array-header";
       header.innerHTML = `<span class="array-index">#${i}${item.name ? ' · ' + item.name : item.id ? ' · id ' + item.id : ''}</span><button class="btn-icon" data-del="${path}[${i}]">✕</button>`;
-      header.querySelector("button").onclick = () => { obj.splice(i, 1); render(); };
+      header.querySelector("button").onclick = () => { obj.splice(i, 1); render(); triggerLiveChange(); };
       itemEl.appendChild(header); const body = document.createElement("div"); body.className = "array-body";
       buildForm(body, item, `${path}[${i}]`); itemEl.appendChild(body); wrap.appendChild(itemEl);
     });
     const addBtn = document.createElement("button"); addBtn.className = "btn btn-sm btn-secondary"; addBtn.textContent = "+ Add item";
-    addBtn.onclick = () => { obj.push({}); render(); }; wrap.appendChild(addBtn); container.appendChild(wrap); return;
+    addBtn.onclick = () => { obj.push({}); render(); triggerLiveChange(); }; wrap.appendChild(addBtn); container.appendChild(wrap); return;
   }
   if (obj !== null && typeof obj === "object") {
     for (const key of Object.keys(obj)) {
-      if (key.startsWith('_')) continue; // skip _readme, _docs internal helpers
+      if (key.startsWith('_')) continue;
       const val = obj[key]; const fp = path ? `${path}.${key}` : key;
       const fg = document.createElement("div"); fg.className = "field-group";
       const lbl = document.createElement("label"); lbl.className = "field-label"; lbl.textContent = key.replace(/([A-Z])/g, ' $1').replace(/^./, s => s.toUpperCase()); fg.appendChild(lbl);
       if (typeof val === "number") {
         const row = document.createElement("div"); row.style.display = "flex"; row.style.gap = "8px"; row.style.alignItems = "center";
         const inp = document.createElement("input"); inp.type = "number"; inp.className = "field-input"; inp.value = val; inp.step = "any"; inp.style.flex = "1";
-        inp.oninput = () => setByPath(currentData, fp, parseFloat(inp.value) || 0); row.appendChild(inp);
-        if (val >= 0 && val <= 1 && key.match(/roughness|metal|chance|weight|strength|opacity|scale|mult/i) || key === "metal") {
-          const sl = document.createElement("input"); sl.type = "range"; sl.min = "0"; sl.max = "1"; sl.step = "0.01"; sl.value = val; sl.style.flex = "2";
-          sl.oninput = () => { inp.value = sl.value; setByPath(currentData, fp, parseFloat(sl.value)); };
-          inp.oninput = () => { sl.value = inp.value; setByPath(currentData, fp, parseFloat(inp.value) || 0); }; row.appendChild(sl);
+        const commit = () => { setByPath(currentData, fp, parseFloat(inp.value) || 0); triggerLiveChange(); };
+        inp.oninput = () => { setByPath(currentData, fp, parseFloat(inp.value) || 0); triggerLiveChange(); if (sl) sl.value = inp.value; };
+        row.appendChild(inp);
+        let sl = null;
+        if ((val >= 0 && val <= 1 && key.match(/roughness|metal|chance|weight|strength|opacity|scale|mult/i)) || key === "metal" || key.toLowerCase().includes('factor') || key.toLowerCase().includes('amount') || key.toLowerCase().includes('speed')) {
+          sl = document.createElement("input"); sl.type = "range"; sl.min = "0"; sl.max = key.toLowerCase().includes('speed') ? "20" : "1"; sl.step = key.toLowerCase().includes('speed') ? "0.1" : "0.01"; sl.value = val; sl.style.flex = "2";
+          if (val > 1) { sl.max = String(Math.max(20, val*2)); }
+          sl.oninput = () => { inp.value = sl.value; setByPath(currentData, fp, parseFloat(sl.value)); triggerLiveChange(); };
+          row.appendChild(sl);
         }
         fg.appendChild(row);
       } else if (typeof val === "string") {
         const inp = document.createElement("input"); inp.type = "text"; inp.className = "field-input"; inp.value = val;
-        inp.oninput = () => setByPath(currentData, fp, inp.value); fg.appendChild(inp);
+        inp.oninput = () => { setByPath(currentData, fp, inp.value); triggerLiveChange(); }; fg.appendChild(inp);
       } else if (typeof val === "boolean") {
         const tog = document.createElement("label"); tog.className = "toggle";
         tog.innerHTML = `<input type="checkbox" ${val ? "checked" : ""}><span class="toggle-slider"></span><span style="margin-left:8px;font-size:13px;color:var(--text-dim)">${val ? "enabled" : "disabled"}</span>`;
-        tog.querySelector("input").onchange = e => { setByPath(currentData, fp, e.target.checked); tog.querySelector("span:last-child").textContent = e.target.checked ? "enabled" : "disabled"; };
+        tog.querySelector("input").onchange = e => { setByPath(currentData, fp, e.target.checked); tog.querySelector("span:last-child").textContent = e.target.checked ? "enabled" : "disabled"; triggerLiveChange(); };
         fg.appendChild(tog);
       } else if (val === null) {
         const inp = document.createElement("input"); inp.type = "text"; inp.className = "field-input"; inp.placeholder = "null"; inp.value = "";
-        inp.oninput = () => setByPath(currentData, fp, inp.value === "" ? null : inp.value); fg.appendChild(inp);
+        inp.oninput = () => { setByPath(currentData, fp, inp.value === "" ? null : inp.value); triggerLiveChange(); }; fg.appendChild(inp);
         const hint = document.createElement("div"); hint.className = "field-hint"; hint.textContent = "Empty = null"; fg.appendChild(hint);
       } else if (Array.isArray(val) && val.length === 3 && val.every(n => typeof n === "number")) {
         const row = document.createElement("div"); row.style.display = "flex"; row.style.gap = "8px"; row.style.alignItems = "center";
@@ -157,12 +315,11 @@ function buildForm(container, obj, path) {
         const col = document.createElement("input"); col.type = "color"; col.value = toHex(val); col.style.width = "44px"; col.style.height = "36px"; col.style.border = "none"; col.style.borderRadius = "6px"; col.style.cursor = "pointer";
         const nums = document.createElement("div"); nums.style.display = "flex"; nums.style.gap = "4px"; nums.style.flex = "1";
         const inputs = [0, 1, 2].map(i => { const inp = document.createElement("input"); inp.type = "number"; inp.className = "field-input"; inp.value = val[i]; inp.min = "0"; inp.max = "255"; inp.style.width = "0"; inp.style.flex = "1"; return inp; });
-        const update = () => { const arr = inputs.map(inp => parseInt(inp.value) || 0); col.value = toHex(arr); setByPath(currentData, fp, arr); };
-        col.oninput = () => { const arr = fromHex(col.value); inputs.forEach((inp, i) => inp.value = arr[i]); setByPath(currentData, fp, arr); };
+        const update = () => { const arr = inputs.map(inp => parseInt(inp.value) || 0); col.value = toHex(arr); setByPath(currentData, fp, arr); triggerLiveChange(); };
+        col.oninput = () => { const arr = fromHex(col.value); inputs.forEach((inp, i) => inp.value = arr[i]); setByPath(currentData, fp, arr); triggerLiveChange(); };
         inputs.forEach(inp => inp.oninput = update); row.appendChild(col); inputs.forEach(inp => nums.appendChild(inp)); row.appendChild(nums); fg.appendChild(row);
       } else if (Array.isArray(val)) { const sub = document.createElement("div"); sub.className = "nested-array"; buildForm(sub, val, fp); fg.appendChild(sub);
       } else if (typeof val === "object") {
-        // Show nested note fields as hint, not editable forest
         if (key === 'note' || key === 'structure' || key === 'delegation') {
           const hint = document.createElement("div"); hint.className = "field-hint"; hint.style.whiteSpace = "pre-wrap";
           hint.textContent = typeof val === 'string' ? val : JSON.stringify(val, null, 2);
@@ -175,7 +332,7 @@ function buildForm(container, obj, path) {
     }
   }
 }
-function setByPath(obj, path, value) { const parts = path.replace(/\[(\d+)\]/g, '.$1').split('.').filter(Boolean); let cur = obj; for (let i = 0; i < parts.length - 1; i++) cur = cur[parts[i]]; cur[parts[parts.length - 1]] = value; }
-function syncFromUI() { if (mode === "raw") { const ta = document.getElementById("json-ta"); if (ta) { try { currentData = JSON.parse(ta.value); } catch (e) { status("Invalid JSON — fix in raw mode", "err"); mode = "raw"; throw e; } } } }
-async function saveCurrent() { try { syncFromUI(); } catch { return; } if (!current) return; const ok = await saveAsset(current.category, current.name, currentData); status(ok ? "Saved to disk" : "Save failed", ok ? "ok" : "err"); }
+function setByPath(obj, path, value) { const parts = path.replace(/\[(\d+)\]/g, '.$1').split('.').filter(Boolean); let cur = obj; for (let i = 0; i < parts.length - 1; i++) cur = cur[parts[i]]; if (cur) cur[parts[parts.length - 1]] = value; }
+function syncFromUI() { if (mode === "raw") { const ta = document.getElementById("json-ta"); if (ta) { try { currentData = JSON.parse(ta.value); triggerLiveChange(); } catch (e) { status("Invalid JSON — fix in raw mode", "err"); mode = "raw"; throw e; } } } }
+async function saveCurrent() { try { syncFromUI(); } catch { return; } if (!current) return; const ok = await saveAsset(current.category, current.name, currentData); if (ok) { lastSavedData = clone(currentData); liveManager.publishAssetUpdated(current.category, current.name); } status(ok ? "Saved to disk" : "Save failed", ok ? "ok" : "err"); }
 init();

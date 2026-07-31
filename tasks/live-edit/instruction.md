@@ -1,210 +1,114 @@
-# Live-Edit — Dungeoneers Task 7 (ROUGH DRAFT)
+# Live-Edit System — Dungeoneers Task 7
 
-> Current workflow: edit JSON in editor.html -> Save (PUT /api/assets/...) -> go to game.html -> press R to reload/regen to see changes. Slow for fine-tuning flicker, chamfer roughness, fog, bevelStart, etc.
+> Right now the designer workflow is: edit a `.json` file in `editor.html` → press Save → switch to `game.html` → press R to regenerate / reload to see the change. This is slow when fine-tuning subtle values like light flickering intensity, fog density, or the roughness and bevel shape of walls.
 
-> Goal: Unity-like experience with two Chrome tabs open (editor + game) — tweaking a value in editor immediately reflects in running game without reload. Then explicit Save persists to .json. Or alternatively, live tweak IS save, but reversible.
+> Goal: achieve a Unity-like live tuning loop. With two Chrome tabs open side-by-side (Editor on the left, Game on the right), changing a value in the Editor should be visible in the running Game within a short moment, without requiring a full reload. Saving should still persist the value to disk so that a later reload keeps it — unlike Unity play-mode where tweaks are lost unless saved.
 
-## 1. Player/Designer Intent
+## 1. Designer Intent
 
-- As a designer I want to fine-tune light flicker speed/amount, torchColors, chamfer floorSize/ceilingSize/wallSize, roughness multiplier of chamfers, materials-proc bevelStart/bevelDepth/cornerRound/roundness/groutDepth/normalFactor, fog base/squared/color, ambient/sun, etc while watching game tab.
-- Workflow: open editor.html and game.html side-by-side. In editor, enable "Live Edit". Drag slider for `flickerAmount` or `materials-proc chamfer roughness` -> game tab updates within ~100-300ms.
-- If Live Edit OFF, old behavior (requires Save + R) must still work. No regression.
-- When Live Edit changes happen, they are ephemeral in game memory unless saved. Option: "Auto Save" toggle vs "Live Preview (unsaved)" + Save button commits to disk. Decide architecture. Prefer:
-  - Option A (Recommended for MVP): live edit = auto save (every tweak does PUT). Simple. Game gets notified via server. This matches current Save = PUT semantics already. Risk: spam PUT.
-  - Option B (Better UX): Editor holds draft, broadcasts via BroadcastChannel or via server transient endpoint, game applies temporary override. Only when hitting Save does it persist. Allows revert.
-  - Hybrid: Implement both - immediate broadcast via BroadcastChannel/localStorage for 0 latency, plus debounced PUT after 500ms if Auto Save enabled. Provide revert button.
-- Must support many configs: lighting, sprites, light-types, rendering, pbr, pom, ao, chamfer, corners, raymarch, fog, materials-proc, palette, player, generator, discovery, map.
+As a designer I want to:
 
-## 2. Architecture — Proper Long-Term System
+- Open `editor.html` and `game.html` in two tabs of the same browser (same origin) and keep them both running.
+- In the Editor, enable a live-edit mode. While live-edit is enabled, tweaking values like light flicker speed, flicker amount, torch colors, chamfer sizes for floor / ceiling / wall, fog density and color, ambient and sun properties, materials-proc fields that control bevel and roughness, etc, should update the Game view live.
+- Understand clearly whether my tweak is only a preview or already persisted to disk. Ideally there is a way to see live preview instantly, and then commit to disk explicitly, or have an auto-save option that debounces writes. You can choose a persistence model that is intuitive and efficient for long-term development, but it must be documented.
+- When live-edit is OFF, the old workflow must remain exactly the same: editing requires explicit Save and then pressing R (or reloading) to see changes. No regression for players or for the existing debug toggles (1-8, M, R, G, V/B, P).
 
-### Server (`src/server/server.js`)
+The intent is *not* to rebuild the entire dungeon every time a render parameter changes. The system should distinguish which configs can be hot-reloaded instantly, which need a heavier but still live rebuild (for example procedural material atlases), and which fundamentally change level topology and therefore require an explicit regeneration.
 
-Current server: simple HTTP serving static + REST GET/PUT /api/assets/<category>/<name>. No live notify.
+## 2. Project Structure
 
-Needed:
-- Add SSE endpoint `GET /api/watch` or `GET /api/assets/watch` that keeps connection open and emits JSON events on asset changes.
-- On PUT success, server writes file and then broadcasts to all SSE clients: `{ type: 'asset-updated', category, name, path, timestamp }`. Optionally include data payload, or client re-fetches via GET for simplicity.
-- Manage SSE clients list: set, on close remove. Use `res.writeHead(200, { 'Content-Type': 'text/event-stream', 'Cache-Control':'no-cache', 'Connection':'keep-alive', ... })`
-- Also consider BroadcastChannel not needing server, but SSE is source of truth across browsers and server restarts. Should support fallback polling every 2s if SSE disconnects.
-- Security: keep existing safeCategory/safeName checks. SSE endpoint no auth needed for local dev.
-- Alternative: WebSocket — but SSE simpler for one-way broadcast. Don't add ws deps unless needed. Keep vanilla Node http.
-- Also add `GET /api/live-config` or version/etag support to avoid re-fetching same? Could use If-None-Match.
-- Keep file watcher optional: if editor edits file directly on disk (not via API, e.g. external IDE), server could watch assets dir via fs.watch and broadcast. Nice to have but not required for MVP — only API PUTs need broadcast.
+This task touches the existing data-driven architecture in `src/`:
 
-### Client Config Layer (`src/config/config.js`)
+- **Server** — currently a vanilla Node `http` server serving static files and exposing `GET /api/assets` and `GET/PUT /api/assets/<category>/<name>` for JSON persistence. It has no push notification today.
+- **Config loader** — `src/config/config.js` holds a cache per logical config name (like `fog`, `lighting`, `chamfer`, etc) mapping to one or more candidate file paths, with helpers `getAsset`, `saveAsset`, `invalidateCache`, `getAllRenderConfigs`.
+- **Editor** — `src/editor.html` + `src/editor.js` builds a hierarchical tree from the asset list and renders a visual form (number inputs with sliders, color pickers, toggles). Save does a PUT.
+- **Game orchestration** — `src/core/game.js` loads all configs once at startup, merges them, generates the dungeon, creates `GPURenderer`, `Player`, `DiscoveryManager`, `UI`, and drives the loop.
+- **Renderer** — `src/render/renderer-gpu.js` builds procedural PBR atlases from material JSONs + proc config, creates GL textures, compiles shaders, and draws each frame reading many values from config (fog, lighting, chamfer, corners, shadows, etc). Currently it assumes config is static after init.
+- **Light system** — `src/systems/lights.js` owns sun, ambient, and a list of point lights created from dungeon sprites, with organic flicker logic per light. It can update from a new config but currently only does so at init / on map regen.
 
-Current: _cache per logical name, fetch candidates, clone. No live.
+You may create new modules inside `src/config/` or elsewhere to keep responsibilities clean, and you will likely need to modify server, config, editor, game, renderer, lights, discovery/player/map UI, plus styles.
 
-Needed new architecture:
+## 3. Live-Edit Behavior
 
-- `ConfigLive` or `LiveConfigManager` class:
-  - owns current cache (reuse _caches)
-  - subscribe to SSE: `new EventSource('/api/watch')` (or '/api/assets/watch' to stay under /api/assets prefix? Better /api/watch)
-  - on message `asset-updated`, fetch new asset via `getAsset` or `getConfig` logical? Invalidate cache for that logical name (reverse lookup from path to logical names using CONFIG_PATHS)
-  - dispatch `CustomEvent` on window: `dungeoneers-config-live-updated` with detail { logicalName, category, name, data }
-  - also expose `onLiveUpdate(logicalName|category/name|* , callback)` registration.
-  - debounce handling: if many rapid PUTs, coalesce.
-  - provide `enableLive() / disableLive()` and auto-reconnect logic.
-  - should work in both game.html and editor.html contexts (editor also might want to know external edit?).
-  - also consider BroadcastChannel fallback: `new BroadcastChannel('dungeoneers-live-edit')` — when editor does live tweak it posts message immediately without waiting server SSE. Game tab listens. This gives sub-100ms latency even if server PUT still pending. Server SSE remains source of truth for persistence across reloads.
-  - Need polling fallback: setInterval re-fetch asset list or check etag if EventSource not supported.
+### Cross-tab communication
 
-- Keep backward compat: existing `getConfig`, `getAsset` still work sync cache first, but now cache may be invalidated externally, so they should expose `invalidateCache` usage already exists. Use it.
+The Editor and Game run in separate tabs. When the Editor tweaks a value, the Game should learn about it quickly without hammering the server with constant polling.
 
-- Add utility `getLiveConfigManager()` singleton.
+Think about native browser primitives that allow same-origin tabs to talk (for instant preview) and about a server push mechanism so that even a tab that was reloaded later learns that a file changed on disk. If you introduce a server push endpoint, it must coexist with the existing REST API, respect the existing path-traversal safety checks, and clean up connections on close to avoid leaks. No new runtime dependencies should be added — stay on vanilla Node built-ins and standard Web APIs.
 
-### Editor (`src/editor.js`)
+### Editor
 
-Current: generic tree, visual form building number inputs with range sliders for 0..1, color picker for [R,G,B], save via PUT.
+- The Editor should have a clear UI to turn live-edit on and off, and ideally a separate control for whether live tweaks are persisted automatically or only previewed until explicit Save. Persist the toggles in `localStorage` so the choice survives reload.
+- While live is on, changing any field (including raw JSON when valid) should broadcast the current file content to other tabs immediately for preview. If auto-save is on, the same change should be persisted to disk via PUT but debounced / throttled so dragging a slider does not flood the server with dozens of writes per second. Show some status (connecting, connected, syncing, offline, preview-only) so the designer knows the link state.
+- If another tab (or an external editor) saves the same file that the current Editor is editing, the Editor should notice. If the current file is not dirty, it can auto-reload; if it is dirty, it should warn and offer to reload rather than silently overwriting.
+- The live indicator text and status pill should not require an extra library.
 
-Needed for live-edit:
+### Game
 
-- Add topbar UI:
-  - Toggle: `Live Edit` [ON/OFF] — checkbox. When ON, any `oninput` change triggers live broadcast + debounced PUT.
-  - Toggle: `Auto Save` [ON/OFF] — if ON, live edit auto persists; if OFF, live edit is preview only and Save button still required.
-  - Status pill showing connection state to SSE / BroadcastChannel.
-  - Possibly indicator "Unsaved changes" count.
+- The Game is a subscriber: it should listen for live config updates and apply them without requiring a full reload.
+- Not all configs have the same cost:
+  - **Instant visual params** that are just shader uniforms or light properties: fog, ambient and sun, chamfer trim and shading, corner rounding flags, player movement and bob, discovery trail appearance, map colors, debug HUD. These should be hot-reloadable in place — updating the merged config and telling the renderer or subsystem to use new values next frame.
+  - **Material appearance** that affects procedural texture generation (for example bevel start / depth, corner rounding of bricks, grout depth, normal strength, roughness variation, height scale). This needs an asynchronous atlas rebuild and texture upload, but not a dungeon regeneration. Debounce it so rapid slider movement triggers only one rebuild after the user pauses.
+  - **Level topology** that changes dungeon layout, room counts, or sprite placement counts and rules. Changing these should *not* teleport the player or rebuild the level implicitly. Instead show a non-intrusive banner that regeneration is required (press R) and clear it after regeneration.
+- The Game should give subtle feedback when a live update was applied (for example a short HUD toast). When live-edit is disabled, the Game should show *no* badge or indicator at all — the live UI should be completely absent unless live is active.
+- Existing behavior (R regen, M map, 1-8 toggles, grid vs free FPS, view bob presets) must stay working.
+- Ensure cache invalidation: after a disk change, a subsequent regen must fetch fresh data from the server, not a stale in-memory cache.
 
-- When `setByPath` is called (visual editor input), if live enabled:
-  - Immediate: post via BroadcastChannel `postMessage({type:'preview', category, name, data: clone(currentData)})`
-  - Debounced PUT: schedule `saveAsset` after 350ms idle (use lodash-like debounce custom). Show status "Live syncing..."
+### Renderer, Lights, Materials
 
-- Also when receiving SSE `asset-updated` from other tab (or same tab external edit), reload that asset if not currently dirty? Simple: if current editing same file and has unsaved changes, prompt or merge.
+- The renderer currently reads many values from config each frame via helper lookups, but some are cached at init. Make it possible to update those values live without reconstructing FBOs or recompiling shaders.
+- For material atlas live updates, provide a path to replace GL textures with newly generated atlases (based on current material definitions and proc config) without leaking old textures.
+- Light manager should be able to update sun / ambient from a new lighting config, and update existing point lights (intensity, radius, flicker speed/amount, color) from new sprite / light-type definitions without recreating the whole light list or replaying placement.
+- Discovery, player, and map UI should be patchable with new config values if their dedicated JSON changed.
 
-- Keep raw JSON tab in sync: if user edits raw, also trigger live.
+## 4. Persistence Semantics
 
-- Need to handle performance: deep clone each keystroke expensive; use structuredClone or JSON parse trick but ok for small JSONs.
+You need to decide and document a model that fits the "Unity but with save" intent:
 
-### Game (`src/core/game.js` + renderers + systems)
+- One reasonable model: live-edit equals auto-save — every tweak does a debounced PUT, server writes file and notifies other tabs, so persistence is immediate.
+- Another: preview-only — live tweaks are broadcast cross-tab but not written until Save is pressed. This allows revert on reload.
+- A hybrid is also acceptable: instant preview via cross-tab channel for zero-latency feedback, plus debounced auto-save if the user enabled it, with a visual distinction between preview and saved state.
 
-Current: Game loads all configs once at init via `getAllRenderConfigs` and merges into single object. Then renderer init gets config. No dynamic updates.
+Whatever you choose, handle conflicts: last-write-wins is acceptable for local development, but avoid losing the designer's unsaved work silently when an external change arrives.
 
-Needed:
+## 5. Architecture Quality
 
-- Game subscribes to live config manager: `liveManager.on('*', (event) => { handle live update })`
+- Keep the codebase ES modules, no new runtime dependencies, no emoji in code.
+- Follow existing patterns: config mapping in `config.js` is the single source of truth for file paths; avoid duplicating path logic elsewhere.
+- Avoid god classes: keep server concerns (client set, broadcast) in server, cross-tab bus and subscription handling in a dedicated config live module, rendering updates in renderer, light updates in light manager, discovery updates in discovery.
+- Avoid magic numbers: all tunable values for live-edit itself (if you introduce timeouts, debounce intervals, heartbeat) should have named constants with sensible defaults.
+- Think long-term: the system should easily support future configs added in later tasks without requiring a rewrite.
+- No memory leaks: close EventSource, BroadcastChannel, timers on disable / page unload / server request close.
 
-- Must categorize configs into hot-reloadable vs regen-required:
+## 6. Acceptance Criteria (intent, not prescribed solution)
 
-  - **Instant uniform update (no atlas regen, no map regen):**
-    - `lighting`: ambient.level/color/worldMul, sun dir/intensity/color, torchColors palette, maxLights (partial)
-    - `fog`: base, squared, color
-    - `sprites`, `light-types`: flickerSpeed/Amount, intensity, radius, color, phase variance — just update LightManager instances without re-placement
-    - `rendering`, `pbr`, `ao`, `shadows`, `raymarch`, `chamfer`, `corners`: many uniforms are already read each frame via _resolveConfigValue but some are cached; need to make renderer read live and update uniform values without rebuilding FBOs
-    - `discovery`, `map`, `player`, `debug`: hud timeout, player moveSpeed/turnSpeed, bob presets
+- [ ] With two tabs open (Editor + Game), enabling live-edit and changing a fog-related value, a chamfer size, or a light flicker-related value in the Editor is reflected in the Game view within a short time (a few hundred milliseconds for instant params, up to about a second for material rebuilds) without pressing R or reloading the page.
+- [ ] When live-edit is disabled, changing a config in the Editor does *not* affect the running Game until Save + R (or reload) is performed — old workflow preserved.
+- [ ] When live-edit is enabled, the Game shows some subtle indicator that live is connected; when live is disabled, the Game shows no live indicator at all.
+- [ ] A heavy material-related config change (for example a bevel or roundness field) triggers an async rebuild and texture upload without crashing WebGL and without requiring a dungeon regeneration.
+- [ ] A generator / topology-related config change does not regenerate the level automatically; instead the Game shows a banner that regeneration is required, and pressing R rebuilds with the new values.
+- [ ] No console errors appear during live updates, and existing debug keys and map overlay continue to work.
+- [ ] The implementation handles rapid slider dragging efficiently (does not flood the server with unbounded PUTs and does not queue unbounded atlas rebuilds).
+- [ ] The server still blocks path traversal and serves assets correctly; any new push endpoint cleans up clients on close and does not leak memory.
+- [ ] The solution is built with vanilla JS + browser APIs, no extra runtime dependencies.
 
-  - **Requires async atlas/procedural rebuild but NOT full map regen:**
-    - `materials-proc`: bevelStart, bevelDepth, cornerRound, roundness, groutDepth, normalFactor, heightScale — triggers `generateMaterialAtlases` async and texture upload. Should be queued, not per frame. Show loading indicator.
-    - `palette`, `pom`, `chamfer` textures if they affect atlas.
+## 7. Out of Scope
 
-  - **Requires dungeon regen (R):**
-    - `generator`: roomCount, zone progression, sprite placement counts/minTorchDist/corridorBias etc. If these change live, we could show HUD "Regen required press R" or auto-regen after debounce. Better to require explicit R to avoid teleporting player, but indicator.
+- Multi-user collaborative editing with conflict resolution beyond last-write-wins and a simple reload prompt.
+- Hot-reloading of JS or GLSL shader source code itself.
+- Undo / redo history for live edits.
+- Persistent preview that survives browser close without ever being saved.
+- Audio or gameplay logic changes.
 
-- Implementation pattern for Game:
-
-```js
-this._liveUnsub = liveConfigManager.subscribe('*', async ({ logical, data }) => {
-  const cfg = this.cfg; // merged
-  // update merged cache
-  cfg[logical] = data;
-  await this._applyLiveConfig(logical, data);
-});
-```
-
-- `_applyLiveConfig(logical, data)` switch:
-
-  - if fog: this.renderer.updateFog(data) — need method to just update fog uniform cache
-  - if lighting: this.renderer.lightManager.updateFromConfig(data) + update torchColors
-  - if sprites: LightManager.setFromMap? or update flicker params per sprite without re-placing
-  - if materials-proc: trigger async atlas rebuild: `const atl = generateMaterialAtlases(..., data); this.renderer.reuploadAtlases(atl)`
-  - if chamfer/corners: update uniform cache in renderer
-  - if rendering/pbr/ao etc: this.renderer._resolveToggles(newCfg) or update config reference and next frame will pick up if reading from cfg each frame
-
-- Need to expose `renderer.updateConfig(partialCfg)` that does minimal work.
-
-- Player: `player.setConfig(newCfg)` already exists — call live.
-
-- Discovery: update animationDuration, trail color etc via `discovery.updateConfig` new method.
-
-- Need to ensure light flicker tuning appears instant: the flicker function uses flickerSpeed/Amount per light — these are per-light properties from dungeon.sprites but also could be globally scaled via light-types.json? For task 6, flickerSpeed/Amount stored per sprite instance generated deterministically from config ranges. Live editing range should affect: either existing lights update proportionally, or re-randomize with same seed but new range. Simpler: on generator config live update, show regen indicator, not instant. But for light-types.json archetypes, if torch archetype changes flicker base, apply to all existing lights of that type.
-
-- Also need to support roughness multiplier of chamfers: where is chamfer roughness? config/geometry/chamfer.json contains rough? Should be live uniform.
-
-- Need HUD indicator when live update applied: e.g., small toast "Live: fog updated".
-
-### Optional Advanced: Material Live Rebuild
-
-- Currently `generateMaterialAtlases` uses wall/floor/ceil JSONs + proc config. It builds canvas textures sync but heavy.
-- Provide debounced rebuild queue (500ms) so slider drag doesn't rebuild 60 times.
-- Use Web Worker? Not needed for MVP but architecture should allow.
-
-### Persistence Semantics
-
-- Decide: live edit == save vs preview.
-- Proposed final UX:
-  - Toggle `Live Preview` (BroadcastChannel only, no PUT) -> game updates but disk not written. "Save" button persists currentData.
-  - Toggle `Live + AutoSave` (BroadcastChannel + debounced PUT) -> tweak immediately visible AND saved to disk, so reload keeps it.
-  - Status: if preview-only, show "Unsaved live preview active" warning.
-- For initial implementation, implement AutoSave mode (simpler) and keep architecture open for preview-only via BroadcastChannel.
-
-### Testing
-
-- Unit:
-  - ConfigLive manager invalidate logic: CONFIG_PATHS reverse lookup
-  - Server SSE: broadcast on PUT
-  - Game _applyLiveConfig handles known types, no throw on unknown
-  - Materials rebuild debounced
-
-- E2E:
-  - Open game, open editor in second tab/page, change fog.json via PUT API directly (simulate editor), expect game canvas to change (maybe fog color uniform changes) without reload — check via window.game.cfg.fog or renderer uniform or visual pixel diff after action.
-  - Test BroadcastChannel path: editor posts preview, game receives and updates config within 500ms.
-  - Existing E2E should still pass with live disabled.
-
-### Security & Performance
-
-- No new deps. Use vanilla EventSource, BroadcastChannel, fetch.
-- Debounce PUT to max 2 per second per file.
-- SSE clients limited, auto-close on page unload.
-- No memory leak: remove listeners on Game dispose.
-
-### Files to Create/Modify
-
-- `src/server/server.js`: add SSE endpoint, client set, broadcast fn, call on PUT, handle fs.watch optional.
-- `src/config/config.js`: add ConfigLiveManager, reverse lookup, EventSource, BroadcastChannel, subscription API, singleton.
-- `src/config/live-config.js` (NEW): separate module for LiveManager to keep config.js clean — or extend config.js directly.
-- `src/core/game.js`: integrate live manager, _applyLiveConfig, HUD toast.
-- `src/render/renderer-gpu.js`: add `updateConfig`, `reuploadAtlases`, `updateFog`, `updateLighting`, expose methods to update uniforms without full reinit.
-- `src/systems/lights.js`: method `updateFromConfig`, `updateFlickerParams`
-- `src/world/materials.js`: maybe export async rebuild helper or keep existing but make it reusable live.
-- `src/editor.html` + `src/editor.js`: add live toggle UI, BroadcastChannel, debounced save, status.
-- `src/ui/ui.js` or `src/style.css`: live indicator badge in game.html.
-- `src/game.html`: add live badge element.
-- Tests: `tests/unit/live-config.test.js`, `tests/e2e/live-edit.spec.js`
-
-### Out of Scope
-
-- Multi-user collab editing (last write wins is ok for local dev)
-- Undo/redo history (could be future)
-- WebSocket full duplex (SSE enough)
-- Guarding against rapid atlas rebuild causing flicker — debounce is enough
-
-### Success Criteria
-
-- Designer can have two tabs: editor left, game right. Tweak fog base from 0.06 to 0.12 slider, game fog thickens within <500ms live without pressing R or reload.
-- Same for chamfer floorSize, light flickerAmount, etc where applicable instant or <1s with atlas rebuild.
-- Toggling Live Edit OFF returns to old Save+R workflow, no regression.
-- Server SSE broadcasts correctly, no memory leak.
-- No console errors, E2E existing passes, new live-edit E2E proves live update.
-
-### Running Notes
+## 8. Running
 
 ```bash
-# Task folder already on main
 cd src && npm install
-npm start # http://localhost:8000/game.html + editor.html
-# Open two tabs chrome:
-# http://localhost:8000/editor.html -> assets/config/lighting/fog.json -> toggle Live ON
-# http://localhost:8000/game.html -> walk around, drag fog base slider in editor -> see fog change live
-# Save button persists
+npm start # http://localhost:8000
+# Open two tabs:
+# http://localhost:8000/game.html
+# http://localhost:8000/editor.html → pick assets/config/lighting/fog.json or geometry/chamfer.json or lighting/sprites.json
+# Enable Live (and optionally Auto Save) in editor top bar
+# Drag a value in Editor → see Game update live
+# Disable Live → drag a value → Game should NOT update until Save + R
 ```
-
-This is rough — refine into final spec during task implementation.

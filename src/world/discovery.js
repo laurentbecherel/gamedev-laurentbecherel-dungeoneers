@@ -1,5 +1,5 @@
 /**
- * DiscoveryManager — pure fog-of-war for minimap.
+ * DiscoveryManager ï¿½ pure fog-of-war for minimap.
  * Single responsibility: owns discovered state, discovery order, path history, animation timing.
  * No Canvas2D, no DOM, no Game import, no config import (config injected), Node-testable.
  */
@@ -322,6 +322,7 @@ export class DiscoveryManager {
   }
 
   setConfig(cfg) { this._resolveCfg(cfg); }
+  updateConfig(cfg) { this._resolveCfg(cfg); }
 
   setLastOpenMaxToCurrent() {
     this._lastMapOpenMaxOrder = this._getCurrentMaxOrder();

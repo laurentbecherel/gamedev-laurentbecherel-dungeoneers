@@ -462,6 +462,132 @@ export class GPURenderer {
   toggleCorner() { this.cornerEnabled ^= 1; return this.cornerEnabled; }
   cyclePBRDebug() { this.pbrDebugMode = (this.pbrDebugMode + 1) % 9; return this.pbrDebugMode; }
 
+  // ── Live-edit update hooks (Tier 1 & 2) ──
+  updateConfig(partial) {
+    if (!partial) return;
+    if (!this._cfgCache) this._cfgCache = {};
+    Object.assign(this._cfgCache, partial);
+    // Re-resolve toggles if relevant keys present
+    if (partial.fog || partial.chamfer || partial.corners || partial.pom || partial.palette) {
+      try { this._resolveToggles(this._cfgCache); } catch {}
+    }
+    if (partial.palette) { try { this._applyPaletteFromConfig(this._cfgCache); this.rebuildPalette(); } catch {} }
+  }
+  updateFog(fogCfg) {
+    if (!fogCfg) return;
+    if (!this._cfgCache) this._cfgCache = {};
+    this._cfgCache.fog = fogCfg;
+    this.fogEnabled = (fogCfg.enabled !== false) ? 1 : 0;
+  }
+  updateChamfer(chamferCfg) {
+    if (!chamferCfg) return;
+    if (!this._cfgCache) this._cfgCache = {};
+    this._cfgCache.chamfer = chamferCfg;
+    // toggles re-evaluated next frame via _resolveConfigValue, but also update enabled flag now
+    const enabled = chamferCfg.enabled ?? true;
+    this.chamferEnabled = (enabled !== false) ? 1 : 0;
+  }
+  updateCorners(cornersCfg) {
+    if (!cornersCfg) return;
+    if (!this._cfgCache) this._cfgCache = {};
+    this._cfgCache.corners = cornersCfg;
+    const enabled = cornersCfg.enabled ?? true;
+    this.cornerEnabled = (enabled !== false) ? 1 : 0;
+  }
+  updateShadows(shCfg) {
+    if (!shCfg) return;
+    if (!this._cfgCache) this._cfgCache = {};
+    this._cfgCache.shadows = shCfg;
+  }
+  updatePBR(pbrCfg) {
+    if (!pbrCfg) return;
+    if (!this._cfgCache) this._cfgCache = {};
+    this._cfgCache.pbr = pbrCfg;
+  }
+  updateAO(aoCfg) {
+    if (!aoCfg) return;
+    if (!this._cfgCache) this._cfgCache = {};
+    this._cfgCache.ao = aoCfg;
+  }
+  updateRaymarch(rmCfg) {
+    if (!rmCfg) return;
+    if (!this._cfgCache) this._cfgCache = {};
+    this._cfgCache.raymarch = rmCfg;
+  }
+  updateRendering(rCfg) {
+    if (!rCfg) return;
+    if (!this._cfgCache) this._cfgCache = {};
+    this._cfgCache.rendering = rCfg;
+  }
+  updatePOM(pomCfg) {
+    if (!pomCfg) return;
+    if (!this._cfgCache) this._cfgCache = {};
+    this._cfgCache.pom = pomCfg;
+  }
+  updateLighting(lightingCfg) {
+    if (!lightingCfg) return;
+    if (!this._cfgCache) this._cfgCache = {};
+    this._cfgCache.lighting = lightingCfg;
+    if (this.lightManager && typeof this.lightManager.setConfig === 'function') {
+      try { this.lightManager.setConfig(lightingCfg); } catch {}
+    }
+  }
+
+  reuploadAtlases(atl) {
+    if (!atl) return;
+    const gl = this.gl;
+    if (!gl) return;
+    try {
+      const renderingCfg = this._cfgCache?.rendering || {};
+      const legacyRenderer = this._cfgCache?.renderer || {};
+      const texFilterStr = renderingCfg.textureFilter || legacyRenderer.textureFilter || 'nearest';
+      const tf = texFilterStr === 'linear' ? gl.LINEAR : gl.NEAREST;
+      const up = (arr, w, h) => {
+        const tex = gl.createTexture();
+        gl.bindTexture(gl.TEXTURE_2D, tex);
+        gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, tf);
+        gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, tf);
+        gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+        gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+        // atl arrays are Uint8Array for albedo/normal etc but height is UInt8? In generateMaterialAtlases height is Uint8Array after pack, roughMetalAO is Uint8Array
+        // For albedo/normal we use RGBA, for height we use LUMINANCE? Existing code used createTexture helper that uploads as RGBA? Let's use same logic as init.
+        // Try to infer format by length: albedo arrays length = w*h*4
+        if (arr.length === w * h * 4) {
+          gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, w, h, 0, gl.RGBA, gl.UNSIGNED_BYTE, arr);
+        } else if (arr.length === w * h) {
+          // single channel height
+          gl.texImage2D(gl.TEXTURE_2D, 0, gl.R8, w, h, 0, gl.RED, gl.UNSIGNED_BYTE, arr);
+        } else {
+          gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, w, h, 0, gl.RGBA, gl.UNSIGNED_BYTE, arr);
+        }
+        return tex;
+      };
+      // Delete old textures?
+      const old = this.atlases;
+      const toDelete = [old.wa, old.wn, old.wh, old.wrma, old.fa, old.fn, old.fh, old.frma, old.ca, old.cn, old.ch, old.crma].filter(Boolean);
+      // Note: don't delete if WebGL context lost
+      try { toDelete.forEach(t => { try { gl.deleteTexture(t); } catch {} }); } catch {}
+
+      const tw = atl.wallAtlasW, fw = atl.floorAtlasW, cw = atl.ceilAtlasW;
+      const th = 64;
+      this.atlases.wa = up(atl.wallAlbedo, tw, th);
+      this.atlases.wn = up(atl.wallNormal, tw, th);
+      this.atlases.wh = up(atl.wallHeight, tw, th);
+      this.atlases.wrma = up(atl.wallRoughMetalAO, tw, th);
+      this.atlases.fa = up(atl.floorAlbedo, fw, th);
+      this.atlases.fn = up(atl.floorNormal, fw, th);
+      this.atlases.fh = up(atl.floorHeight, fw, th);
+      this.atlases.frma = up(atl.floorRoughMetalAO, fw, th);
+      this.atlases.ca = up(atl.ceilAlbedo, cw, th);
+      this.atlases.cn = up(atl.ceilNormal, cw, th);
+      this.atlases.ch = up(atl.ceilHeight, cw, th);
+      this.atlases.crma = up(atl.ceilRoughMetalAO, cw, th);
+      this.atlasInfo = atl;
+    } catch (e) {
+      console.warn('[Renderer] reuploadAtlases failed', e);
+    }
+  }
+
   uploadMap(dungeon) {
     if (this.mapTex && this.matMapTex) updateMapTexture(this.gl, this.mapTex, this.matMapTex, dungeon);
     else { const t = uploadMapTexture(this.gl, dungeon); this.mapTex = t.mapTex; this.matMapTex = t.matTex; }

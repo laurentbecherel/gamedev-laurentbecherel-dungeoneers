@@ -3,13 +3,15 @@
 // Loads dedicated configs including discovery.json (gameplay/discovery) via getAllRenderConfigs.
 // Architecture: Game is orchestrator only, no discovery algorithm inlined, clean wiring, AZERTY-safe.
 
-import { getConfig, getAllRenderConfigs } from "../config/config.js";
+import { getConfig, getAllRenderConfigs, getAsset, invalidateCache } from "../config/config.js";
 import { generateDungeon } from "../world/dungeon/index.js";
 import { GPURenderer, isWebGL2Supported } from "../render/renderer-gpu.js";
 import { Player } from "../entities/player.js";
 import { Input } from "../systems/input.js";
 import { UI } from "../ui/ui.js";
 import { DiscoveryManager } from "../world/discovery.js";
+import { getLiveConfigManager, getTierForLogical, reverseLookupCategoryName } from "../config/live-config.js";
+import { generateMaterialAtlases } from "../world/materials.js";
 
 const DEFAULT_DISCOVERY_FALLBACK = {
   reveal: { enabled: true, peekDistance: 1, corridorRevealRadius: 4, animationDuration: 400, dither: { enabled: true, pattern: "random" } },
@@ -41,6 +43,71 @@ export class Game {
     this._lastPlayerGridY = null;
     this._loop = this._loop.bind(this);
     this._onKeyDown = this._onKeyDown.bind(this);
+    // Live-edit
+    this.liveManager = null;
+    this._liveUnsub = null;
+    this._liveStatusUnsub = null;
+    this._atlasRebuildTimer = null;
+    this._regenRequired = false;
+    this._regenBannerEl = null;
+    this._liveBadgeEl = null;
+  }
+
+  _createLiveUI() {
+    try {
+      // Live badge - hidden by default when live is OFF, only shown when enabled
+      if (!this._liveBadgeEl) {
+        const badge = document.createElement('div');
+        badge.id = 'live-badge';
+        badge.className = 'live-badge live-offline';
+        badge.innerHTML = `<span class="dot"></span><span class="live-text">LIVE offline</span>`;
+        badge.title = 'Live-edit status: offline\nEnable Live in Editor';
+        badge.style.display = 'none'; // hidden when no live-edit
+        document.body.appendChild(badge);
+        this._liveBadgeEl = badge;
+      }
+      // Regen banner
+      if (!this._regenBannerEl) {
+        const banner = document.createElement('div');
+        banner.id = 'regen-banner';
+        banner.className = 'regen-banner';
+        banner.innerHTML = `<i class="ph ph-warning" style="font-size:14px"></i><span>Regen required — press R</span><button class="btn btn-sm btn-secondary" id="btn-regen-live" style="margin-left:8px">R Regen</button>`;
+        document.body.appendChild(banner);
+        this._regenBannerEl = banner;
+        const btn = banner.querySelector('#btn-regen-live');
+        if (btn) btn.onclick = async () => { await this.regen(null); this._setRegenRequired(false); };
+      }
+    } catch {}
+  }
+
+  _updateLiveBadge(status) {
+    if (!this._liveBadgeEl) this._createLiveUI();
+    if (!this._liveBadgeEl) return;
+    const textEl = this._liveBadgeEl.querySelector('.live-text');
+    const statusMap = {
+      'offline': 'LIVE offline',
+      'connecting': 'LIVE connecting...',
+      'connected': 'LIVE ✓',
+      'bc-only': 'LIVE bc-only',
+      'polling': 'LIVE polling'
+    };
+    if (textEl) textEl.textContent = statusMap[status] || status;
+    this._liveBadgeEl.className = `live-badge live-${status}`;
+    this._liveBadgeEl.title = `Live status: ${status}\nTab: ${this.liveManager ? this.liveManager.tabId : 'n/a'}\nOpen Editor to tweak configs live`;
+    // Hide completely when offline (no live-edit), show only when live is actually ON
+    if (status === 'offline') {
+      this._liveBadgeEl.style.display = 'none';
+    } else {
+      this._liveBadgeEl.style.display = 'flex';
+    }
+  }
+
+  _setRegenRequired(v) {
+    this._regenRequired = !!v;
+    if (!this._regenBannerEl) this._createLiveUI();
+    if (!this._regenBannerEl) return;
+    if (v) this._regenBannerEl.classList.add('show');
+    else this._regenBannerEl.classList.remove('show');
   }
 
   _pickCfg(renderCfgs, baseCfg, key, fallback) {
@@ -181,6 +248,265 @@ export class Game {
     this._lastPlayerGridY = py;
   }
 
+  _initLive() {
+    try {
+      this._createLiveUI();
+      this.liveManager = getLiveConfigManager();
+      // Game always listens for live updates (editor drives). Enable unless user explicitly disabled live in localStorage.
+      let shouldEnable = true;
+      try { const flag = localStorage.getItem('dungeoneers-live-enabled'); if (flag === '0') shouldEnable = false; } catch {}
+      if (shouldEnable) this.liveManager.enable();
+      this._updateLiveBadge(this.liveManager.getStatus());
+      this._liveStatusUnsub = this.liveManager.onStatus((s) => this._updateLiveBadge(s));
+      this._liveUnsub = this.liveManager.subscribe('*', async (payload) => {
+        const { logicals, logical, category, name, data, source, tier } = payload;
+        try {
+          await this._applyLiveConfig({ logicals, logical, category, name, data, source, tier });
+          const lab = logical || (logicals && logicals[0]) || `${category}/${name}`;
+          this._showHud(`Live: ${lab} updated (${source})`, 1600);
+          // mutate cfg for E2E inspection
+          if (this.cfg) {
+            if (logical) this.cfg[logical] = data;
+            if (logicals) logicals.forEach(l => { if (l) this.cfg[l] = data; });
+            // also merge into cfg for path-based? Keep generic path cache in cfg._liveRaw?
+            if (!this.cfg._liveRaw) this.cfg._liveRaw = {};
+            this.cfg._liveRaw[`${category}/${name}`] = data;
+          }
+          try { window._gameLiveLast = payload; } catch {}
+        } catch (e) {
+          console.warn('[Game Live] apply failed', payload, e);
+        }
+      });
+      try { window._gameLiveManager = this.liveManager; } catch {}
+    } catch (e) {
+      console.warn('Live init failed', e);
+    }
+  }
+
+  _applySpritesLive(newCfg) {
+    const lm = this.renderer?.lightManager;
+    if (!lm) return;
+    if (!newCfg || !newCfg.sprites) return;
+    // If generation changed significantly, mark regen-required but still apply T1 light tweaks
+    const hasGenerationChange = newCfg.generation && Object.keys(newCfg.generation).length > 0;
+    const byId = new Map((newCfg.sprites || []).map(s => [s.id, s]));
+    for (const L of lm.lights) {
+      const def = byId.get(L.spriteId) || byId.get(L.id) || null;
+      if (!def) continue;
+      const lp = def.lightProfile;
+      if (!lp) continue;
+      if (lp.color) L.color = lp.color.slice();
+      if (lp.intensity) {
+        const avg = typeof lp.intensity === 'number' ? lp.intensity : (lp.intensity.min + lp.intensity.max) / 2;
+        L.intensity = avg;
+      }
+      if (lp.radius) {
+        const avg = typeof lp.radius === 'number' ? lp.radius : (lp.radius.min + lp.radius.max) / 2;
+        L.radius = avg;
+      }
+      if (lp.flicker) {
+        if (lp.flicker.speedMin !== undefined && lp.flicker.speedMax !== undefined) {
+          L.flickerSpeed = (lp.flicker.speedMin + lp.flicker.speedMax) / 2;
+          L.flickerAmount = (lp.flicker.amountMin + lp.flicker.amountMax) / 2;
+        } else {
+          if (lp.flicker.speed !== undefined) L.flickerSpeed = lp.flicker.speed;
+          if (lp.flicker.amount !== undefined) L.flickerAmount = lp.flicker.amount;
+        }
+      }
+      if (lp.pulse) {
+        L.pulseSpeed = lp.pulse.speedMin ?? lp.pulse.speed ?? L.pulseSpeed;
+        L.pulseAmount = lp.pulse.amountMin ?? lp.pulse.amount ?? L.pulseAmount;
+      }
+    }
+    if (hasGenerationChange) {
+      this._setRegenRequired(true);
+    }
+  }
+
+  _applyLightTypesLive(newCfg) {
+    const lm = this.renderer?.lightManager;
+    if (!lm || !newCfg || !newCfg.types) return;
+    // For each type archetype, if flicker/intensity changed, apply to lights of that archetype? Simplify just store
+    try {
+      if (typeof lm.updateFromLightTypes === 'function') lm.updateFromLightTypes(newCfg);
+    } catch {}
+  }
+
+  _applyMaterialsProcLive(mproc) {
+    if (this._atlasRebuildTimer) { clearTimeout(this._atlasRebuildTimer); this._atlasRebuildTimer = null; }
+    this._atlasRebuildTimer = setTimeout(async () => {
+      try {
+        this._showHud('Live: rebuilding materials...', 1200);
+        const walls = await getAsset('materials', 'walls').catch(()=>({materials:[]}));
+        const floors = await getAsset('materials', 'floors').catch(()=>({materials:[]}));
+        const ceils = await getAsset('materials', 'ceils').catch(()=>({materials:[]}));
+        const wallMats = (walls && walls.materials) ? walls.materials.slice(0,1) : [{base:[128,128,128]}];
+        const floorMats = (floors && floors.materials) ? floors.materials.slice(0,1) : [{base:[128,128,128]}];
+        const ceilMats = (ceils && ceils.materials) ? ceils.materials.slice(0,1) : [{base:[128,128,128]}];
+        const proc = mproc || this.cfg['materials-proc'] || this.cfg.materialsProc || {};
+        // normalize proc to {walls,floors,ceils}
+        const procNorm = proc.walls ? proc : { walls: proc, floors: proc.floors || proc.walls || proc, ceils: proc.ceils || proc.floors || proc.walls || proc };
+        const atl = generateMaterialAtlases(wallMats, floorMats, ceilMats, procNorm);
+        this.renderer.reuploadAtlases(atl);
+        this._showHud('Live: materials rebuilt', 1200);
+      } catch (e) { console.warn('atlas rebuild failed', e); this._showHud('Live material rebuild failed', 1500); }
+    }, 450);
+  }
+
+  async _applyLiveConfig({ logicals, logical, category, name, data, source, tier }) {
+    // Resolve logical if missing via reverse lookup
+    let resolvedLogics = logicals && logicals.length ? logicals : [];
+    if (!resolvedLogics.length && logical) resolvedLogics = [logical];
+    if (!resolvedLogics.length) {
+      try { resolvedLogics = reverseLookupCategoryName(category, name); } catch {}
+    }
+    const primaryLogical = resolvedLogics[0] || logical || name;
+    const effTier = tier || getTierForLogical(primaryLogical || `${category}/${name}`);
+
+    // T3 regen
+    if (effTier === 'T3') {
+      this._setRegenRequired(true);
+      // still store config for after regen
+      if (primaryLogical && this.cfg) this.cfg[primaryLogical] = data;
+      return;
+    }
+
+    // T2 atlas rebuild
+    if (effTier === 'T2') {
+      if (primaryLogical === 'materials-proc' || `${category}/${name}`.includes('materials-proc') || category.includes('materials')) {
+        if (this.cfg) { this.cfg['materials-proc'] = data; this.cfg.materialsProc = data; this.cfg.materialsProc = data; }
+        // If category is materials/walls etc, we need to refetch proc config for rebuild
+        let mproc = data;
+        if (category.includes('materials')) {
+          // fetch current materials-proc and rebuild with new wall/floor/ceil base mats
+          try { mproc = await getAsset('config/rendering', 'materials-proc'); } catch { mproc = this.cfg['materials-proc']; }
+          if (this.cfg) { this.cfg['materials-proc'] = mproc; }
+        }
+        this._applyMaterialsProcLive(mproc);
+        return;
+      }
+    }
+
+    // T1 instant
+    if (!this.cfg) this.cfg = {};
+    // update cfg for primary
+    if (primaryLogical) this.cfg[primaryLogical] = data;
+    // Also store path-based in cfg._liveRaw
+    if (!this.cfg._liveRaw) this.cfg._liveRaw = {};
+    this.cfg._liveRaw[`${category}/${name}`] = data;
+
+    switch (primaryLogical) {
+      case 'fog': {
+        this.cfg.fog = data;
+        if (this.renderer && typeof this.renderer.updateFog === 'function') this.renderer.updateFog(data);
+        break;
+      }
+      case 'lighting': {
+        this.cfg.lighting = data;
+        this.cfg.torchColors = data.torchColors || this.cfg.torchColors;
+        if (data.maxLights && this.renderer) this.renderer.maxLights = data.maxLights;
+        if (this.renderer?.lightManager && typeof this.renderer.lightManager.setConfig === 'function') this.renderer.lightManager.setConfig(data);
+        break;
+      }
+      case 'sprites': {
+        this.cfg.sprites = data;
+        this._applySpritesLive(data);
+        // if maxLights changed
+        if (data.maxLights && this.renderer) this.renderer.maxLights = data.maxLights;
+        break;
+      }
+      case 'light-types':
+      case 'light-types.json':
+      case 'lightTypes': {
+        this.cfg['light-types'] = data;
+        this._applyLightTypesLive(data);
+        break;
+      }
+      case 'chamfer': {
+        this.cfg.chamfer = data;
+        if (this.renderer && typeof this.renderer.updateChamfer === 'function') this.renderer.updateChamfer(data);
+        break;
+      }
+      case 'corners': {
+        this.cfg.corners = data;
+        if (this.renderer && typeof this.renderer.updateCorners === 'function') this.renderer.updateCorners(data);
+        break;
+      }
+      case 'pbr': {
+        this.cfg.pbr = data;
+        if (this.renderer && typeof this.renderer.updatePBR === 'function') this.renderer.updatePBR(data);
+        break;
+      }
+      case 'ao': {
+        this.cfg.ao = data;
+        if (this.renderer && typeof this.renderer.updateAO === 'function') this.renderer.updateAO(data);
+        break;
+      }
+      case 'shadows': {
+        this.cfg.shadows = data;
+        if (this.renderer && typeof this.renderer.updateShadows === 'function') this.renderer.updateShadows(data);
+        break;
+      }
+      case 'raymarch': {
+        this.cfg.raymarch = data;
+        if (this.renderer && typeof this.renderer.updateRaymarch === 'function') this.renderer.updateRaymarch(data);
+        break;
+      }
+      case 'rendering': {
+        this.cfg.rendering = data;
+        if (this.renderer && typeof this.renderer.updateRendering === 'function') this.renderer.updateRendering(data);
+        break;
+      }
+      case 'palette': {
+        this.cfg.palette = data;
+        if (this.renderer && typeof this.renderer.rebuildPalette === 'function') {
+          try { this.renderer._applyPaletteFromConfig({ palette: data }); this.renderer.rebuildPalette(); } catch {}
+        }
+        break;
+      }
+      case 'pom': {
+        this.cfg.pom = data;
+        if (this.renderer && typeof this.renderer.updatePOM === 'function') this.renderer.updatePOM(data);
+        break;
+      }
+      case 'player': {
+        this.cfg.player = data;
+        this.cfg.playerCfg = data;
+        if (this.player && typeof this.player.setConfig === 'function') this.player.setConfig(this.cfg);
+        break;
+      }
+      case 'discovery': {
+        this.cfg.discovery = data;
+        if (this.discovery && typeof this.discovery.updateConfig === 'function') this.discovery.updateConfig(data);
+        break;
+      }
+      case 'map': {
+        this.cfg.map = data;
+        if (this.ui && typeof this.ui.updateMapConfig === 'function') this.ui.updateMapConfig(data);
+        break;
+      }
+      case 'debug': {
+        this.cfg.debug = data;
+        break;
+      }
+      default: {
+        // Path-based handling (e.g., config/rendering/materials-proc already handled, but handle materials/walls etc)
+        if (category.includes('materials')) {
+          // fetch proc and rebuild
+          let mproc = this.cfg['materials-proc'];
+          try { mproc = await getAsset('config/rendering', 'materials-proc'); } catch {}
+          this._applyMaterialsProcLive(mproc || data);
+        } else {
+          // Generic: try to update renderer config cache
+          if (this.renderer && typeof this.renderer.updateConfig === 'function') {
+            this.renderer.updateConfig({ [primaryLogical]: data, [name]: data });
+          }
+        }
+        break;
+      }
+    }
+  }
+
   async init() {
     try { window._gameEarly = this; window.game = this; } catch(e) {}
 
@@ -222,6 +548,8 @@ export class Game {
     this._resize();
     window.addEventListener("resize", () => this._resize());
     window.addEventListener("keydown", this._onKeyDown);
+    // Live-edit init after base subsystems
+    this._initLive();
   }
 
   _resize() {
@@ -235,6 +563,8 @@ export class Game {
   }
 
   async regen(seedOverride = null) {
+    // Live-edit: ensure fresh fetch from server, not stale _caches, so Save+R works even when live OFF
+    try { invalidateCache(); } catch {}
     const debugCfg = this.cfg?.debug || {};
     const maxAttempts = debugCfg.regen?.maxAttempts ?? debugCfg.regenMaxAttempts ?? 3;
     let attempts = 0;
@@ -252,6 +582,7 @@ export class Game {
         this._initDiscovery();
         this.ui.setDungeon(this.dungeon);
         try { window._gameDiscovery = this.discovery; window._gameDungeon = this.dungeon; } catch(e) {}
+        this._setRegenRequired(false);
         return;
       } catch (e) {
         attempts++;

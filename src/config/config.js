@@ -6,7 +6,8 @@ function clone(o){ return JSON.parse(JSON.stringify(o)); }
 
 // Mapping of logical config name -> ordered candidate API paths (without /api/assets/ prefix and without .json)
 // First existing wins. This supports both new subfolder layout and old flat layout for backward compat.
-const CONFIG_PATHS = {
+// Exported for LiveConfigManager reverse lookup.
+export const CONFIG_PATHS = {
   // rendering subsystem
   'rendering':      ['config/rendering/rendering', 'config/rendering', 'config/main'],
   'palette':        ['config/rendering/palette', 'config/palette', 'config/main'],
@@ -209,3 +210,26 @@ export function invalidateCache(name){
     _cache=null;
   }
 }
+
+// Live-edit helpers — additional invalidation by exact path and cache mutation for preview-only mode
+export function invalidatePathCache(category, name){
+  const key = category + '/' + name;
+  delete _pathCache[key];
+}
+export function setPathCache(category, name, data){
+  const key = category + '/' + name;
+  _pathCache[key] = clone(data);
+  // also propagate to logical caches if matches candidate
+  for(const [logical, cands] of Object.entries(CONFIG_PATHS)){
+    if(cands.includes(key)){
+      _caches[logical] = clone(data);
+    }
+  }
+  if(category==='config' && name==='main'){
+    _cache = clone(data);
+    _caches['main'] = clone(data);
+  }
+}
+export function getPathCacheKeys(){ return Object.keys(_pathCache); }
+export { _caches as __cachesInternal, _pathCache as __pathCacheInternal } // for live manager debug, not public API but useful for tests
+// keep clone util exported for live module? internal only
