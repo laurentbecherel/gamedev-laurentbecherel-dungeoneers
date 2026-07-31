@@ -269,6 +269,7 @@ export class SpriteGpuRenderer {
       'u_albedo','u_normal','u_orm',
       'u_numLights','u_time',
       'u_sunDir','u_sunIntensity','u_sunColor','u_ambient','u_fogBase','u_fogSq',
+      'u_lightTex','u_lightsFromTex',
     ];
     for (const n of names) u[n] = gl.getUniformLocation(this.program, n);
     u.u_lightPos = []; u.u_lightColor = []; u.u_lightIntensity = []; u.u_lightRadius = [];
@@ -371,6 +372,16 @@ export class SpriteGpuRenderer {
         if (u.u_lightNoShadow[i]) gl.uniform1i(u.u_lightNoShadow[i], 0);
       }
     }
+
+    // Part 2: bind the shared light data texture (unit 7) + toggle. When
+    // lightsFromTex is on, the loop above's array uniforms are the unused
+    // fallback; the shader reads these texel values instead (world-packed).
+    if (opts.lightTex && u.u_lightTex) {
+      gl.activeTexture(gl.TEXTURE0 + 7);
+      gl.bindTexture(gl.TEXTURE_2D, opts.lightTex);
+      gl.uniform1i(u.u_lightTex, 7);
+    }
+    if (u.u_lightsFromTex) gl.uniform1i(u.u_lightsFromTex, opts.lightsFromTex ? 1 : 0);
 
     for (const s of sorted) {
       if (s.visible === false) continue;

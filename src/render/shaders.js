@@ -1313,6 +1313,11 @@ uniform float u_lightPulseAmt[12];
 uniform int u_lightNoShadow[12];
 uniform float u_time;
 
+// Part 2: shared light data texture (same object the world shader reads). Same
+// 5-texel/row layout; the sprite only needs texels 0-3. Toggled by u_lightsFromTex.
+uniform sampler2D u_lightTex;
+uniform int u_lightsFromTex;
+
 uniform vec3 u_sunDir;
 uniform float u_sunIntensity;
 uniform vec3 u_sunColor;
@@ -1325,6 +1330,28 @@ float attenuate(float dist, float radius){
   if (dist > radius) return 0.0;
   float d = dist / radius;
   return pow(max(0.0, 1.0 - d), 2.0) / (1.0 + d * d * 0.2);
+}
+
+// Sprite light accessor — subset of the shared layout (sprite ignores noShadow/
+// flicker/phase). Texture path reads the same u_lightTex the world shader packs.
+struct Light { vec3 pos; vec3 color; float intensity; float radius; int ltype; vec3 dir; float coneInner; float coneOuter; float pulseSpeed; float pulseAmt; };
+Light getLight(int i) {
+  Light L;
+  if (u_lightsFromTex == 1) {
+    vec4 t0 = texelFetch(u_lightTex, ivec2(0, i), 0);
+    vec4 t1 = texelFetch(u_lightTex, ivec2(1, i), 0);
+    vec4 t2 = texelFetch(u_lightTex, ivec2(2, i), 0);
+    vec4 t3 = texelFetch(u_lightTex, ivec2(3, i), 0);
+    L.pos = t0.xyz; L.intensity = t0.w; L.color = t1.xyz; L.radius = t1.w;
+    L.dir = t2.xyz; L.ltype = int(t2.w + 0.5);
+    L.coneInner = t3.x; L.coneOuter = t3.y; L.pulseSpeed = t3.z; L.pulseAmt = t3.w;
+  } else {
+    L.pos = u_lightPos[i]; L.color = u_lightColor[i]; L.intensity = u_lightIntensity[i];
+    L.radius = u_lightRadius[i]; L.ltype = u_lightType[i]; L.dir = u_lightDir[i];
+    L.coneInner = u_lightConeInner[i]; L.coneOuter = u_lightConeOuter[i];
+    L.pulseSpeed = u_lightPulseSpeed[i]; L.pulseAmt = u_lightPulseAmt[i];
+  }
+  return L;
 }
 void main(){
   vec4 albedoS = texture(u_albedo, v_uv);
@@ -1369,25 +1396,26 @@ void main(){
   }
   for (int i=0;i<12;i++){
     if (i>=u_numLights) break;
-    vec3 lp = u_lightPos[i];
+    Light Lt = getLight(i);
+    vec3 lp = Lt.pos;
     vec3 toL = lp - v_worldPos;
     float dist = length(toL);
-    float radius = u_lightRadius[i];
+    float radius = Lt.radius;
     if (dist > radius) continue;
     float att = attenuate(dist, radius);
-    int lt = u_lightType[i];
+    int lt = Lt.ltype;
     if (lt == 1) {
-      vec3 spotDir = normalize(u_lightDir[i]);
+      vec3 spotDir = normalize(Lt.dir);
       vec3 Ldir = normalize(toL);
       float cosTheta = dot(-Ldir, spotDir);
-      float spotAtt = smoothstep(u_lightConeOuter[i], u_lightConeInner[i], cosTheta);
+      float spotAtt = smoothstep(Lt.coneOuter, Lt.coneInner, cosTheta);
       att *= spotAtt;
     }
     if (lt == 2) {
       float flick = 0.72 + 0.28 * sin(u_time * 9.0 + float(i)*2.3) + 0.12 * sin(u_time*17.0 + float(i));
       att *= clamp(flick, 0.45, 1.35);
     } else if (lt == 3) {
-      float ps = u_lightPulseSpeed[i]; float pa = u_lightPulseAmt[i];
+      float ps = Lt.pulseSpeed; float pa = Lt.pulseAmt;
       if (ps < 0.1) ps = 2.2; if (pa < 0.01) pa = 0.4;
       att *= (1.0 + pa * sin(u_time * ps + float(i)));
     } else if (lt == 6) {
@@ -1401,8 +1429,8 @@ void main(){
     float NdotL = max(dot(N, L), 0.0);
     if (NdotL > 0.0) {
       float attenN = att * (0.35 + 0.65 * NdotL);
-      float contrib = attenN * u_lightIntensity[i] * NdotL * 1.15;
-      Lo += albedo * contrib * u_lightColor[i];
+      float contrib = attenN * Lt.intensity * NdotL * 1.15;
+      Lo += albedo * contrib * Lt.color;
     }
     if (NdotL > 0.08) {
       vec3 H = normalize(V + L);
@@ -1412,7 +1440,7 @@ void main(){
         float metalBoost = 0.2 + metal * 1.6;
         float attenN = att * (0.35 + 0.65 * NdotL);
         float spec = pow(NdotH, specPower) * (1.0 - roughness) * metalBoost * max(0.1, NdotL) * attenN;
-        Lo += spec * u_lightColor[i];
+        Lo += spec * Lt.color;
       }
     }
     float VdotL = dot(V, L);
@@ -1423,7 +1451,7 @@ void main(){
     float edgeNorm = length(normalTS.xy);
     float rimBase = max(edgeNorm * 1.8, max(0.0, 1.0 - normalTS.z) * 2.0);
     float rim = rimBase * fresnel * (behind * 0.9 + behindSide) * v_rimStrength * att * (0.7 + metal * 0.8) * 0.35;
-    if (rim > 0.001) Lo += vec3(rim, rim * 0.6, rim * 0.3) * u_lightColor[i];
+    if (rim > 0.001) Lo += vec3(rim, rim * 0.6, rim * 0.3) * Lt.color;
   }
   float fog = 1.0 / (1.0 + v_dist * u_fogBase + v_dist * v_dist * u_fogSq);
   fog = clamp(fog, 0.06, 1.0);

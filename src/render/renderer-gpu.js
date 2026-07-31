@@ -1188,6 +1188,8 @@ export class GPURenderer {
           ambient: ambientLevel,
           fogBase: fogCfg.base ?? 0.06,
           fogSq: fogCfg.squared ?? 0.005,
+          lightTex: this.lightTex,          // Part 2: shared light data texture
+          lightsFromTex: this.lightsFromTex,
         });
         gl.bindVertexArray(null);
       } catch (e) {
