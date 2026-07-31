@@ -1228,11 +1228,11 @@ layout(location = 1) out vec4 gN; // worldNormal.rgb, ao (a)
 layout(location = 2) out vec4 gP; // worldPos.rgb, rough (a)
 layout(location = 3) out vec4 gM; // emissive.rgb, metal (a)
 
-void writeGBuffer(Material m, float perpDist) {
+void writeGBuffer(Material m, float perpDist, float postMul) {
   gA = vec4(m.albedo, perpDist);
   gN = vec4(m.N, m.ao);
   gP = vec4(m.worldPos, m.rough);
-  gM = vec4(m.emissive, m.metal);
+  gM = vec4(m.emissive, postMul); // metal is 0 across all materials; a reused as post-lighting multiplier
 }
 
 void main() {
@@ -1308,13 +1308,13 @@ void main() {
         float dist = (eyeZ - floorH_atRay) / max(0.0001, (vNorm - horizon)) * u_resolution.x / u_resolution.y * 0.5 / tan(u_fov * 0.5);
         dist = max(dist, 0.001);
         vec2 floorWorld = u_playerPos + ray * dist;
-        writeGBuffer(floorMaterial(floorWorld, ray, floorH_atRay, true), dist);
+        writeGBuffer(floorMaterial(floorWorld, ray, floorH_atRay, true), dist, 1.0);
       } else {
         float ceilH_atRay = 1.0;
         float dist = (ceilH_atRay - eyeZ) / max(0.0001, (horizon - vNorm)) * u_resolution.x / u_resolution.y * 0.5 / tan(u_fov * 0.5);
         dist = max(dist, 0.001);
         vec2 ceilWorld = u_playerPos + ray * dist;
-        writeGBuffer(ceilMaterial(ceilWorld, ray, ceilH_atRay, true, 0.35, 0.25), dist);
+        writeGBuffer(ceilMaterial(ceilWorld, ray, ceilH_atRay, true, 0.35, 0.25), dist, 1.0);
       }
     } else {
       float wallV = clamp(wallV_raw, 0.0, 1.0);
@@ -1385,9 +1385,9 @@ void main() {
         }
       }
       Material m;
-      m.albedo = albedoRaw * (side == 1 ? wallDarken : 1.0);
+      m.albedo = albedoRaw;
       m.N = Nw; m.rough = rmaW.r; m.metal = rmaW.g; m.ao = rmaW.a; m.emissive = emissiveW; m.worldPos = worldPos;
-      writeGBuffer(m, perpDist);
+      writeGBuffer(m, perpDist, (side == 1 ? wallDarken : 1.0));
     }
   } else {
     float horizon = 0.5;
@@ -1405,7 +1405,7 @@ void main() {
         ivec2 fc = ivec2(floor(floorWorld));
         if (fc.x >= 0 && fc.y >= 0 && fc.x < int(u_mapSize.x) && fc.y < int(u_mapSize.y)) { vec4 fmd = texelFetch(u_mapTex, fc, 0); int cellT = int(fmd.r*255.0+0.5); if (cellT==0){floorH=clamp(fmd.g-0.5,-0.6,0.6);} else break; }
       }
-      writeGBuffer(floorMaterial(floorWorld, ray, floorH, false), dist);
+      writeGBuffer(floorMaterial(floorWorld, ray, floorH, false), dist, 1.0);
     } else {
       float ceilH = 1.15; float dist = 0.001; vec2 ceilWorld = vec2(0.0);
       for (int it = 0; it < 3; it++) {
@@ -1415,7 +1415,7 @@ void main() {
         ivec2 cc = ivec2(floor(ceilWorld));
         if (cc.x >= 0 && cc.y >= 0 && cc.x < int(u_mapSize.x) && cc.y < int(u_mapSize.y)) { vec4 cmd = texelFetch(u_mapTex, cc, 0); int cellT = int(cmd.r*255.0+0.5); if (cellT==0){ceilH=clamp(cmd.b/255.0+0.7,0.4,2.2);} else break; }
       }
-      writeGBuffer(ceilMaterial(ceilWorld, ray, ceilH, false, 0.3, 0.2), dist);
+      writeGBuffer(ceilMaterial(ceilWorld, ray, ceilH, false, 0.3, 0.2), dist, 1.0);
     }
   }
 }
@@ -1436,9 +1436,10 @@ void main() {
   vec3 albedo = a.rgb; float perpDist = a.a;
   vec3 N = normalize(n.rgb); float ao = n.a;
   vec3 worldPos = p.rgb; float rough = p.a;
-  vec3 emissive = mm.rgb; float metal = mm.a;
+  vec3 emissive = mm.rgb; float postMul = mm.a; float metal = 0.0; // metal is 0 across all materials
   vec3 viewDir = normalize(vec3(u_playerPos, u_playerHeight) - worldPos);
   vec3 finalColor = pbrShade(albedo, N, rough, metal, ao, emissive, worldPos, viewDir);
+  finalColor *= postMul; // wall side-darken, applied to lit color to match forward exactly
   if (u_fogEnabled == 1) {
     float fog = 1.0 / (1.0 + perpDist * u_fogBase + perpDist * perpDist * u_fogSquared);
     finalColor *= fog;
