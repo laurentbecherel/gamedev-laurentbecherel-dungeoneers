@@ -3,6 +3,7 @@
 import { hash2i, pickWeighted, zoneForDepth, globalDepthForLevel, getTheme } from "./themes.js";
 import { GRID_FLOOR, BOUNDARY_WALL_ID, STAIRS_MATERIAL_ID, DECO_COLUMN, DECO_MOSS, DECO_VINES, DECO_ARCH, DECO_BROKEN, DECO_PUDDLE, DECO_ROOTS, DECO_BEAM } from "./atlas.js";
 import { generateDungeonItems } from "../items.js";
+import { generateModifiers } from "../modifiers.js";
 
 function makeRng(seed) { let s = seed >>> 0 || 1; return () => { s = Math.imul(s, 1664525) + 1013904223 >>> 0; return s / 0x100000000; }; }
 
@@ -459,8 +460,48 @@ export async function generateDungeon(config, seedOverride = null) {
   // --- Stage 9: Deco ---
   for(let y=0;y<h;y++) for(let x=0;x<w;x++){ const i=idx(x,y); let d=0;
     if(grid[i]!==GRID_FLOOR){ const hv=hash2i(x,y,seed+10); if(hv<0.08) d|=DECO_COLUMN; else if(hv<0.15) d|=DECO_MOSS; else if(hv<0.18) d|=DECO_VINES; else if(hv<0.22) d|=DECO_ARCH; }
-    else { const hv=hash2i(x+1000,y+1000,seed+20); if(hv<0.05) d|=DECO_BROKEN; else if(hv<0.08) d|=DECO_PUDDLE; else if(hv<0.11) d|=DECO_ROOTS; else if(hv<0.14) d|=DECO_BEAM; }
-    deco[i]=d;
+    else { const hv=hash2i(x+1000,y+1000,seed+20); if(hv<0.05) d|=DECO_BROKEN; else if(hv<0.08) d|=DECO_PUDDLE; else if(hv<0.11) d|=DECO_ROOTS; else if(hv<0.14) d|=DECO_BEAM; }    deco[i]=d;
+  }
+
+  // --- Stage 9b: Material Modifiers - Task 9 intelligent spreading ---
+  // Build roleMap lookup copy for modifiers
+  let modifierData = null;
+  try {
+    const matModCfg = (config["material-modifiers"] || config["materialModifiers"] || config.materialModifiers || config.modifiers || {});
+    const genModCfg = matModCfg.generator || cfgGenFallback(matModCfg) || {};
+    // Helper: if cfg itself looks like generator config (has roleWeights), use it directly
+    function cfgGenFallback(c) {
+      if (c && c.roleWeights) return c;
+      return null;
+    }
+    const finalModGenCfg = (matModCfg.generator && Object.keys(matModCfg.generator).length ? matModCfg.generator : (matModCfg.roleWeights ? matModCfg : genModCfg));
+    // Build depthArr for modifiers: already have depthArr from earlier stage
+    // roleMap is Map(ri->role)
+    modifierData = generateModifiers({
+      w, h,
+      rooms,
+      grid,
+      deco,
+      floorHeight,
+      floorToRoom,
+      roleMap,
+      depthArr,
+      seed,
+      config: finalModGenCfg
+    });
+  } catch (e) {
+    console.warn("[generator] modifiers failed, using empty", e);
+    const sz = w * h;
+    modifierData = {
+      w, h, seed,
+      moss: new Float32Array(sz),
+      damaged: new Float32Array(sz),
+      water: new Float32Array(sz),
+      puddle: new Float32Array(sz),
+      blood: new Float32Array(sz),
+      dust: new Float32Array(sz),
+      roomAvgs: []
+    };
   }
 
   // --- Stage 10: Items ---
@@ -469,7 +510,7 @@ export async function generateDungeon(config, seedOverride = null) {
   for(let dy=-flattenRadius; dy<=flattenRadius; dy++) for(let dx=-flattenRadius; dx<=flattenRadius; dx++){
     const x=Math.floor(startX)+dx, y=Math.floor(startY)+dy; if(x<0||y<0||x>=w||y>=h)continue; const i=idx(x,y); if(grid[i]===GRID_FLOOR) floorHeight[i]=0;
   }
-  const dungeon = {w,h,grid,floorHeight,ceilHeight,deco,floorMat,ceilMat,startX,startY,seed,rooms,items:[],lights:[],sprites:[],meta:{}};
+  const dungeon = {w,h,grid,floorHeight,ceilHeight,deco,floorMat,ceilMat,startX,startY,seed,rooms,items:[],lights:[],sprites:[],modifiers:modifierData,meta:{}};
   const genItemsCfg = {
     ...config,
     ...(config.generator||{}),
@@ -488,3 +529,4 @@ export async function generateDungeon(config, seedOverride = null) {
     zoneSummary: theme.zones.map(z=>z.name), edges: edges.length, rolesSummary: Object.fromEntries([...new Set(rooms.map(r=>r.role))].map(r=>[r, rooms.filter(rr=>rr.role===r).length]))};
   return dungeon;
 }
+

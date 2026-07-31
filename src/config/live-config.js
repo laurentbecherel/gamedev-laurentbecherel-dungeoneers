@@ -28,6 +28,7 @@ const TIER_MAP = {
   'light-types': 'T1',
   'particles': 'T1',
   'main': 'T1', // mixed but default T1 unless generator keys
+  'material-modifiers': 'T1',
   // T2 atlas rebuild
   'materials-proc': 'T2',
   // T3 regen-required
@@ -52,7 +53,9 @@ const PATH_TIER_OVERRIDES = {
   'config/lighting/sprites': 'T1',
   'config/lighting/light-types': 'T1',
   'config/geometry/chamfer': 'T1',
-  'config/geometry/corners': 'T1'
+  'config/geometry/corners': 'T1',
+  'config/rendering/material-modifiers': 'T1',
+  'config/material-modifiers': 'T1'
 };
 
 export function getTierForLogical(logicalOrPath) {
@@ -425,3 +428,5 @@ export function getLiveConfigManager() {
 export function resetLiveConfigManagerForTest() {
   if (_instance) { try { _instance.disable(); } catch {} _instance = null; }
 }
+
+

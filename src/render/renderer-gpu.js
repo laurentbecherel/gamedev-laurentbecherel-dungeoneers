@@ -7,6 +7,7 @@ import { createProgram, createTexture } from './gl-utils.js';
 import { vsSource, fsSource, vsQuantize, fsQuantize, vsUI, fsUI, MAX_LIGHTS, vsSpriteSrc, fsSpritePBRSrc } from './shaders.js';
 import { uploadMapTexture, updateMapTexture } from './map-upload.js';
 import { generateMaterialAtlases } from '../world/materials.js';
+import { createModifierTextures, updateModifierTextures } from './modifier-map.js';
 import { getAsset } from '../config/config.js';
 import { genPalette, buildRGBToPal } from './palette.js';
 import { LightManager, Light } from '../systems/lights.js';
@@ -56,6 +57,7 @@ export class GPURenderer {
     this.pbrDebugMode = 0;
     this.chamferEnabled = 1;
     this.cornerEnabled = 1;
+    this.modifiersEnabled = 1;
     this._cfgCache = null;
     // Task 6 additions
     this.lightManager = null;
@@ -139,9 +141,28 @@ export class GPURenderer {
     this.atlases.ca = up(atl.ceilAlbedo, cw, th); this.atlases.cn = up(atl.ceilNormal, cw, th);
     this.atlases.ch = up(atl.ceilHeight, cw, th); this.atlases.crma = up(atl.ceilRoughMetalAO, cw, th);
 
-    const mapTexs = uploadMapTexture(gl, dungeon);
+        const mapTexs = uploadMapTexture(gl, dungeon);
     this.mapTex = mapTexs.mapTex;
     this.matMapTex = mapTexs.matTex;
+
+    // Task 9: Material Modifiers map textures (grid-sized, per-cell intensities)
+    try {
+      const modTexs = createModifierTextures(gl, dungeon.modifiers);
+      this.modTexA = modTexs.texA;
+      this.modTexB = modTexs.texB;
+      this.modMapSize = [modTexs.w, modTexs.h];
+    } catch (e) {
+      console.warn("[modifiers] texture creation failed", e);
+      const dummyA = gl.createTexture();
+      gl.bindTexture(gl.TEXTURE_2D, dummyA);
+      gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, 1, 1, 0, gl.RGBA, gl.UNSIGNED_BYTE, new Uint8Array([0,0,0,0]));
+      const dummyB = gl.createTexture();
+      gl.bindTexture(gl.TEXTURE_2D, dummyB);
+      gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, 1, 1, 0, gl.RGBA, gl.UNSIGNED_BYTE, new Uint8Array([0,0,0,255]));
+      this.modTexA = dummyA;
+      this.modTexB = dummyB;
+      this.modMapSize = [1,1];
+    }
 
     this.paletteTex = gl.createTexture();
     this.lutTex = gl.createTexture();
@@ -186,6 +207,13 @@ export class GPURenderer {
       'u_chamferEnabled','u_chamferFloorSize','u_chamferCeilSize','u_chamferWallSize','u_chamferCornerRadius','u_chamferDarken','u_chamferRoundCorners','u_chamferBlendFloor','u_chamferBlendWall','u_chamferRough','u_chamferFloor','u_chamferCeil','u_chamferWall',
       'u_chamferTrimFloor','u_chamferTrimCeil','u_chamferTrimWall','u_chamferTrimFloorAlt','u_chamferTrimCeilAlt','u_chamferCreviceEnd','u_chamferCreviceSmoothEnd','u_chamferTrimStart','u_chamferTrimMid','u_chamferTrimEnd',
       'u_chamferGridEnabled','u_chamferGridFloorSize','u_chamferGridCeilSize','u_chamferGridFloorDarken','u_chamferGridCeilDarken','u_chamferGridFloorTrim','u_chamferGridCeilTrim','u_chamferGridFloorRough','u_chamferGridCeilRough','u_chamferGridFloorBlend','u_chamferGridCeilBlend','u_chamferGridCreviceEnd','u_chamferGridCreviceSmoothEnd','u_chamferGridTrimStart','u_chamferGridTrimMid','u_chamferGridTrimEnd',
+      'u_modEnabled','u_modTexA','u_modTexB','u_modMapSize','u_modDebugOverlay',
+      'u_modMossEnabled','u_modMossAlbedo','u_modMossAlbedo2','u_modMossAlbedoStr','u_modMossRoughAdd','u_modMossRoughMin','u_modMossRoughMax','u_modMossHeightAdd','u_modMossNormalStr','u_modMossNoiseScale','u_modMossThresh','u_modMossSoft','u_modMossSeed',
+      'u_modDamagedEnabled','u_modDamagedDarken','u_modDamagedDarkenStr','u_modDamagedDesat','u_modDamagedRoughAdd','u_modDamagedHeightAdd','u_modDamagedNormalStr','u_modDamagedNoiseScale','u_modDamagedThresh','u_modDamagedSoft','u_modDamagedSeed',
+      'u_modWaterEnabled','u_modWaterDarken','u_modWaterDarkenStr','u_modWaterRoughAdd','u_modWaterRoughMin','u_modWaterHeightAdd','u_modWaterFlat','u_modWaterStreak','u_modWaterNoiseScale','u_modWaterStreakScale','u_modWaterThresh','u_modWaterSoft','u_modWaterSeed',
+      'u_modPuddleEnabled','u_modPuddleAlbedoDarken','u_modPuddleRoughTarget','u_modPuddleRoughEdge','u_modPuddleRoughLerp','u_modPuddleHeightDepress','u_modPuddleFlat','u_modPuddleRipple','u_modPuddleNoiseScale','u_modPuddleThresh','u_modPuddleSoft','u_modPuddleRippleScale','u_modPuddleSeed','u_modPuddleFoamBright',
+      'u_modBloodEnabled','u_modBloodAlbedo','u_modBloodAlbedo2','u_modBloodAlbedoStr','u_modBloodRoughAdd','u_modBloodHeightAdd','u_modBloodNormalStr','u_modBloodNoiseScale','u_modBloodThresh','u_modBloodSoft','u_modBloodSeed',
+      'u_modDustEnabled','u_modDustAlbedo','u_modDustAlbedoStr','u_modDustDesat','u_modDustRoughAdd','u_modDustHeightAdd','u_modDustFlat','u_modDustNoiseScale','u_modDustThresh','u_modDustSoft','u_modDustSeed',
       'u_cornerEnabled','u_cornerRadius','u_cornerMode','u_cornerInner',
       'u_cornerBandNear','u_cornerBandFarExtra','u_cornerBandFarFactor','u_cornerSectorThresh','u_cornerNormalMix','u_cornerAlbedoBoost','u_cornerRoughMul','u_cornerAoMul',
       'u_shadowBiasN','u_shadowBiasDir','u_shadowSunFactor','u_shadowPointFactor','u_shadowSunMax','u_shadowPointEps','u_shadowNormalThresh',
@@ -236,7 +264,7 @@ export class GPURenderer {
     gl.useProgram(this.program);
     gl.uniform1i(ul.u_mapTex, 0);
     gl.uniform1i(ul.u_matMap, 13);
-    const texUnits = {u_wallAlbedo:1,u_wallNormal:2,u_wallHeight:3,u_wallRoughMetal:4,u_floorAlbedo:5,u_floorNormal:6,u_floorHeight:7,u_floorRoughMetal:8,u_ceilAlbedo:9,u_ceilNormal:10,u_ceilHeight:11,u_ceilRoughMetal:12};
+    const texUnits = {u_wallAlbedo:1,u_wallNormal:2,u_wallHeight:3,u_wallRoughMetal:4,u_floorAlbedo:5,u_floorNormal:6,u_floorHeight:7,u_floorRoughMetal:8,u_ceilAlbedo:9,u_ceilNormal:10,u_ceilHeight:11,u_ceilRoughMetal:12,u_modTexA:14,u_modTexB:15};
     Object.entries(texUnits).forEach(([name, unit]) => { if (ul[name]) gl.uniform1i(ul[name], unit); });
 
     // Task 6: LightManager + SpriteRenderer init
@@ -461,6 +489,18 @@ export class GPURenderer {
   toggleFog() { this.fogEnabled ^= 1; return this.fogEnabled; }
   toggleChamfer() { this.chamferEnabled ^= 1; return this.chamferEnabled; }
   toggleCorner() { this.cornerEnabled ^= 1; return this.cornerEnabled; }
+  toggleModifiers() { this.modifiersEnabled ^= 1; return this.modifiersEnabled; }
+  setModifiersEnabled(v) { this.modifiersEnabled = v ? 1 : 0; }
+
+  updateMaterialModifiers(modCfg) {
+    if (!modCfg) return;
+    if (!this._cfgCache) this._cfgCache = {};
+    this._cfgCache["material-modifiers"] = modCfg;
+    this._cfgCache.materialModifiers = modCfg;
+    const enabled = modCfg.enabled ?? true;
+    // we keep this.modifiersEnabled as local toggle, but if config says disabled, respect
+    if (enabled === false) this.modifiersEnabled = 0;
+  }
   cyclePBRDebug() { this.pbrDebugMode = (this.pbrDebugMode + 1) % 9; return this.pbrDebugMode; }
 
   // ── Live-edit update hooks (Tier 1 & 2) ──
@@ -592,6 +632,16 @@ export class GPURenderer {
   uploadMap(dungeon) {
     if (this.mapTex && this.matMapTex) updateMapTexture(this.gl, this.mapTex, this.matMapTex, dungeon);
     else { const t = uploadMapTexture(this.gl, dungeon); this.mapTex = t.mapTex; this.matMapTex = t.matTex; }
+    // Task 9: update modifier textures on regen
+    try {
+      if (this.modTexA && this.modTexB && dungeon.modifiers) {
+        updateModifierTextures(this.gl, this.modTexA, this.modTexB, dungeon.modifiers);
+        this.modMapSize = [dungeon.modifiers.w, dungeon.modifiers.h];
+      } else if (dungeon.modifiers) {
+        const mt = createModifierTextures(this.gl, dungeon.modifiers);
+        this.modTexA = mt.texA; this.modTexB = mt.texB; this.modMapSize = [mt.w, mt.h];
+      }
+    } catch (e) { console.warn("[modifiers] update failed", e); }
     // Update lights/sprites for Task 6
     try {
       if (this.lightManager) {
@@ -721,6 +771,10 @@ export class GPURenderer {
     bind(a.wa, 1, 'u_wallAlbedo'); bind(a.wn, 2, 'u_wallNormal'); bind(a.wh, 3, 'u_wallHeight'); bind(a.wrma, 4, 'u_wallRoughMetal');
     bind(a.fa, 5, 'u_floorAlbedo'); bind(a.fn, 6, 'u_floorNormal'); bind(a.fh, 7, 'u_floorHeight'); bind(a.frma, 8, 'u_floorRoughMetal');
     bind(a.ca, 9, 'u_ceilAlbedo'); bind(a.cn, 10, 'u_ceilNormal'); bind(a.ch, 11, 'u_ceilHeight'); bind(a.crma, 12, 'u_ceilRoughMetal');
+    // Task 9: bind modifier map textures (units 14,15 pre-assigned)
+    if (this.modTexA) { gl.activeTexture(gl.TEXTURE0 + 14); gl.bindTexture(gl.TEXTURE_2D, this.modTexA); if (ul.u_modTexA) gl.uniform1i(ul.u_modTexA, 14); }
+    if (this.modTexB) { gl.activeTexture(gl.TEXTURE0 + 15); gl.bindTexture(gl.TEXTURE_2D, this.modTexB); if (ul.u_modTexB) gl.uniform1i(ul.u_modTexB, 15); }
+    if (ul.u_modMapSize && this.modMapSize) gl.uniform2f(ul.u_modMapSize, this.modMapSize[0], this.modMapSize[1]);
 
     const ai = this.atlasInfo;
     gl.uniform1f(ul.u_texSize, ai.texSize);
@@ -931,7 +985,121 @@ export class GPURenderer {
     if (ul.u_cornerNormalMix) gl.uniform1f(ul.u_cornerNormalMix, normalMix);
     if (ul.u_cornerAlbedoBoost) gl.uniform1f(ul.u_cornerAlbedoBoost, albedoBoost);
     if (ul.u_cornerRoughMul) gl.uniform1f(ul.u_cornerRoughMul, roughMulC);
-    if (ul.u_cornerAoMul) gl.uniform1f(ul.u_cornerAoMul, aoMulC);
+        if (ul.u_cornerAoMul) gl.uniform1f(ul.u_cornerAoMul, aoMulC);
+
+    // ---- Task 9: Material Modifiers uniforms ----
+    const modCfg = cfg["material-modifiers"] || cfg.materialModifiers || {};
+    const mods = modCfg.modifiers || {};
+    const cfgModEnabled = modCfg.enabled ?? true;
+    const modEnabledUpload = cfgModEnabled && (this.modifiersEnabled !== 0) ? 1 : 0;
+    if (ul.u_modEnabled) gl.uniform1i(ul.u_modEnabled, modEnabledUpload);
+    const dbgOverlay = modCfg.debug?.overlayMode ?? modCfg.debug?.showModifierOverlay ? 1 : 0;
+    if (ul.u_modDebugOverlay) gl.uniform1i(ul.u_modDebugOverlay, dbgOverlay|0);
+
+    const getMod = (name) => mods[name] || {};
+    // Moss
+    {
+      const m = getMod("moss");
+      if (ul.u_modMossEnabled) gl.uniform1i(ul.u_modMossEnabled, (m.enabled !== false && modEnabledUpload) ? 1 : 0);
+      const alb = m.albedo || [46,107,38];
+      if (ul.u_modMossAlbedo) gl.uniform3f(ul.u_modMossAlbedo, alb[0]/255, alb[1]/255, alb[2]/255);
+      const alb2 = m.albedo2 || [60,130,45];
+      if (ul.u_modMossAlbedo2) gl.uniform3f(ul.u_modMossAlbedo2, alb2[0]/255, alb2[1]/255, alb2[2]/255);
+      if (ul.u_modMossAlbedoStr) gl.uniform1f(ul.u_modMossAlbedoStr, m.albedoStrength ?? 0.85);
+      if (ul.u_modMossRoughAdd) gl.uniform1f(ul.u_modMossRoughAdd, m.roughAdd ?? 0.36);
+      if (ul.u_modMossRoughMin) gl.uniform1f(ul.u_modMossRoughMin, m.roughMin ?? 0.58);
+      if (ul.u_modMossRoughMax) gl.uniform1f(ul.u_modMossRoughMax, m.roughMax ?? 0.94);
+      if (ul.u_modMossHeightAdd) gl.uniform1f(ul.u_modMossHeightAdd, m.heightAdd ?? 0.22);
+      if (ul.u_modMossNormalStr) gl.uniform1f(ul.u_modMossNormalStr, m.normalStrength ?? 0.62);
+      if (ul.u_modMossNoiseScale) gl.uniform1f(ul.u_modMossNoiseScale, m.noiseScale ?? 0.35);
+      if (ul.u_modMossThresh) gl.uniform1f(ul.u_modMossThresh, m.threshold ?? 0.42);
+      if (ul.u_modMossSoft) gl.uniform1f(ul.u_modMossSoft, m.softness ?? 0.22);
+      if (ul.u_modMossSeed) gl.uniform1f(ul.u_modMossSeed, m.seed ?? 11);
+    }
+    // Damaged
+    {
+      const m = getMod("damaged");
+      if (ul.u_modDamagedEnabled) gl.uniform1i(ul.u_modDamagedEnabled, (m.enabled !== false && modEnabledUpload) ? 1 : 0);
+      if (ul.u_modDamagedDarken) gl.uniform1f(ul.u_modDamagedDarken, m.darken ?? 0.46);
+      if (ul.u_modDamagedDarkenStr) gl.uniform1f(ul.u_modDamagedDarkenStr, m.darkenStrength ?? 0.75);
+      if (ul.u_modDamagedDesat) gl.uniform1f(ul.u_modDamagedDesat, m.desat ?? 0.18);
+      if (ul.u_modDamagedRoughAdd) gl.uniform1f(ul.u_modDamagedRoughAdd, m.roughAdd ?? 0.15);
+      if (ul.u_modDamagedHeightAdd) gl.uniform1f(ul.u_modDamagedHeightAdd, m.heightAdd ?? -0.2);
+      if (ul.u_modDamagedNormalStr) gl.uniform1f(ul.u_modDamagedNormalStr, m.normalStrength ?? 0.78);
+      if (ul.u_modDamagedNoiseScale) gl.uniform1f(ul.u_modDamagedNoiseScale, m.noiseScale ?? 0.55);
+      if (ul.u_modDamagedThresh) gl.uniform1f(ul.u_modDamagedThresh, m.threshold ?? 0.48);
+      if (ul.u_modDamagedSoft) gl.uniform1f(ul.u_modDamagedSoft, m.softness ?? 0.18);
+      if (ul.u_modDamagedSeed) gl.uniform1f(ul.u_modDamagedSeed, m.seed ?? 23);
+    }
+    // Water
+    {
+      const m = getMod("water");
+      if (ul.u_modWaterEnabled) gl.uniform1i(ul.u_modWaterEnabled, (m.enabled !== false && modEnabledUpload) ? 1 : 0);
+      if (ul.u_modWaterDarken) gl.uniform1f(ul.u_modWaterDarken, m.darken ?? 0.15);
+      if (ul.u_modWaterDarkenStr) gl.uniform1f(ul.u_modWaterDarkenStr, m.darkenStrength ?? 0.55);
+      if (ul.u_modWaterRoughAdd) gl.uniform1f(ul.u_modWaterRoughAdd, m.roughAdd ?? -0.46);
+      if (ul.u_modWaterRoughMin) gl.uniform1f(ul.u_modWaterRoughMin, m.roughMin ?? 0.12);
+      if (ul.u_modWaterHeightAdd) gl.uniform1f(ul.u_modWaterHeightAdd, m.heightAdd ?? -0.03);
+      if (ul.u_modWaterFlat) gl.uniform1f(ul.u_modWaterFlat, m.normalFlatten ?? 0.42);
+      if (ul.u_modWaterStreak) gl.uniform1f(ul.u_modWaterStreak, m.normalStreak ?? 0.18);
+      if (ul.u_modWaterNoiseScale) gl.uniform1f(ul.u_modWaterNoiseScale, m.noiseScale ?? 0.72);
+      if (ul.u_modWaterStreakScale) gl.uniform1f(ul.u_modWaterStreakScale, m.streakScale ?? 8.0);
+      if (ul.u_modWaterThresh) gl.uniform1f(ul.u_modWaterThresh, m.threshold ?? 0.38);
+      if (ul.u_modWaterSoft) gl.uniform1f(ul.u_modWaterSoft, m.softness ?? 0.20);
+      if (ul.u_modWaterSeed) gl.uniform1f(ul.u_modWaterSeed, m.seed ?? 37);
+    }
+    // Puddle
+    {
+      const m = getMod("puddle");
+      if (ul.u_modPuddleEnabled) gl.uniform1i(ul.u_modPuddleEnabled, (m.enabled !== false && modEnabledUpload) ? 1 : 0);
+      if (ul.u_modPuddleAlbedoDarken) gl.uniform1f(ul.u_modPuddleAlbedoDarken, m.albedoDarken ?? 0.56);
+      if (ul.u_modPuddleRoughTarget) gl.uniform1f(ul.u_modPuddleRoughTarget, m.roughTarget ?? 0.08);
+      if (ul.u_modPuddleRoughEdge) gl.uniform1f(ul.u_modPuddleRoughEdge, m.roughEdge ?? 0.26);
+      if (ul.u_modPuddleRoughLerp) gl.uniform1f(ul.u_modPuddleRoughLerp, m.roughLerp ?? 0.92);
+      if (ul.u_modPuddleHeightDepress) gl.uniform1f(ul.u_modPuddleHeightDepress, m.heightDepress ?? -0.19);
+      if (ul.u_modPuddleFlat) gl.uniform1f(ul.u_modPuddleFlat, m.normalFlatten ?? 0.88);
+      if (ul.u_modPuddleRipple) gl.uniform1f(ul.u_modPuddleRipple, m.normalRipple ?? 0.18);
+      if (ul.u_modPuddleNoiseScale) gl.uniform1f(ul.u_modPuddleNoiseScale, m.noiseScale ?? 0.12);
+      if (ul.u_modPuddleThresh) gl.uniform1f(ul.u_modPuddleThresh, m.threshold ?? 0.58);
+      if (ul.u_modPuddleSoft) gl.uniform1f(ul.u_modPuddleSoft, m.softness ?? 0.20);
+      if (ul.u_modPuddleRippleScale) gl.uniform1f(ul.u_modPuddleRippleScale, m.rippleScale ?? 2.5);
+      if (ul.u_modPuddleSeed) gl.uniform1f(ul.u_modPuddleSeed, m.seed ?? 53);
+      if (ul.u_modPuddleFoamBright) gl.uniform1f(ul.u_modPuddleFoamBright, m.foamBright ?? 0.10);
+    }
+    // Blood
+    {
+      const m = getMod("blood");
+      if (ul.u_modBloodEnabled) gl.uniform1i(ul.u_modBloodEnabled, (m.enabled !== false && modEnabledUpload) ? 1 : 0);
+      const alb = m.albedo || [115,13,20];
+      if (ul.u_modBloodAlbedo) gl.uniform3f(ul.u_modBloodAlbedo, alb[0]/255, alb[1]/255, alb[2]/255);
+      const alb2 = m.albedo2 || [77,10,10];
+      if (ul.u_modBloodAlbedo2) gl.uniform3f(ul.u_modBloodAlbedo2, alb2[0]/255, alb2[1]/255, alb2[2]/255);
+      if (ul.u_modBloodAlbedoStr) gl.uniform1f(ul.u_modBloodAlbedoStr, m.albedoStrength ?? 0.88);
+      if (ul.u_modBloodRoughAdd) gl.uniform1f(ul.u_modBloodRoughAdd, m.roughAdd ?? 0.14);
+      if (ul.u_modBloodHeightAdd) gl.uniform1f(ul.u_modBloodHeightAdd, m.heightAdd ?? 0.07);
+      if (ul.u_modBloodNormalStr) gl.uniform1f(ul.u_modBloodNormalStr, m.normalStrength ?? 0.28);
+      if (ul.u_modBloodNoiseScale) gl.uniform1f(ul.u_modBloodNoiseScale, m.noiseScale ?? 0.65);
+      if (ul.u_modBloodThresh) gl.uniform1f(ul.u_modBloodThresh, m.threshold ?? 0.45);
+      if (ul.u_modBloodSoft) gl.uniform1f(ul.u_modBloodSoft, m.softness ?? 0.18);
+      if (ul.u_modBloodSeed) gl.uniform1f(ul.u_modBloodSeed, m.seed ?? 79);
+    }
+    // Dust
+    {
+      const m = getMod("dust");
+      if (ul.u_modDustEnabled) gl.uniform1i(ul.u_modDustEnabled, (m.enabled !== false && modEnabledUpload) ? 1 : 0);
+      const alb = m.albedo || [166,153,128];
+      if (ul.u_modDustAlbedo) gl.uniform3f(ul.u_modDustAlbedo, alb[0]/255, alb[1]/255, alb[2]/255);
+      if (ul.u_modDustAlbedoStr) gl.uniform1f(ul.u_modDustAlbedoStr, m.albedoStrength ?? 0.60);
+      if (ul.u_modDustDesat) gl.uniform1f(ul.u_modDustDesat, m.desat ?? 0.32);
+      if (ul.u_modDustRoughAdd) gl.uniform1f(ul.u_modDustRoughAdd, m.roughAdd ?? 0.32);
+      if (ul.u_modDustHeightAdd) gl.uniform1f(ul.u_modDustHeightAdd, m.heightAdd ?? 0.06);
+      if (ul.u_modDustFlat) gl.uniform1f(ul.u_modDustFlat, m.normalFlatten ?? 0.42);
+      if (ul.u_modDustNoiseScale) gl.uniform1f(ul.u_modDustNoiseScale, m.noiseScale ?? 0.45);
+      if (ul.u_modDustThresh) gl.uniform1f(ul.u_modDustThresh, m.threshold ?? 0.40);
+      if (ul.u_modDustSoft) gl.uniform1f(ul.u_modDustSoft, m.softness ?? 0.22);
+      if (ul.u_modDustSeed) gl.uniform1f(ul.u_modDustSeed, m.seed ?? 97);
+    }
+
 
     // ---- Task 6: multi-light upload (player + environment) - smart 12 closest with room awareness ----
     const playerLight = player.getLightSource();
@@ -1191,3 +1359,9 @@ export class GPURenderer {
     this._renderUIPass();
   }
 }
+
+
+
+
+
+

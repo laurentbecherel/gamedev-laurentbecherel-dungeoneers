@@ -16,6 +16,7 @@ export const CONFIG_PATHS = {
   'ao':             ['config/rendering/ao', 'config/ao', 'config/main'],
   'raymarch':       ['config/rendering/raymarch', 'config/raymarch', 'config/main'],
   'materials-proc': ['config/rendering/materials-proc', 'config/materials-proc', 'config/main'],
+  'material-modifiers': ['config/rendering/material-modifiers', 'config/material-modifiers', 'config/main'],
   // lighting — Task 6 extended
   'lighting':       ['config/lighting/lighting', 'config/lighting', 'config/main'],
   'shadows':        ['config/lighting/shadows', 'config/shadows', 'config/main'],
@@ -154,7 +155,7 @@ export async function saveFogConfig(cfg){
 
 // Batch load all rendering configs at once for Game init
 export async function getAllRenderConfigs(){
-  const names = ['rendering','palette','pom','pbr','ao','lighting','shadows','chamfer','corners','raymarch','fog','generator','map','materials-proc','player','debug','discovery','sprites','light-types','particles'];
+  const names = ['rendering','palette','pom','pbr','ao','lighting','shadows','chamfer','corners','raymarch','fog','generator','map','materials-proc','material-modifiers','player','debug','discovery','sprites','light-types','particles'];
   const promises = names.map(n => _fetchConfig(n).catch(()=>null));
   const results = await Promise.all(promises);
   const out = {};
@@ -233,3 +234,5 @@ export function setPathCache(category, name, data){
 export function getPathCacheKeys(){ return Object.keys(_pathCache); }
 export { _caches as __cachesInternal, _pathCache as __pathCacheInternal } // for live manager debug, not public API but useful for tests
 // keep clone util exported for live module? internal only
+
+

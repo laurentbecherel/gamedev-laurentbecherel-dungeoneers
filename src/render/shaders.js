@@ -136,6 +136,92 @@ uniform float u_chamferGridCreviceSmoothEnd;
 uniform float u_chamferGridTrimStart;
 uniform float u_chamferGridTrimMid;
 uniform float u_chamferGridTrimEnd;
+ // Material Modifiers - Task 9: moss, damaged, water, puddle, blood, dust
+// Generator provides per-cell intensity map (40x40 trivial) + shader evaluates noise mask + AO/height/rough cues
+uniform int   u_modEnabled;
+uniform sampler2D u_modTexA; // R=moss G=damaged B=water A=puddle
+uniform sampler2D u_modTexB; // R=blood G=dust
+uniform vec2  u_modMapSize;
+uniform int   u_modDebugOverlay;
+// Moss
+uniform int   u_modMossEnabled;
+uniform vec3  u_modMossAlbedo;
+uniform vec3  u_modMossAlbedo2;
+uniform float u_modMossAlbedoStr;
+uniform float u_modMossRoughAdd;
+uniform float u_modMossRoughMin;
+uniform float u_modMossRoughMax;
+uniform float u_modMossHeightAdd;
+uniform float u_modMossNormalStr;
+uniform float u_modMossNoiseScale;
+uniform float u_modMossThresh;
+uniform float u_modMossSoft;
+uniform float u_modMossSeed;
+// Damaged
+uniform int   u_modDamagedEnabled;
+uniform float u_modDamagedDarken;
+uniform float u_modDamagedDarkenStr;
+uniform float u_modDamagedDesat;
+uniform float u_modDamagedRoughAdd;
+uniform float u_modDamagedHeightAdd;
+uniform float u_modDamagedNormalStr;
+uniform float u_modDamagedNoiseScale;
+uniform float u_modDamagedThresh;
+uniform float u_modDamagedSoft;
+uniform float u_modDamagedSeed;
+// Water
+uniform int   u_modWaterEnabled;
+uniform float u_modWaterDarken;
+uniform float u_modWaterDarkenStr;
+uniform float u_modWaterRoughAdd;
+uniform float u_modWaterRoughMin;
+uniform float u_modWaterHeightAdd;
+uniform float u_modWaterFlat;
+uniform float u_modWaterStreak;
+uniform float u_modWaterNoiseScale;
+uniform float u_modWaterStreakScale;
+uniform float u_modWaterThresh;
+uniform float u_modWaterSoft;
+uniform float u_modWaterSeed;
+// Puddle
+uniform int   u_modPuddleEnabled;
+uniform float u_modPuddleAlbedoDarken;
+uniform float u_modPuddleRoughTarget;
+uniform float u_modPuddleRoughEdge;
+uniform float u_modPuddleRoughLerp;
+uniform float u_modPuddleHeightDepress;
+uniform float u_modPuddleFlat;
+uniform float u_modPuddleRipple;
+uniform float u_modPuddleNoiseScale;
+uniform float u_modPuddleThresh;
+uniform float u_modPuddleSoft;
+uniform float u_modPuddleRippleScale;
+uniform float u_modPuddleSeed;
+uniform float u_modPuddleFoamBright;
+// Blood
+uniform int   u_modBloodEnabled;
+uniform vec3  u_modBloodAlbedo;
+uniform vec3  u_modBloodAlbedo2;
+uniform float u_modBloodAlbedoStr;
+uniform float u_modBloodRoughAdd;
+uniform float u_modBloodHeightAdd;
+uniform float u_modBloodNormalStr;
+uniform float u_modBloodNoiseScale;
+uniform float u_modBloodThresh;
+uniform float u_modBloodSoft;
+uniform float u_modBloodSeed;
+// Dust
+uniform int   u_modDustEnabled;
+uniform vec3  u_modDustAlbedo;
+uniform float u_modDustAlbedoStr;
+uniform float u_modDustDesat;
+uniform float u_modDustRoughAdd;
+uniform float u_modDustHeightAdd;
+uniform float u_modDustFlat;
+uniform float u_modDustNoiseScale;
+uniform float u_modDustThresh;
+uniform float u_modDustSoft;
+uniform float u_modDustSeed;
 
 // True geometry rounded corners (corners.json)
 uniform int   u_cornerEnabled;
@@ -450,6 +536,321 @@ vec3 debugShowPBR(int mode, vec3 albedoRaw, vec3 normalRaw, vec3 worldN, float h
   if (mode == 8) return emissive;
   return albedoRaw;
 }
+// ===== Task 9: Material Modifiers - noise compilation + mask + alterations =====
+// Noise compiled from hash -> value noise -> FBM (3 octaves max) - mask decides placement
+// Uses material cues AO, height, rough to decide where modifier sticks.
+// Each modifier alters albedo, normal, PBR rough/metal, POM height distinctly.
+
+float modHash(vec2 p) {
+  // cheap sin hash, deterministic per cell
+  // using dot + sin fract, fast enough for WebGL2
+  float h = dot(p, vec2(127.1, 311.7));
+  return fract(sin(h) * 43758.5453123);
+}
+float modHash2(vec2 p, float seed) {
+  return modHash(p + vec2(seed * 0.13, seed * 0.37));
+}
+float modNoise(vec2 p) {
+  vec2 i = floor(p);
+  vec2 f = fract(p);
+  float a = modHash(i);
+  float b = modHash(i + vec2(1.0, 0.0));
+  float c = modHash(i + vec2(0.0, 1.0));
+  float d = modHash(i + vec2(1.0, 1.0));
+  vec2 u = f * f * (3.0 - 2.0 * f);
+  return mix(mix(a, b, u.x), mix(c, d, u.x), u.y);
+}
+float modFBM(vec2 p, float seed, int octaves) {
+  float v = 0.0;
+  float amp = 0.5;
+  float freq = 1.0;
+  float norm = 0.0;
+  for (int i = 0; i < 4; i++) {
+    if (i >= octaves) break;
+    v += modNoise(p * freq + vec2(seed * 1.7 + float(i) * 19.3, seed * 0.9)) * amp;
+    norm += amp;
+    freq *= 2.0;
+    amp *= 0.5;
+  }
+  return norm > 0.0 ? v / norm : 0.0;
+}
+float modMask(float cellIntensity, float noiseVal, float thresh, float soft) {
+  float t0 = thresh;
+  float t1 = thresh + max(soft, 0.01);
+  return cellIntensity * smoothstep(t0, t1, noiseVal);
+}
+
+// Sample modifier map textures per world cell - returns intensities 0..1 for each mod
+void sampleModCell(vec2 worldXY, out vec4 outA, out vec4 outB) {
+  if (u_modMapSize.x < 1.0 || u_modMapSize.y < 1.0) {
+    outA = vec4(0.0); outB = vec4(0.0);
+    return;
+  }
+  vec2 cell = floor(worldXY);
+  vec2 uv = (cell + 0.5) / u_modMapSize;
+  // clamp to avoid border
+  uv = clamp(uv, 0.0, 1.0);
+  outA = texture(u_modTexA, uv);
+  outB = texture(u_modTexB, uv);
+}
+
+// Core modifier application - alters all PBR channels
+// worldPos provided for noise, NgeomFlat optional for flattening
+void applyMaterialModifiers(
+  inout vec3 albedo,
+  inout vec3 N,
+  inout float rough,
+  inout float metal,
+  inout float height,
+  inout float ao,
+  vec3 worldPos,
+  vec2 worldXY,
+  vec3 NgeomFlat,
+  bool isFloor,
+  bool isCeil,
+  bool isWall,
+  float wallU,
+  float wallV
+) {
+  if (u_modEnabled == 0) return;
+  vec4 modA; vec4 modB;
+  sampleModCell(worldXY, modA, modB);
+  // modA.r=moss g=damaged b=water a=puddle
+  // modB.r=blood g=dust
+  float cellMoss = modA.r;
+  float cellDamaged = modA.g;
+  float cellWater = modA.b;
+  float cellPuddle = modA.a;
+  float cellBlood = modB.r;
+  float cellDust = modB.g;
+
+  // Early cheap exit if sum very low
+  float sumCell = cellMoss + cellDamaged + cellWater + cellPuddle + cellBlood + cellDust;
+  if (sumCell < 0.015) return;
+
+  // Shared world XY for noise
+  vec2 wp = worldXY;
+
+  // ----- MOSS -----
+  if (u_modMossEnabled == 1 && cellMoss > 0.01) {
+    float scale = max(u_modMossNoiseScale, 0.05);
+    float noise = modFBM(wp * scale, u_modMossSeed, 3);
+    // AO cue: moss prefers dark AO crevices (grout) and low height
+    float aoCue = 1.0 - smoothstep(0.75, 0.98, ao);
+    float hCue = 1.0 - smoothstep(0.25, 0.75, height); // prefers low (grout)
+    // wall bottom cue
+    float wallCue = 1.0;
+    if (isWall) wallCue = 1.0 - smoothstep(0.0, 0.55, wallV); // more at bottom
+    float cue = mix(1.0, aoCue * 0.8 + hCue * 0.6, 0.55) * wallCue;
+    float mask = modMask(cellMoss, noise, u_modMossThresh, u_modMossSoft) * cue;
+    mask = clamp(mask * u_modMossAlbedoStr, 0.0, 1.0);
+    if (mask > 0.001) {
+      // albedo green-yellow mix with variance via noise
+      float varN = modNoise(wp * scale * 2.1 + vec2(7.3, 2.1));
+      vec3 mossCol = mix(u_modMossAlbedo, u_modMossAlbedo2, varN);
+      albedo = mix(albedo, mossCol * (0.85 + varN * 0.25), mask);
+      // rough rougher
+      rough = mix(rough, clamp(mix(u_modMossRoughMin, u_modMossRoughMax, varN), 0.0, 1.0), mask * 0.9);
+      // height bumpy spongy
+      float bump = modFBM(wp * scale * 1.7, u_modMossSeed + 5.0, 2) * 0.5 + 0.5;
+      height += bump * u_modMossHeightAdd * mask;
+      // normal lumpy: perturb toward random lump direction
+      float nx = modNoise(wp * scale * 1.3 + vec2(1.1, 3.3)) * 2.0 - 1.0;
+      float ny = modNoise(wp * scale * 1.3 + vec2(4.7, 8.1)) * 2.0 - 1.0;
+      vec3 mossN = normalize(vec3(nx * 0.6, ny * 0.6, 1.0));
+      // blend with world normal
+      if (isFloor) mossN = normalize(vec3(nx * 0.6, ny * 0.6, 1.0));
+      else if (isCeil) mossN = normalize(vec3(nx * 0.6, -ny * 0.6, -1.0));
+      else mossN = normalize(NgeomFlat + vec3(nx * 0.5, 0.0, ny * 0.5));
+      N = normalize(mix(N, mossN, mask * u_modMossNormalStr));
+      ao *= mix(1.0, 0.85, mask * 0.5);
+    }
+  }
+
+  // ----- DAMAGED -----
+  if (u_modDamagedEnabled == 1 && cellDamaged > 0.01) {
+    float scale = max(u_modDamagedNoiseScale, 0.05);
+    float noise = modFBM(wp * scale, u_modDamagedSeed, 2);
+    float crack = modFBM(wp * scale * 2.8, u_modDamagedSeed + 11.0, 2);
+    // edge weight already in generator, but emphasize via world XY fract near tile edge
+    float edgeFrac = 1.0;
+    if (isFloor || isCeil) {
+      vec2 f = fract(worldXY);
+      float ex = min(f.x, 1.0 - f.x);
+      float ey = min(f.y, 1.0 - f.y);
+      float ed = min(ex, ey);
+      edgeFrac = 1.0 - smoothstep(0.05, 0.35, ed); // more damage at edges
+    } else {
+      float eu = min(wallU, 1.0 - wallU);
+      edgeFrac = 1.0 - smoothstep(0.05, 0.28, eu);
+    }
+    float mask = modMask(cellDamaged, noise * 0.7 + crack * 0.35, u_modDamagedThresh, u_modDamagedSoft);
+    mask *= mix(0.6, 1.0, edgeFrac);
+    mask = clamp(mask, 0.0, 1.0);
+    if (mask > 0.001) {
+      // darken + desat
+      float darkF = mix(1.0, u_modDamagedDarken, mask * u_modDamagedDarkenStr);
+      albedo *= darkF;
+      float l = dot(albedo, vec3(0.299, 0.587, 0.114));
+      albedo = mix(albedo, vec3(l), mask * u_modDamagedDesat);
+      rough += u_modDamagedRoughAdd * mask;
+      rough = clamp(rough + (modHash(wp + vec2(3.1, 7.7)) - 0.5) * 0.08 * mask, 0.0, 1.0);
+      height += u_modDamagedHeightAdd * mask + crack * u_modDamagedHeightAdd * 0.25 * mask;
+      // normal fracture: sharp random tilt
+      float rx = modHash2(wp * 1.7 + vec2(2.3, 9.1), u_modDamagedSeed) * 2.0 - 1.0;
+      float ry = modHash2(wp * 1.7 + vec2(5.5, 1.2), u_modDamagedSeed + 2.0) * 2.0 - 1.0;
+      vec3 crackN = normalize(vec3(rx * 1.2, ry * 1.2, 0.5 + crack * 0.3));
+      if (isCeil) crackN.z = -abs(crackN.z);
+      N = normalize(mix(N, crackN, mask * u_modDamagedNormalStr * (0.5 + edgeFrac * 0.5)));
+      ao *= mix(1.0, 0.75, mask * 0.6);
+    }
+  }
+
+  // ----- WATER (wetness) -----
+  if (u_modWaterEnabled == 1 && cellWater > 0.01) {
+    float scale = max(u_modWaterNoiseScale, 0.05);
+    float streakScale = max(u_modWaterStreakScale, 1.0);
+    // base wet blob
+    float baseN = modFBM(wp * scale, u_modWaterSeed, 2);
+    // vertical streak bias for walls: use worldPos.z (height) + wp for streaks
+    float streak = 0.0;
+    if (isWall) {
+      streak = modNoise(vec2(worldPos.z * streakScale, wp.x * 0.8 + wp.y * 0.3));
+      streak = pow(streak, 1.3);
+    } else {
+      // floors: more isotropic
+      streak = modNoise(wp * scale * 1.5 + vec2(2.2, 8.8));
+    }
+    float combined = baseN * 0.65 + streak * 0.55;
+    float mask = modMask(cellWater, combined, u_modWaterThresh, u_modWaterSoft);
+    if (isWall) mask *= 1.0 - smoothstep(0.35, 0.9, wallV); // more at bottom third
+    mask = clamp(mask, 0.0, 1.0);
+    if (mask > 0.001) {
+      albedo *= mix(1.0, 1.0 - u_modWaterDarken, mask * u_modWaterDarkenStr);
+      rough = mix(rough, max(u_modWaterRoughMin, 0.05), mask * 0.85);
+      rough += u_modWaterRoughAdd * mask; // negative will make glossier
+      rough = clamp(rough, 0.05, 1.0);
+      height += u_modWaterHeightAdd * mask;
+      // normal flatten toward geometric flat + streak tilt
+      vec3 flatN = NgeomFlat;
+      if (isFloor) flatN = vec3(0.0, 0.0, 1.0);
+      else if (isCeil) flatN = vec3(0.0, 0.0, -1.0);
+      N = normalize(mix(N, flatN, mask * u_modWaterFlat));
+      if (isWall && u_modWaterStreak > 0.01) {
+        // tilt slightly along streak direction
+        float sx = (modHash2(wp, u_modWaterSeed + 7.0) - 0.5) * 0.2;
+        N = normalize(N + vec3(0.0, 0.0, sx) * mask * u_modWaterStreak);
+      }
+      ao *= mix(1.0, 0.92, mask * 0.5);
+    }
+  }
+
+  // ----- PUDDLE (floors only) -----
+  if (u_modPuddleEnabled == 1 && cellPuddle > 0.01 && (isFloor || !isWall)) {
+    // only floors - isFloor guard already
+    if (isFloor) {
+      float scale = max(u_modPuddleNoiseScale, 0.03);
+      float bigBlob = modFBM(wp * scale, u_modPuddleSeed, 2);
+      float ripple = modFBM(wp * u_modPuddleRippleScale, u_modPuddleSeed + 13.0, 2);
+      float mask = modMask(cellPuddle, bigBlob, u_modPuddleThresh, u_modPuddleSoft);
+      mask = clamp(mask, 0.0, 1.0);
+      if (mask > 0.001) {
+        // albedo darken with tint
+        vec3 tint = vec3(0.27, 0.31, 0.38); // fallback from config
+        // use actual tint from config via uniform? we have darken only, approximate tint
+        // darken + slight reflect tint
+        albedo = mix(albedo, albedo * (1.0 - u_modPuddleAlbedoDarken) + tint * 0.15, mask * 0.9);
+        // edge foam bright via fwidth of mask approximation using noise derivative
+        float edge = 0.0;
+        // crude edge detection: where mask near threshold
+        float edDist = abs(bigBlob - u_modPuddleThresh);
+        edge = 1.0 - smoothstep(0.0, 0.08, edDist);
+        albedo += vec3(u_modPuddleFoamBright * edge * mask);
+        // rough mirror
+        float target = u_modPuddleRoughTarget;
+        float rEdge = u_modPuddleRoughEdge;
+        float roughBase = mix(target, rEdge, edge * 0.8);
+        rough = mix(rough, roughBase, mask * u_modPuddleRoughLerp);
+        rough = clamp(rough, 0.03, 1.0);
+        // height depression
+        height = mix(height, height + u_modPuddleHeightDepress, mask);
+        // height edge softer
+        height = mix(height, height + (u_modPuddleHeightDepress * 0.3), edge * mask * 0.6);
+        // normal flat + ripple
+        vec3 flatN = vec3(0.0, 0.0, 1.0);
+        float rnX = (ripple - 0.5) * 0.4;
+        float rnY = modNoise(wp * u_modPuddleRippleScale * 1.4 + vec2(5.5, 2.2)) - 0.5;
+        vec3 pudN = normalize(vec3(rnX * u_modPuddleRipple, rnY * u_modPuddleRipple, 1.0));
+        N = normalize(mix(N, mix(flatN, pudN, 0.25), mask * u_modPuddleFlat));
+        ao *= mix(1.0, 0.88, mask * 0.6);
+      }
+    }
+  }
+
+  // ----- BLOOD -----
+  if (u_modBloodEnabled == 1 && cellBlood > 0.01) {
+    float scale = max(u_modBloodNoiseScale, 0.05);
+    // splatter pattern: use two noises + cell-peak hash
+    float blob = modFBM(wp * scale, u_modBloodSeed, 2);
+    float blob2 = modFBM(wp * scale * 2.3, u_modBloodSeed + 19.0, 2);
+    // radial splat: hash centers per 2x2 tiling
+    vec2 cellId = floor(wp * 0.5);
+    float centerHash = modHash2(cellId, u_modBloodSeed + 7.0);
+    float distToCenter = length(fract(wp * 0.5) - 0.5);
+    float radial = 1.0 - smoothstep(0.1, 0.45, distToCenter + (1.0 - centerHash) * 0.25);
+    // streak drag bias: use direction approx along x or y
+    float streakDir = modNoise(vec2(wp.y * 0.7, wp.x * 0.3 + u_modBloodSeed * 0.02));
+    streakDir = pow(streakDir, 2.0);
+    float combined = blob * 0.55 + blob2 * 0.30 + radial * 0.4 + streakDir * 0.25;
+    float mask = modMask(cellBlood, combined, u_modBloodThresh, u_modBloodSoft);
+    mask = clamp(mask * u_modBloodAlbedoStr, 0.0, 1.0);
+    if (mask > 0.001) {
+      float varN = modHash2(wp * 1.3, u_modBloodSeed + 3.0);
+      vec3 bloodCol = mix(u_modBloodAlbedo, u_modBloodAlbedo2, varN * 0.7 + blob2 * 0.3);
+      // multiply over base, preserve darker cracks
+      vec3 mixed = mix(albedo, bloodCol * (0.6 + varN * 0.4), mask);
+      // add slightly darker pool
+      mixed *= mix(1.0, 0.92, mask * 0.6);
+      albedo = mixed;
+      rough = clamp(rough + u_modBloodRoughAdd * mask + (varN - 0.5) * 0.1 * mask, 0.0, 1.0);
+      height += u_modBloodHeightAdd * mask * (0.5 + varN * 0.5);
+      float bx = (modNoise(wp * scale * 2.0 + vec2(1.7, 4.4)) - 0.5) * 0.3;
+      float by = (modNoise(wp * scale * 2.0 + vec2(6.1, 2.9)) - 0.5) * 0.3;
+      vec3 bloodN = normalize(vec3(bx, by, 1.0 + mask * 0.2));
+      if (isCeil) bloodN.z = -abs(bloodN.z);
+      N = normalize(mix(N, bloodN, mask * u_modBloodNormalStr));
+      ao *= mix(1.0, 0.90, mask * 0.4);
+    }
+  }
+
+  // ----- DUST -----
+  if (u_modDustEnabled == 1 && cellDust > 0.01) {
+    float scale = max(u_modDustNoiseScale, 0.05);
+    float noise = modFBM(wp * scale, u_modDustSeed, 2);
+    // AO cue: dust accumulates in crevices (high AO dark)
+    float aoCue = smoothstep(0.70, 0.95, 1.0 - ao); // more when ao low (dark)
+    float cue = mix(0.7, 1.0, aoCue * 0.7);
+    if (isCeil) cue *= 1.25; // ceiling boost
+    float mask = modMask(cellDust, noise, u_modDustThresh, u_modDustSoft) * cue;
+    mask = clamp(mask * u_modDustAlbedoStr, 0.0, 1.0);
+    if (mask > 0.001) {
+      // desaturate + beige veil
+      float lum = dot(albedo, vec3(0.299, 0.587, 0.114));
+      vec3 desat = mix(albedo, vec3(lum), u_modDustDesat);
+      vec3 dustCol = u_modDustAlbedo;
+      albedo = mix(desat, mix(desat, dustCol, 0.55), mask);
+      rough = clamp(rough + u_modDustRoughAdd * mask, 0.0, 1.0);
+      height += u_modDustHeightAdd * mask * (0.4 + aoCue * 0.6);
+      // normal soften toward flat geometric
+      vec3 flatN = NgeomFlat;
+      if (isFloor) flatN = vec3(0.0, 0.0, 1.0);
+      else if (isCeil) flatN = vec3(0.0, 0.0, -1.0);
+      N = normalize(mix(N, flatN, mask * u_modDustFlat));
+      ao *= mix(1.0, 0.96, mask * 0.3);
+    }
+  }
+}
+
 vec3 pbrShade(vec3 albedo, vec3 N, float rough, float metal, float ao, vec3 emissive, vec3 worldPos, vec3 viewDir) {
   if (u_lightingEnabled == 0) { return albedo + emissive; }
   float aoSunEff = mix(1.0, ao, clamp(u_aoSun, 0.0, 1.0));
@@ -792,6 +1193,18 @@ void main() {
               }
             }
           }
+          // Task 9: Material Modifiers - after chamfer/grid, before shading, uses noise + AO/height/rough cues
+          {
+            vec3 _modAlbedo = albedo;
+            vec3 _modN = N;
+            float _modRough = rma.r;
+            float _modMetal = rma.g;
+            float _modHeight = heightVal;
+            float _modAO = ao;
+            vec3 _worldPosFh = vec3(floorWorld, floorH_atRay);
+            applyMaterialModifiers(_modAlbedo, _modN, _modRough, _modMetal, _modHeight, _modAO, _worldPosFh, floorWorld, vec3(0.0,0.0,1.0), true, false, false, 0.0, 0.0);
+            albedo = _modAlbedo; N = _modN; rma.r = _modRough; rma.g = _modMetal; heightVal = _modHeight; ao = _modAO;
+          }
           vec3 worldPos = vec3(floorWorld, floorH_atRay);
           vec3 viewDir = normalize(vec3(u_playerPos, eyeZ) - worldPos);
           finalColor = pbrShade(albedo, N, rma.r, rma.g, ao, emissive, worldPos, viewDir);
@@ -865,6 +1278,18 @@ void main() {
                 if (distX < gSize && distY < gSize) ao *= 0.97;
               }
             }
+          }
+          // Task 9: Material Modifiers - ceiling
+          {
+            vec3 _modAlbedo = albedo;
+            vec3 _modN = N;
+            float _modRough = rma.r;
+            float _modMetal = rma.g;
+            float _modHeight = heightVal;
+            float _modAO = ao;
+            vec3 _worldPosCh = vec3(ceilWorld, ceilH_atRay);
+            applyMaterialModifiers(_modAlbedo, _modN, _modRough, _modMetal, _modHeight, _modAO, _worldPosCh, ceilWorld, vec3(0.0,0.0,-1.0), false, true, false, 0.0, 0.0);
+            albedo = _modAlbedo; N = _modN; rma.r = _modRough; rma.g = _modMetal; heightVal = _modHeight; ao = _modAO;
           }
           vec3 worldPos = vec3(ceilWorld, ceilH_atRay);
           vec3 viewDir = normalize(vec3(u_playerPos, eyeZ) - worldPos);
@@ -1008,6 +1433,16 @@ void main() {
         float grid = (wuv.x > 0.95 || wuv.y > 0.95 || wuv.x < 0.05 || wuv.y < 0.05) ? 1.0 : 0.25;
         finalColor = vec3(grid * 0.9, 0.0, 0.0);
       } else {
+      if (u_modEnabled == 1 && u_pbrDebugMode == 0 && u_gridDebug == 0) {
+        vec3 _modAlbedoW = albedoRaw;
+        vec3 _modNW = Nw;
+        float _modRoughW = rmaW.r;
+        float _modMetalW = rmaW.g;
+        float _modHeightW = heightVal;
+        float _modAOW = rmaW.a;
+        applyMaterialModifiers(_modAlbedoW, _modNW, _modRoughW, _modMetalW, _modHeightW, _modAOW, worldPos, hitPos, Ngeom, false, false, true, wallU, wallV);
+        albedoRaw = _modAlbedoW; Nw = _modNW; rmaW.r = _modRoughW; rmaW.g = _modMetalW; heightVal = _modHeightW; rmaW.a = _modAOW;
+      }
         finalColor = pbrShade(albedoRaw, Nw, rmaW.r, rmaW.g, rmaW.a, emissiveW, worldPos, viewDir);
       }
       if (side == 1 && u_pbrDebugMode == 0 && u_gridDebug == 0) finalColor *= wallDarken;
@@ -1099,6 +1534,18 @@ void main() {
             }
           }
         }
+        // Task 9: Material Modifiers - floor fallback (no wall hit distant)
+        {
+          vec3 _modAlbedo = albedo;
+          vec3 _modN = N;
+          float _modRough = rma.r;
+          float _modMetal = rma.g;
+          float _modHeight = heightVal;
+          float _modAO = ao;
+          vec3 _worldPosF = vec3(floorWorld, floorH);
+          applyMaterialModifiers(_modAlbedo, _modN, _modRough, _modMetal, _modHeight, _modAO, _worldPosF, floorWorld, vec3(0.0,0.0,1.0), true, false, false, 0.0, 0.0);
+          albedo = _modAlbedo; N = _modN; rma.r = _modRough; rma.g = _modMetal; heightVal = _modHeight; ao = _modAO;
+        }
         vec3 worldPos = vec3(floorWorld, floorH);
         vec3 viewDir = normalize(vec3(u_playerPos, eyeZ2) - worldPos);
         finalColor = pbrShade(albedo, N, rma.r, rma.g, ao, emissive, worldPos, viewDir);
@@ -1181,6 +1628,18 @@ void main() {
               if (distX < gSize && distY < gSize) ao *= 0.97;
             }
           }
+        }
+        // Task 9: Material Modifiers - ceil fallback
+        {
+          vec3 _modAlbedo = albedo;
+          vec3 _modN = N;
+          float _modRough = rma.r;
+          float _modMetal = rma.g;
+          float _modHeight = heightVal;
+          float _modAO = ao;
+          vec3 _worldPosC = vec3(ceilWorld, ceilH);
+          applyMaterialModifiers(_modAlbedo, _modN, _modRough, _modMetal, _modHeight, _modAO, _worldPosC, ceilWorld, vec3(0.0,0.0,-1.0), false, true, false, 0.0, 0.0);
+          albedo = _modAlbedo; N = _modN; rma.r = _modRough; rma.g = _modMetal; heightVal = _modHeight; ao = _modAO;
         }
         vec3 worldPos = vec3(ceilWorld, ceilH);
         vec3 viewDir = normalize(vec3(u_playerPos, eyeZ2) - worldPos);
@@ -1549,3 +2008,14 @@ void main(){
   outColor = vec4(v_color.rgb * fog, v_color.a);
 }
 `;
+
+
+
+
+
+
+
+
+
+
+
