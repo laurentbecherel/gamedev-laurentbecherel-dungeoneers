@@ -17,6 +17,8 @@ screenshots = [
 ]
 videos = []
 teaser = "./screenshots/screen-moss-wall.png"
-base-commit-hash = "c758984c62fa717292e8134e15fe6a93833f0c86"
-commit-hash = "c758984c62fa717292e8134e15fe6a93833f0c86"
+base-commit-hash = "31facfcb8ba6d269f4cccbadec9327d29c38aa3d"
+commit-hash = "5ffe3631564950c8ac09c21e23b74a3fecf0dbd9"
 avocado-model = "Muse Spark 1.1"
+
+
