@@ -1,0 +1,21 @@
+name = "Dungeoneers: Grid Tile Chamfers"
+instruction = "./instruction.md"
+
+[game]
+tags = ["RPG/adventure/story", "Arcade/action", "First-person", "Retro/pixel", "Atmosphere/lighting"]
+tech-stack-tags = ["Web JS/DOM", "WebGL2", "GLSL", "Vanilla JS canvas", "PBR", "Procedural", "Chamfer"]
+assets-used = ["primitives", "procedural", "config-hot-reload"]
+harness = "Metacode"
+screenshots = [
+  "./screenshots/screen-floor-grid.png",
+  "./screenshots/screen-ceiling-grid.png",
+  "./screenshots/screen-floor-ceiling-wall-together.png",
+  "./screenshots/screen-grid-off-vs-on.png",
+  "./screenshots/screen-editor-chamfer.png",
+  "./screenshots/screen-live-edit-grid-tweak.png"
+]
+videos = []
+teaser = "./screenshots/screen-floor-ceiling-wall-together.png"
+base-commit-hash = "a1124616dd93d2b852304d85243d40829bf8513e"
+commit-hash = "a1124616dd93d2b852304d85243d40829bf8513e"
+avocado-model = "Muse Spark 1.1"
