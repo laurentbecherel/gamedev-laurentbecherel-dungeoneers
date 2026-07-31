@@ -167,13 +167,80 @@ bool isWallCell(ivec2 c) {
 float nearestWallDistAndNormal(vec2 world, out vec3 outNorm) {
   ivec2 cell = ivec2(floor(world));
   vec2 f = fract(world);
+
+  // Orthogonal
+  float dE = 1.0 - f.x; vec3 nE = vec3(-1.0, 0.0, 0.0); bool eWall = isWallCell(cell + ivec2(1,0));
+  float dW = f.x;       vec3 nW = vec3(1.0, 0.0, 0.0);  bool wWall = isWallCell(cell + ivec2(-1,0));
+  float dN = 1.0 - f.y; vec3 nN = vec3(0.0, -1.0, 0.0); bool nWall = isWallCell(cell + ivec2(0,1));
+  float dS = f.y;       vec3 nS = vec3(0.0, 1.0, 0.0);  bool sWall = isWallCell(cell + ivec2(0,-1));
+
+  // Diagonal – distance to SW/SE/... corner of diagonal wall cell
+  bool neWall = isWallCell(cell + ivec2(1,1));
+  bool nwWall = isWallCell(cell + ivec2(-1,1));
+  bool seWall = isWallCell(cell + ivec2(1,-1));
+  bool swWall = isWallCell(cell + ivec2(-1,-1));
+
+  vec2 toNE = vec2(1.0 - f.x, 1.0 - f.y); float dNE = length(toNE);
+  vec2 toNW = vec2(-f.x, 1.0 - f.y);      float dNW = length(toNW);
+  vec2 toSE = vec2(1.0 - f.x, -f.y);      float dSE = length(toSE);
+  vec2 toSW = vec2(-f.x, -f.y);           float dSW = length(toSW);
+
+  vec3 nNE = (dNE > 0.0001) ? vec3(normalize(-toNE), 0.0) : vec3(-0.707, -0.707, 0.0);
+  vec3 nNW = (dNW > 0.0001) ? vec3(normalize(-toNW), 0.0) : vec3(0.707, -0.707, 0.0);
+  vec3 nSE = (dSE > 0.0001) ? vec3(normalize(-toSE), 0.0) : vec3(-0.707, 0.707, 0.0);
+  vec3 nSW = (dSW > 0.0001) ? vec3(normalize(-toSW), 0.0) : vec3(0.707, 0.707, 0.0);
+
   float best = 100.0;
-  vec3 n = vec3(0.0);
-  if (isWallCell(cell + ivec2(1,0))) { float d = 1.0 - f.x; if (d < best) { best = d; n = vec3(-1.0, 0.0, 0.0); } }
-  if (isWallCell(cell + ivec2(-1,0))) { float d = f.x; if (d < best) { best = d; n = vec3(1.0, 0.0, 0.0); } }
-  if (isWallCell(cell + ivec2(0,1))) { float d = 1.0 - f.y; if (d < best) { best = d; n = vec3(0.0, -1.0, 0.0); } }
-  if (isWallCell(cell + ivec2(0,-1))) { float d = f.y; if (d < best) { best = d; n = vec3(0.0, 1.0, 0.0); } }
-  outNorm = n;
+  vec3 bestN = vec3(0.0);
+
+  if (eWall && dE < best) { best = dE; bestN = nE; }
+  if (wWall && dW < best) { best = dW; bestN = nW; }
+  if (nWall && dN < best) { best = dN; bestN = nN; }
+  if (sWall && dS < best) { best = dS; bestN = nS; }
+
+  // Outer convex corners: diagonal walls. Previously these were ignored, which
+  // broke the floor/ceiling chamfer at corners (screenshot gap). Now they are
+  // considered always – orthogonal is still closer when present, but diagonal
+  // provides the missing distance when both orthogonals are empty.
+  if (neWall && dNE < best) { best = dNE; bestN = nNE; }
+  if (nwWall && dNW < best) { best = dNW; bestN = nNW; }
+  if (seWall && dSE < best) { best = dSE; bestN = nSE; }
+  if (swWall && dSW < best) { best = dSW; bestN = nSW; }
+
+  // Blending at inner concave corners and at wall end caps:
+  // Collect every wall (orth + diag) whose distance is within eps of best
+  // and accumulate normals. This yields a diagonal bevel for east+north,
+  // and also wraps around a wall end where east + NE are both near.
+  // For a 1-grid corridor we can have both corners of the same tile needing
+  // chamfer (e.g. NW diag + SE diag). Per-fragment we pick the nearest, so
+  // different fragments of the same tile correctly show different corners –
+  // the tile as a whole shows both.
+  {
+    const float eps = 0.10;
+    vec3 accum = vec3(0.0);
+    int cnt = 0;
+    if (eWall && abs(dE - best) <= eps) { accum += nE; cnt++; }
+    if (wWall && abs(dW - best) <= eps) { accum += nW; cnt++; }
+    if (nWall && abs(dN - best) <= eps) { accum += nN; cnt++; }
+    if (sWall && abs(dS - best) <= eps) { accum += nS; cnt++; }
+    if (neWall && abs(dNE - best) <= eps) { accum += nNE; cnt++; }
+    if (nwWall && abs(dNW - best) <= eps) { accum += nNW; cnt++; }
+    if (seWall && abs(dSE - best) <= eps) { accum += nSE; cnt++; }
+    if (swWall && abs(dSW - best) <= eps) { accum += nSW; cnt++; }
+
+    if (cnt > 1) {
+      float len = length(accum);
+      // If opposite walls cancel (len ~0), e.g. 1-tile wide corridor with
+      // east+west both within eps at centre, keep bestN single to avoid
+      // zero and still get chamfer from the closer edge as fragment moves.
+      if (len > 0.35) {
+        bestN = normalize(accum);
+      }
+      // else keep single bestN
+    }
+  }
+
+  outNorm = bestN;
   return best;
 }
 
