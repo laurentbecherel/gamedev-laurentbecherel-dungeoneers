@@ -152,6 +152,51 @@ export class LightManager {
     this.maxLights = cfg?.maxLights ?? cfg?.sprites?.maxLights ?? this.maxLights;
   }
 
+  // Live-edit: update from light-types archetypes
+  updateFromLightTypes(lightTypesCfg) {
+    if (!lightTypesCfg || !lightTypesCfg.types) return;
+    // Build map id->type def for quick lookup
+    const byType = new Map();
+    for (const t of lightTypesCfg.types) {
+      if (t.id) byType.set(t.id, t);
+      if (t.type) byType.set(t.type, t);
+    }
+    // For demo, we won't override per-light typeId, but we can update global multipliers if present
+    // Future: if lightTypes contains flicker global scale, apply.
+    // For now no-op but keep for extensibility
+  }
+
+  updateFromSpritesConfig(spritesCfg) {
+    if (!spritesCfg || !spritesCfg.sprites) return;
+    const byId = new Map(spritesCfg.sprites.map(s => [s.id, s]));
+    for (const L of this.lights) {
+      const def = byId.get(L.spriteId);
+      if (!def) continue;
+      const lp = def.lightProfile;
+      if (!lp) continue;
+      if (lp.color) L.color = lp.color.slice();
+      if (lp.intensity) {
+        const avg = typeof lp.intensity === 'number' ? lp.intensity : (lp.intensity.min + lp.intensity.max) / 2;
+        L.intensity = avg;
+      }
+      if (lp.radius) {
+        const avg = typeof lp.radius === 'number' ? lp.radius : (lp.radius.min + lp.radius.max) / 2;
+        L.radius = avg;
+      }
+      if (lp.flicker) {
+        if (lp.flicker.speedMin !== undefined) L.flickerSpeed = (lp.flicker.speedMin + lp.flicker.speedMax) / 2;
+        if (lp.flicker.amountMin !== undefined) L.flickerAmount = (lp.flicker.amountMin + lp.flicker.amountMax) / 2;
+      }
+    }
+  }
+
+  updateFlickerForAll(speedMul = 1, amountMul = 1) {
+    for (const L of this.lights) {
+      L.flickerSpeed *= speedMul;
+      L.flickerAmount *= amountMul;
+    }
+  }
+
   setFromMap(map) {
     // map.lights from sprites.js or items.js
     const src = map.lights || (map.sprites ? map.sprites.filter(s => s.emitsLight !== false).map(it => ({

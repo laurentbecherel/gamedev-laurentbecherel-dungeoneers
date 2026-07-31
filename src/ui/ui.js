@@ -12,6 +12,7 @@ export class UI {
   }
 
   setDungeon(dungeon) { this.dungeon = dungeon; }
+  updateMapConfig(mapCfg) { this.uiCfg = mapCfg || this.uiCfg; this.cfg = { ...this.cfg, map: mapCfg, ui: { ...(this.cfg?.ui||{}), map: mapCfg } }; }
 
   /**
    * Draw map texture.
