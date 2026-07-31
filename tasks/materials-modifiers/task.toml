@@ -1,0 +1,22 @@
+name = "Dungeoneers: Materials Modifiers"
+instruction = "./instruction.md"
+
+[game]
+tags = ["RPG/adventure/story", "Arcade/action", "First-person", "Retro/pixel", "Atmosphere/lighting"]
+tech-stack-tags = ["Web JS/DOM", "WebGL2", "GLSL", "Vanilla JS canvas", "PBR", "Procedural", "Material-Modifiers"]
+assets-used = ["primitives", "procedural", "config-hot-reload", "noise", "modifiers"]
+harness = "Metacode"
+screenshots = [
+  "./screenshots/screen-moss-wall.png",
+  "./screenshots/screen-blood-guardian.png",
+  "./screenshots/screen-puddle-floor.png",
+  "./screenshots/screen-dusty-secret.png",
+  "./screenshots/screen-water-streak.png",
+  "./screenshots/screen-damaged-hub.png",
+  "./screenshots/screen-editor-modifiers.png"
+]
+videos = []
+teaser = "./screenshots/screen-moss-wall.png"
+base-commit-hash = "c758984c62fa717292e8134e15fe6a93833f0c86"
+commit-hash = "c758984c62fa717292e8134e15fe6a93833f0c86"
+avocado-model = "Muse Spark 1.1"
