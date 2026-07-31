@@ -1,0 +1,21 @@
+name = "Dungeoneers: Live Edit System"
+instruction = "./instruction.md"
+
+[game]
+tags = ["tooling", "editor", "live-edit", "workflow"]
+tech-stack-tags = ["Web JS/DOM", "WebGL2", "SSE", "BroadcastChannel", "Vanilla JS"]
+assets-used = ["config-hot-reload", "sse", "broadcast-channel"]
+harness = "Metacode"
+screenshots = [
+  "./screenshots/live-edit-toggle.png",
+  "./screenshots/live-fog-tweak.png",
+  "./screenshots/live-flicker-tweak.png",
+  "./screenshots/live-chamfer-tweak.png",
+  "./screenshots/editor-live-badge.png",
+  "./screenshots/game-live-indicator.png"
+]
+videos = []
+teaser = ""
+base-commit-hash = "61fed2153b40ed73172503c67239533c9cda7378"
+commit-hash = ""
+avocado-model = "Muse Spark 1.1"
