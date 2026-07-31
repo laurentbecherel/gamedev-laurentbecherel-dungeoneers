@@ -1215,6 +1215,253 @@ void main() {
 }
 `;
 
+// ============================================================================
+// Deferred split (toggle with key K). Geometry pass writes material to a 4x
+// RGBA32F G-buffer; lighting pass reads it and runs pbrShade + fog/tonemap.
+// Both reuse GLSL_WORLD_PRELUDE so the material/lighting GLSL is shared with the
+// forward shader. Not bit-exact vs forward: wall side-darken is folded into
+// albedo and viewDir uses a single eye height (small, measured deltas).
+// ============================================================================
+export const fsGeometrySrc = GLSL_WORLD_PRELUDE + `
+layout(location = 0) out vec4 gA; // albedo.rgb, perpDist (a)
+layout(location = 1) out vec4 gN; // worldNormal.rgb, ao (a)
+layout(location = 2) out vec4 gP; // worldPos.rgb, rough (a)
+layout(location = 3) out vec4 gM; // emissive.rgb, metal (a)
+
+void writeGBuffer(Material m, float perpDist) {
+  gA = vec4(m.albedo, perpDist);
+  gN = vec4(m.N, m.ao);
+  gP = vec4(m.worldPos, m.rough);
+  gM = vec4(m.emissive, m.metal);
+}
+
+void main() {
+  vec2 fragCoord = vec2(v_uv.x * u_resolution.x, (1.0 - v_uv.y) * u_resolution.y + u_bobPixels);
+  float cameraX = 2.0 * fragCoord.x / u_resolution.x - 1.0;
+  vec2 rayDir = vec2(cos(u_playerAngle), sin(u_playerAngle));
+  vec2 plane = vec2(-rayDir.y, rayDir.x) * tan(u_fov * 0.5);
+  vec2 ray = rayDir + plane * cameraX;
+
+  vec2 mapPos = floor(u_playerPos);
+  vec2 deltaDist = abs(vec2(1.0) / ray);
+  ivec2 stepDir = ivec2(ray.x < 0.0 ? -1 : 1, ray.y < 0.0 ? -1 : 1);
+  vec2 sideDist;
+  sideDist.x = (ray.x < 0.0 ? (u_playerPos.x - mapPos.x) : (mapPos.x + 1.0 - u_playerPos.x)) * deltaDist.x;
+  sideDist.y = (ray.y < 0.0 ? (u_playerPos.y - mapPos.y) : (mapPos.y + 1.0 - u_playerPos.y)) * deltaDist.y;
+
+  int hit = 0; int side = 0;
+  float perpDist = 0.0;
+  vec2 hitPos = vec2(0.0);
+  float cellType = 0.0;
+  vec3 cornerNormal = vec3(0.0);
+  bool hasCornerRound = false;
+  float cornerRadius = clamp(u_cornerRadius, 0.02, 0.45);
+
+  for (int i = 0; i < 64; i++) {
+    if (sideDist.x < sideDist.y) { sideDist.x += deltaDist.x; mapPos.x += float(stepDir.x); side = 0; }
+    else { sideDist.y += deltaDist.y; mapPos.y += float(stepDir.y); side = 1; }
+    if (mapPos.x < 0.0 || mapPos.y < 0.0 || mapPos.x >= u_mapSize.x || mapPos.y >= u_mapSize.y) break;
+    vec4 cell = texelFetch(u_mapTex, ivec2(mapPos), 0);
+    cellType = cell.r * 255.0;
+    if (cellType > 0.5) {
+      float cT; vec2 cHp; vec2 cN; bool cRound;
+      if (resolveWallHit(ivec2(mapPos), side, stepDir, ray, cornerRadius,
+                         u_cornerEnabled, u_cornerInner, cT, cHp, cN, cRound)) {
+        hit = 1; perpDist = cT; hitPos = cHp; cornerNormal = vec3(cN.x, cN.y, 0.0); hasCornerRound = cRound; break;
+      }
+    }
+  }
+
+  float emissiveAlbedoMul = u_pbrEmissiveAlbedoMul > 0.0 ? u_pbrEmissiveAlbedoMul : 0.8;
+  float emissiveStrength = u_pbrEmissiveStrength > 0.0 ? u_pbrEmissiveStrength : 2.5;
+  float wallDarken = u_renderWallDarken > 0.0 ? u_renderWallDarken : 0.85;
+  float eyeFactor = u_renderEyeFactor >= 0.0 ? u_renderEyeFactor : 0.15;
+  float trimFloor = u_chamferTrimFloor > 0.0 ? u_chamferTrimFloor : 0.22;
+  float trimCeil = u_chamferTrimCeil > 0.0 ? u_chamferTrimCeil : 0.18;
+  float trimWall = u_chamferTrimWall > 0.0 ? u_chamferTrimWall : 0.16;
+  float creviceEnd = u_chamferCreviceEnd > 0.0 ? u_chamferCreviceEnd : 0.12;
+  float tStart = u_chamferTrimStart >= 0.0 ? u_chamferTrimStart : 0.08;
+  float nMix = u_cornerNormalMix > 0.0 ? u_cornerNormalMix : 0.92;
+  float albBoost = u_cornerAlbedoBoost >= 0.0 ? u_cornerAlbedoBoost : 0.05;
+  float roughMul = u_cornerRoughMul > 0.0 ? u_cornerRoughMul : 0.82;
+  float aoMul = u_cornerAoMul > 0.0 ? u_cornerAoMul : 0.96;
+
+  if (hit == 1) {
+    float floorH = 0.0; float ceilH = 1.0;
+    float wallU;
+    if (side == 0) wallU = hitPos.y - floor(hitPos.y);
+    else wallU = hitPos.x - floor(hitPos.x);
+    if ((side == 0 && ray.x > 0.0) || (side == 1 && ray.y < 0.0)) wallU = 1.0 - wallU;
+    if (u_authentic == 1) wallU = floor(wallU * 64.0 * 65536.0) / 65536.0 / 64.0;
+
+    float eyeZ = 0.5;
+    float wallH_full = u_resolution.y / max(perpDist, 0.0001) * u_resolution.x / u_resolution.y * 0.5 / tan(u_fov * 0.5);
+    float drawStart = u_resolution.y * 0.5 - (ceilH - eyeZ) * wallH_full;
+    float drawEnd = u_resolution.y * 0.5 + (eyeZ - floorH) * wallH_full;
+    float wallV_raw = (fragCoord.y - drawStart) / max(drawEnd - drawStart, 0.001);
+
+    if (wallV_raw < 0.0 || wallV_raw > 1.0) {
+      float horizon = 0.5;
+      float vNorm = fragCoord.y / u_resolution.y;
+      if (vNorm > horizon) {
+        float floorH_atRay = 0.0;
+        float dist = (eyeZ - floorH_atRay) / max(0.0001, (vNorm - horizon)) * u_resolution.x / u_resolution.y * 0.5 / tan(u_fov * 0.5);
+        dist = max(dist, 0.001);
+        vec2 floorWorld = u_playerPos + ray * dist;
+        writeGBuffer(floorMaterial(floorWorld, ray, floorH_atRay, true), dist);
+      } else {
+        float ceilH_atRay = 1.0;
+        float dist = (ceilH_atRay - eyeZ) / max(0.0001, (horizon - vNorm)) * u_resolution.x / u_resolution.y * 0.5 / tan(u_fov * 0.5);
+        dist = max(dist, 0.001);
+        vec2 ceilWorld = u_playerPos + ray * dist;
+        writeGBuffer(ceilMaterial(ceilWorld, ray, ceilH_atRay, true, 0.35, 0.25), dist);
+      }
+    } else {
+      float wallV = clamp(wallV_raw, 0.0, 1.0);
+      float matId = max(1.0, cellType);
+      vec2 uvAtlas = atlasUV(matId, vec2(wallU, wallV), u_atlasWalls, u_texSize);
+      vec3 NgeomFlat = vec3(0.0); vec3 tangentFlat = vec3(0.0); vec3 bitangent = vec3(0.0,0.0,1.0);
+      if (side == 0) { NgeomFlat = vec3(float(-stepDir.x),0.0,0.0); tangentFlat = vec3(0.0, ray.x > 0.0 ? -1.0 : 1.0, 0.0); }
+      else { NgeomFlat = vec3(0.0, float(-stepDir.y), 0.0); tangentFlat = vec3(ray.y < 0.0 ? -1.0 : 1.0, 0.0, 0.0); }
+      vec3 Ngeom = NgeomFlat; vec3 tangent = tangentFlat;
+      if (hasCornerRound) {
+        vec3 cornerGeom = cornerNormal;
+        if (u_cornerMode == 0) { vec3 n2 = (side == 0) ? vec3(0.0,(wallU<0.5?-1.0:1.0),0.0) : vec3((wallU<0.5?-1.0:1.0),0.0,0.0); cornerGeom = normalize(NgeomFlat + n2); }
+        Ngeom = normalize(mix(NgeomFlat, cornerGeom, clamp(nMix, 0.0, 1.0)));
+        float dotTN = dot(tangentFlat, Ngeom);
+        vec3 tOrtho = tangentFlat - dotTN * Ngeom;
+        if (dot(tOrtho, tOrtho) < 0.000001) { tOrtho = vec3(-Ngeom.y, Ngeom.x, 0.0); if (dot(tOrtho, tangentFlat) < 0.0) tOrtho = -tOrtho; }
+        tangent = normalize(tOrtho);
+      }
+      vec3 worldPos = vec3(hitPos.x, hitPos.y, u_playerHeight + (wallV - 0.5));
+      vec3 viewDir = normalize(vec3(u_playerPos, u_playerHeight) - worldPos);
+      vec3 viewTS = vec3(dot(viewDir, tangent), dot(viewDir, bitangent), dot(viewDir, Ngeom));
+      vec2 uvPOM = uvAtlas;
+      if (u_pomEnabled == 1) { uvPOM = uvAtlas + pomOffset(u_wallHeight, uvAtlas, viewTS, u_pomWall, u_pomSteps); }
+      vec3 albedoRaw = texture(u_wallAlbedo, uvPOM).rgb;
+      vec3 normalTSw = decodeNormal(texture(u_wallNormal, uvPOM).rgb);
+      vec4 rmaW = texture(u_wallRoughMetal, uvPOM);
+      vec3 emissiveW = albedoRaw * emissiveAlbedoMul * rmaW.b * emissiveStrength;
+      vec3 Nw = normalize(tangent * normalTSw.x + bitangent * normalTSw.y + Ngeom * normalTSw.z);
+      if (hasCornerRound) { albedoRaw += vec3(albBoost); rmaW.r *= roughMul; rmaW.a *= aoMul; }
+      if (u_chamferEnabled == 1) {
+        {
+          float fS = max(u_chamferFloorSize, 0.04);
+          float cS = max(u_chamferCeilSize, 0.04);
+          if (wallV < fS) {
+            float t = wallV / fS; float bevel = 1.0 - smoothstep(0.0,1.0,t);
+            vec3 up = vec3(0.0,0.0,1.0); vec3 chamGeom = normalize(Ngeom + up);
+            vec3 chamRound = normalize(mix(up, chamGeom, smoothstep(0.0,1.0,t)));
+            vec3 targetN = (u_chamferRoundCorners==1) ? chamRound : chamGeom;
+            Nw = normalize(mix(Nw, targetN, bevel * clamp(u_chamferBlendFloor,0.0,1.0)));
+            rmaW.a *= mix(u_chamferDarken, 1.0, smoothstep(0.0, creviceEnd, t));
+            float trim = smoothstep(tStart, 0.32, t) * (1.0 - smoothstep(0.32, 1.0, t));
+            albedoRaw += vec3(trim * trimFloor); rmaW.r *= mix(0.58, 1.0, t);
+          }
+          if ((1.0 - wallV) < cS) {
+            float t = (1.0 - wallV) / cS; float bevel = 1.0 - smoothstep(0.0,1.0,t);
+            vec3 down = vec3(0.0,0.0,-1.0); vec3 chamGeom = normalize(Ngeom + down);
+            vec3 targetN = (u_chamferRoundCorners==1) ? normalize(mix(down, chamGeom, smoothstep(0.0,1.0,t))) : chamGeom;
+            Nw = normalize(mix(Nw, targetN, bevel * clamp(u_chamferBlendFloor,0.0,1.0)));
+            rmaW.a *= mix(u_chamferDarken, 1.0, smoothstep(0.0, creviceEnd, t));
+            float trim = smoothstep(tStart, 0.32, t) * (1.0 - smoothstep(0.32, 1.0, t));
+            albedoRaw += vec3(trim * trimCeil); rmaW.r *= mix(0.62, 1.0, t);
+          }
+        }
+        if (!hasCornerRound) {
+          float vS = max(u_chamferWallSize, 0.04); float e = min(wallU, 1.0 - wallU);
+          if (e < vS) {
+            float t = e / vS; float bevel = 1.0 - smoothstep(0.0,1.0,t);
+            vec3 n2;
+            if (side == 0) n2 = (wallU < 0.5) ? vec3(0.0,-1.0,0.0) : vec3(0.0,1.0,0.0);
+            else n2 = (wallU < 0.5) ? vec3(-1.0,0.0,0.0) : vec3(1.0,0.0,0.0);
+            vec3 diag = normalize(Ngeom + n2);
+            Nw = normalize(mix(Nw, diag, bevel * clamp(u_chamferBlendWall,0.0,1.0)));
+            rmaW.a *= mix(u_chamferDarken*0.88 + 0.12, 1.0, smoothstep(0.0, 0.45, t));
+            rmaW.r *= mix(0.65, 1.0, smoothstep(0.0, 1.0, t));
+            float trim = smoothstep(0.0, 0.25, t) * (1.0 - smoothstep(0.25, 1.0, t));
+            albedoRaw += vec3(trim * trimWall);
+          }
+        }
+      }
+      Material m;
+      m.albedo = albedoRaw * (side == 1 ? wallDarken : 1.0);
+      m.N = Nw; m.rough = rmaW.r; m.metal = rmaW.g; m.ao = rmaW.a; m.emissive = emissiveW; m.worldPos = worldPos;
+      writeGBuffer(m, perpDist);
+    }
+  } else {
+    float horizon = 0.5;
+    float vNorm2 = 1.0 - v_uv.y;
+    ivec2 pc = ivec2(floor(u_playerPos));
+    float pfH = 0.0;
+    if (pc.x >= 0 && pc.y >= 0 && pc.x < int(u_mapSize.x) && pc.y < int(u_mapSize.y)) { vec4 pmd = texelFetch(u_mapTex, pc, 0); pfH = clamp(pmd.g - 0.5, -0.6, 0.6); }
+    float eyeZ2 = 0.5 + pfH * eyeFactor;
+    if (vNorm2 > horizon) {
+      float floorH = 0.0; float dist = 0.001; vec2 floorWorld = vec2(0.0);
+      for (int it = 0; it < 3; it++) {
+        dist = (eyeZ2 - floorH) / max(0.0001, (vNorm2 - horizon)) * u_resolution.x / u_resolution.y * 0.5 / tan(u_fov * 0.5);
+        if (dist < 0.001) dist = 0.001;
+        floorWorld = u_playerPos + ray * dist;
+        ivec2 fc = ivec2(floor(floorWorld));
+        if (fc.x >= 0 && fc.y >= 0 && fc.x < int(u_mapSize.x) && fc.y < int(u_mapSize.y)) { vec4 fmd = texelFetch(u_mapTex, fc, 0); int cellT = int(fmd.r*255.0+0.5); if (cellT==0){floorH=clamp(fmd.g-0.5,-0.6,0.6);} else break; }
+      }
+      writeGBuffer(floorMaterial(floorWorld, ray, floorH, false), dist);
+    } else {
+      float ceilH = 1.15; float dist = 0.001; vec2 ceilWorld = vec2(0.0);
+      for (int it = 0; it < 3; it++) {
+        dist = (ceilH - eyeZ2) / max(0.0001, (horizon - vNorm2)) * u_resolution.x / u_resolution.y * 0.5 / tan(u_fov * 0.5);
+        if (dist < 0.001) dist = 0.001;
+        ceilWorld = u_playerPos + ray * dist;
+        ivec2 cc = ivec2(floor(ceilWorld));
+        if (cc.x >= 0 && cc.y >= 0 && cc.x < int(u_mapSize.x) && cc.y < int(u_mapSize.y)) { vec4 cmd = texelFetch(u_mapTex, cc, 0); int cellT = int(cmd.r*255.0+0.5); if (cellT==0){ceilH=clamp(cmd.b/255.0+0.7,0.4,2.2);} else break; }
+      }
+      writeGBuffer(ceilMaterial(ceilWorld, ray, ceilH, false, 0.3, 0.2), dist);
+    }
+  }
+}
+`;
+
+export const fsLightingSrc = GLSL_WORLD_PRELUDE + `
+uniform sampler2D u_gA;
+uniform sampler2D u_gN;
+uniform sampler2D u_gP;
+uniform sampler2D u_gM;
+out vec4 outColor;
+
+void main() {
+  vec4 a = texture(u_gA, v_uv);
+  vec4 n = texture(u_gN, v_uv);
+  vec4 p = texture(u_gP, v_uv);
+  vec4 mm = texture(u_gM, v_uv);
+  vec3 albedo = a.rgb; float perpDist = a.a;
+  vec3 N = normalize(n.rgb); float ao = n.a;
+  vec3 worldPos = p.rgb; float rough = p.a;
+  vec3 emissive = mm.rgb; float metal = mm.a;
+  vec3 viewDir = normalize(vec3(u_playerPos, u_playerHeight) - worldPos);
+  vec3 finalColor = pbrShade(albedo, N, rough, metal, ao, emissive, worldPos, viewDir);
+  if (u_fogEnabled == 1) {
+    float fog = 1.0 / (1.0 + perpDist * u_fogBase + perpDist * perpDist * u_fogSquared);
+    finalColor *= fog;
+    finalColor += u_fogColor * (1.0 - fog);
+  }
+  {
+    float maxC = max(max(finalColor.r, finalColor.g), finalColor.b);
+    if (maxC > 1.0) {
+      float over = clamp((maxC - 1.0) * 0.35, 0.0, 0.75);
+      vec3 scaled = finalColor / maxC;
+      vec3 warmWhite = vec3(1.0, 0.94, 0.82);
+      finalColor = mix(scaled, warmWhite, over);
+    }
+    finalColor = clamp(finalColor, 0.0, 1.0);
+  }
+  if (u_authentic == 1) {
+    int bands = max(8, u_bandLevels);
+    finalColor = floor(finalColor * float(bands)) / float(bands);
+  }
+  outColor = vec4(finalColor, 1.0);
+}
+`;
+
 export const vsQuantize = `#version 300 es
 in vec2 a_pos;
 out vec2 v_uv;
