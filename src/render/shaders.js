@@ -587,9 +587,9 @@ void sampleModCell(vec2 worldXY, out vec4 outA, out vec4 outB) {
     return;
   }
   vec2 cell = floor(worldXY);
-  vec2 uv = (cell + 0.5) / u_modMapSize;
+  vec2 uv = (cell + vec2(0.5)) / u_modMapSize;
   // clamp to avoid border
-  uv = clamp(uv, 0.0, 1.0);
+  uv = clamp(uv, vec2(0.0), vec2(1.0));
   outA = texture(u_modTexA, uv);
   outB = texture(u_modTexB, uv);
 }
@@ -2304,6 +2304,8 @@ void main(){
   outColor = vec4(v_color.rgb * fog, v_color.a);
 }
 `;
+
+
 
 
 

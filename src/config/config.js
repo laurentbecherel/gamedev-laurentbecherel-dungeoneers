@@ -20,7 +20,7 @@ export const CONFIG_PATHS = {
   // lighting — Task 6 extended
   'lighting':       ['config/lighting/lighting', 'config/lighting', 'config/main'],
   'shadows':        ['config/lighting/shadows', 'config/shadows', 'config/main'],
-  'fog':            ['config/lighting/fog', 'config/fog', 'config/lighting/fog', 'config/main'],
+  'fog':            ['config/lighting/fog','config/fog','config/main'],
   'sprites':        ['config/lighting/sprites', 'config/sprites', 'config/main'],
   'light-types':    ['config/lighting/light-types', 'config/light-types', 'config/main'],
   'particles':      ['config/lighting/particles', 'config/particles', 'config/main'],
@@ -234,5 +234,8 @@ export function setPathCache(category, name, data){
 export function getPathCacheKeys(){ return Object.keys(_pathCache); }
 export { _caches as __cachesInternal, _pathCache as __pathCacheInternal } // for live manager debug, not public API but useful for tests
 // keep clone util exported for live module? internal only
+
+
+
 
 

@@ -254,26 +254,32 @@ export function generateModifiers(params) {
         out[mk][i] = v;
       }
 
-      // Top2 normalization to avoid stacking all at max everywhere
-      const entries = MOD_KEYS.map(k => ({ k, v: out[k][i] })).sort((a,b)=>b.v-a.v);
-      // Keep top maxPerCell, reduce others
-      for (let j = maxPerCell; j < entries.length; j++) {
-        // if beyond max, dampen heavily unless >0.55 strong
-        const e = entries[j];
-        if (e.v < 0.55) {
-          out[e.k][i] = e.v * 0.25;
-        } else {
-          out[e.k][i] = e.v * 0.55;
-        }
+      // Top2 normalization optimized - avoids per-cell allocation + sort (was causing GC pauses and 5min freeze perception)
+      // Manual find top 2 indices without object allocation
+      let max1Idx = -1, max2Idx = -1;
+      let max1Val = -1, max2Val = -1;
+      for (let mi2 = 0; mi2 < MOD_KEYS.length; mi2++) {
+        const k = MOD_KEYS[mi2];
+        const v = out[k][i];
+        if (v > max1Val) { max2Val = max1Val; max2Idx = max1Idx; max1Val = v; max1Idx = mi2; }
+        else if (v > max2Val) { max2Val = v; max2Idx = mi2; }
       }
-      // Normalize top2 to keep sum <=1.2 maybe
-      const topSum = entries.slice(0, maxPerCell).reduce((s,e)=>s+out[e.k][i],0);
+      // Dampen non-top entries
+      for (let mi2 = 0; mi2 < MOD_KEYS.length; mi2++) {
+        if (mi2 === max1Idx || mi2 === max2Idx) continue;
+        const k = MOD_KEYS[mi2];
+        const v = out[k][i];
+        if (v < 0.55) out[k][i] = v * 0.25;
+        else out[k][i] = v * 0.55;
+      }
+      // Normalize top2 sum <=1.2
+      let topSum = 0;
+      if (max1Idx >= 0) topSum += out[MOD_KEYS[max1Idx]][i];
+      if (max2Idx >= 0) topSum += out[MOD_KEYS[max2Idx]][i];
       if (topSum > 1.2) {
         const scale = 1.2 / topSum;
-        for (let j = 0; j < maxPerCell; j++) {
-          const e = entries[j];
-          out[e.k][i] = out[e.k][i] * scale;
-        }
+        if (max1Idx >= 0) out[MOD_KEYS[max1Idx]][i] *= scale;
+        if (max2Idx >= 0) out[MOD_KEYS[max2Idx]][i] *= scale;
       }
     }
   }
@@ -325,3 +331,4 @@ export function packModifierTextures(modData) {
   }
   return { w, h, texA, texB };
 }
+

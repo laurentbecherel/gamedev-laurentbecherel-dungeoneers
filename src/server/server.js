@@ -38,13 +38,20 @@ async function loadAssetFile(category, name) {
   if (!normalized.startsWith(path.normalize(ASSETS_DIR))) return null;
   try { return JSON.parse(await fs.readFile(normalized, 'utf8')); } catch { return null; }
 }
-async function saveAssetFile(category, name, data) {
+async function _saveAssetFileImpl(category, name, data) {
   const fp = path.join(ASSETS_DIR, category, name + '.json');
   const normalized = path.normalize(fp);
   if (!normalized.startsWith(path.normalize(ASSETS_DIR))) throw new Error('Path traversal');
   await fs.mkdir(path.dirname(normalized), { recursive: true });
   await fs.writeFile(normalized, JSON.stringify(data, null, 2), 'utf8');
 }
+
+async function saveAssetFile(category, name, data) {
+  _assetListCache = null;
+  return _saveAssetFileImpl(category, name, data);
+}
+
+
 function countItems(data) {
   if (!data || typeof data !== 'object') return 0;
   if (Array.isArray(data)) return data.length;
@@ -69,29 +76,40 @@ async function walkJsonFiles(dir, baseRel) {
   }
   return out;
 }
+let _assetListCache = null;
+let _assetListCacheTime = 0;
+const ASSET_CACHE_TTL_MS = 5000;
+
 async function listAssets() {
+  const now = Date.now();
+  if (_assetListCache && (now - _assetListCacheTime) < ASSET_CACHE_TTL_MS) return _assetListCache;
   const out = [];
   try {
     const all = await walkJsonFiles(ASSETS_DIR, '');
-    for (const entry of all) {
-      const rel = entry.relCategory.replace(/\\/g, '/'); // normalize windows
-      if (!rel) continue; // skip files directly under assets (should not happen)
-      // Skip node_modules or hidden
-      if (rel.includes('node_modules') || rel.startsWith('.')) continue;
-      const data = await loadAssetFile(entry.relCategory, entry.name);
-      out.push({
+    const promises = all.map(async (entry) => {
+      const rel = entry.relCategory.replace(/\\/g, '/');
+      if (!rel) return null;
+      const lower = rel.toLowerCase();
+      if (lower.includes('node_modules') || rel.startsWith('.') || lower.includes('screenshot')) return null;
+      return {
         category: rel,
         name: entry.name,
         path: rel + '/' + entry.name + '.json',
         fullPath: rel + '/' + entry.fileName,
-        itemCount: countItems(data)
-      });
-    }
+        itemCount: 0
+      };
+    });
+    const resolved = await Promise.all(promises);
+    for (const r of resolved) if (r) out.push(r);
+    _assetListCache = out;
+    _assetListCacheTime = now;
   } catch (e) {
     console.error('listAssets error', e);
   }
   return out;
 }
+
+
 function ctype(fp) { const e = path.extname(fp).toLowerCase(); const m = { '.html': 'text/html', '.js': 'application/javascript', '.css': 'text/css', '.json': 'application/json', '.png': 'image/png', '.jpg': 'image/jpeg', '.svg': 'image/svg+xml', '.ico': 'image/x-icon' }; return m[e] || 'application/octet-stream'; }
 function safeSegment(s) { return /^[a-zA-Z0-9_-]+$/.test(s); }
 function safeCategory(catPath) {
@@ -283,3 +301,4 @@ process.on('uncaughtException', (e) => { console.error('[server] uncaughtExcepti
 process.on('unhandledRejection', (e) => { console.error('[server] unhandledRejection', e); });
 
 tryListen(initialPort).catch(() => { process.exit(1); });
+
