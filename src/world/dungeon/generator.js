@@ -469,10 +469,21 @@ export async function generateDungeon(config, seedOverride = null) {
   for(let dy=-flattenRadius; dy<=flattenRadius; dy++) for(let dx=-flattenRadius; dx<=flattenRadius; dx++){
     const x=Math.floor(startX)+dx, y=Math.floor(startY)+dy; if(x<0||y<0||x>=w||y>=h)continue; const i=idx(x,y); if(grid[i]===GRID_FLOOR) floorHeight[i]=0;
   }
-  const dungeon = {w,h,grid,floorHeight,ceilHeight,deco,floorMat,ceilMat,startX,startY,seed,rooms,items:[],lights:[],meta:{}};
-  const genItemsCfg = {...config, ...(config.generator||{}), items: (config.generator||{}).items || config.items, torchColors: (config.generator||{}).torchColors || config.torchColors, boundaryWallId: (config.generator||{}).boundaryWallId ?? config.boundaryWallId };
-  const {items, lights} = generateDungeonItems(dungeon, genItemsCfg);
-  dungeon.items = items; dungeon.lights = lights;
+  const dungeon = {w,h,grid,floorHeight,ceilHeight,deco,floorMat,ceilMat,startX,startY,seed,rooms,items:[],lights:[],sprites:[],meta:{}};
+  const genItemsCfg = {
+    ...config,
+    ...(config.generator||{}),
+    items: (config.generator||{}).items || config.items,
+    torchColors: (config.generator||{}).torchColors || config.torchColors || config.lighting?.torchColors,
+    boundaryWallId: (config.generator||{}).boundaryWallId ?? config.boundaryWallId,
+    lighting: config.lighting || {},
+    sprites: config.sprites || {},
+  };
+  const res = generateDungeonItems(dungeon, genItemsCfg);
+  const items = res.items || [];
+  const lights = res.lights || [];
+  const sprites = res.sprites || items.map(it => ({...it, spriteId: it.spriteId || 'torch_wall'}));
+  dungeon.items = items; dungeon.lights = lights; dungeon.sprites = sprites;
   dungeon.meta = {themeId:"classic", themeName:"Classic Dungeon", levelIndex, levelCount, boundaryWallId,
     zoneSummary: theme.zones.map(z=>z.name), edges: edges.length, rolesSummary: Object.fromEntries([...new Set(rooms.map(r=>r.role))].map(r=>[r, rooms.filter(rr=>rr.role===r).length]))};
   return dungeon;

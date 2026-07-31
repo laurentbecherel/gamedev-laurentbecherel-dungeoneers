@@ -1,0 +1,187 @@
+{
+  "_readme": "Light type definitions. Maps to systems/lights.js LIGHT_TYPES. Tunable per type. Torch etc.",
+  "version": 1,
+  "types": [
+    {
+      "id": "point_torch",
+      "name": "Torch Point",
+      "type": "point",
+      "baseIntensity": 4,
+      "baseRadius": 10,
+      "flickerSpeed": 6.5,
+      "flickerAmount": 0.15,
+      "castShadows": true,
+      "color": [
+        1,
+        0.62,
+        0.28
+      ],
+      "note": "direct point, flicker handled via Light class"
+    },
+    {
+      "id": "flicker_torch",
+      "name": "Flicker Torch",
+      "type": "flicker",
+      "baseIntensity": 4.2,
+      "baseRadius": 10.5,
+      "flickerSpeed": 7,
+      "flickerAmount": 0.22,
+      "castShadows": true,
+      "color": [
+        1,
+        0.62,
+        0.28
+      ],
+      "note": "organic flicker"
+    },
+    {
+      "id": "brazier",
+      "name": "Standing Brazier",
+      "type": "flicker",
+      "baseIntensity": 4.8,
+      "baseRadius": 11.5,
+      "flickerSpeed": 5.5,
+      "flickerAmount": 0.25,
+      "castShadows": true,
+      "color": [
+        1,
+        0.55,
+        0.22
+      ]
+    },
+    {
+      "id": "spot_wall",
+      "name": "Wall Spot (cathedral)",
+      "type": "spot",
+      "baseIntensity": 3.2,
+      "baseRadius": 8.5,
+      "coneInner": 0.88,
+      "coneOuter": 0.6,
+      "castShadows": true,
+      "color": [
+        1,
+        0.7,
+        0.4
+      ]
+    },
+    {
+      "id": "pulse_crystal",
+      "name": "Pulse Crystal",
+      "type": "pulse",
+      "baseIntensity": 3.2,
+      "baseRadius": 9,
+      "pulseSpeed": 2.2,
+      "pulseAmount": 0.35,
+      "castShadows": false,
+      "color": [
+        0.4,
+        0.7,
+        1
+      ],
+      "flags": {
+        "noShadow": true
+      }
+    },
+    {
+      "id": "steady_lantern",
+      "name": "Steady Lantern",
+      "type": "steady",
+      "baseIntensity": 3,
+      "baseRadius": 9,
+      "flickerSpeed": 0.8,
+      "flickerAmount": 0.05,
+      "castShadows": true,
+      "color": [
+        1,
+        0.85,
+        0.55
+      ]
+    },
+    {
+      "id": "ambient_fill",
+      "name": "Ambient Fill",
+      "type": "ambient",
+      "baseIntensity": 1.2,
+      "baseRadius": 14,
+      "castShadows": false,
+      "color": [
+        0.7,
+        0.7,
+        0.85
+      ],
+      "flags": {
+        "noShadow": true
+      }
+    },
+    {
+      "id": "emissive_proxy",
+      "name": "Emissive Surface",
+      "type": "emissive",
+      "baseIntensity": 1,
+      "baseRadius": 5.5,
+      "castShadows": false,
+      "color": [
+        0.8,
+        0.6,
+        0.3
+      ],
+      "flags": {
+        "noShadow": true
+      }
+    }
+  ],
+  "organicFlicker": {
+    "_note": "Reference parameters for organicFactor, not just sin. Avoid predictable.",
+    "minClamp": 0.18,
+    "warp": {
+      "ampA": 0.34,
+      "freqA": 0.13,
+      "ampB": 0.27,
+      "freqB": 0.067,
+      "phaseScale": 0.71
+    },
+    "slowNoiseFreq": 0.08,
+    "slowNoiseAmp": 0.22,
+    "sines": [
+      {
+        "freq": 1,
+        "amp": 1
+      },
+      {
+        "freq": 1.87,
+        "amp": 0.58
+      },
+      {
+        "freq": 2.93,
+        "amp": 0.34
+      },
+      {
+        "freq": 4.63,
+        "amp": 0.2
+      },
+      {
+        "freq": 0.38,
+        "amp": 0.26
+      },
+      {
+        "freq": 7.31,
+        "amp": 0.11
+      }
+    ],
+    "shaping": {
+      "linearMix": 0.62,
+      "sinMix": 0.38,
+      "sinFreq": 1.35
+    },
+    "pop": {
+      "freqA": 11.7,
+      "freqB": 9.3,
+      "shapedPow": 2.6,
+      "amp": 0.23
+    },
+    "midNoiseFreq": 0.55,
+    "midNoiseAmp": 0.18,
+    "finalAmpScale": 1.85,
+    "finalCombinedAmp": 0.52
+  }
+}

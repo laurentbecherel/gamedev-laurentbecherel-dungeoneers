@@ -15,10 +15,13 @@ const CONFIG_PATHS = {
   'ao':             ['config/rendering/ao', 'config/ao', 'config/main'],
   'raymarch':       ['config/rendering/raymarch', 'config/raymarch', 'config/main'],
   'materials-proc': ['config/rendering/materials-proc', 'config/materials-proc', 'config/main'],
-  // lighting
+  // lighting — Task 6 extended
   'lighting':       ['config/lighting/lighting', 'config/lighting', 'config/main'],
   'shadows':        ['config/lighting/shadows', 'config/shadows', 'config/main'],
   'fog':            ['config/lighting/fog', 'config/fog', 'config/lighting/fog', 'config/main'],
+  'sprites':        ['config/lighting/sprites', 'config/sprites', 'config/main'],
+  'light-types':    ['config/lighting/light-types', 'config/light-types', 'config/main'],
+  'particles':      ['config/lighting/particles', 'config/particles', 'config/main'],
   // geometry
   'chamfer':        ['config/geometry/chamfer', 'config/chamfer', 'config/main'],
   'corners':        ['config/geometry/corners', 'config/corners', 'config/main'],
@@ -131,6 +134,12 @@ export async function saveDiscoveryConfig(cfg){ return _saveConfig('discovery', 
 export async function getGeneratorConfig(){ return _fetchConfig('generator'); }
 export async function saveGeneratorConfig(cfg){ return _saveConfig('generator', cfg); }
 export async function getFogConfig(){ return _fetchConfig('fog'); }
+export async function getSpritesConfig(){ return _fetchConfig('sprites'); }
+export async function getLightTypesConfig(){ return _fetchConfig('light-types'); }
+export async function getParticlesConfig(){ return _fetchConfig('particles'); }
+export async function saveSpritesConfig(cfg){ return _saveConfig('sprites', cfg); }
+export async function saveLightTypesConfig(cfg){ return _saveConfig('light-types', cfg); }
+export async function saveParticlesConfig(cfg){ return _saveConfig('particles', cfg); }
 export function getFogConfigSync(){
   const c = _caches['fog'];
   if(!c) throw new Error('Fog config not loaded yet');
@@ -144,7 +153,7 @@ export async function saveFogConfig(cfg){
 
 // Batch load all rendering configs at once for Game init
 export async function getAllRenderConfigs(){
-  const names = ['rendering','palette','pom','pbr','ao','lighting','shadows','chamfer','corners','raymarch','fog','generator','map','materials-proc','player','debug','discovery'];
+  const names = ['rendering','palette','pom','pbr','ao','lighting','shadows','chamfer','corners','raymarch','fog','generator','map','materials-proc','player','debug','discovery','sprites','light-types','particles'];
   const promises = names.map(n => _fetchConfig(n).catch(()=>null));
   const results = await Promise.all(promises);
   const out = {};

@@ -1,4 +1,4 @@
-// Map facade — query helpers for DungeonMap
+// Map facade ï¿½ query helpers for DungeonMap
 // Delegates room containment to discovery.js single source to avoid duplication
 import { getRoomAt as sharedGetRoomAt } from './discovery.js';
 
@@ -23,4 +23,8 @@ export class DungeonMapWrapper {
   }
   getStartPos(){ return {x:this.d.startX, y:this.d.startY}; }
   getRoomsByRole(role){ return this.d.rooms.filter(r=>r.role===role); }
+  getSprites(){ return this.d.sprites || this.d.items || []; }
+  getLights(){ return this.d.lights || []; }
+  getSpritesByType(spriteId){ return (this.d.sprites||[]).filter(s => s.spriteId===spriteId || s.type===spriteId); }
+  getSpritesByRole(role){ return (this.d.sprites||[]).filter(s => s.role===role); }
 }

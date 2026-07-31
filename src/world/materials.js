@@ -29,6 +29,14 @@ function genBrickTile(size, baseRGB, proc, seed, matRough) {
   const baseRough = matRough ?? proc.roughness ?? 0.72;
   const roughVar = proc.roughnessVariation ?? proc.roughVar ?? 0.10;
   const groutRoughAdd = proc.groutRoughAdd ?? 0.15;
+  // Brick face relief: mostly-flat plateau + beveled rim + a subtle overall convex bulge.
+  const domeH = proc.domeHeight ?? 0.28;      // legacy magnitude, kept for AO/roughness feel
+  const bevelStart = proc.bevelStart ?? 0.42; // inner fraction of the face that stays flat
+  const bevelDepth = proc.bevelDepth ?? 0.22; // how far the rim rounds down toward the grout
+  const cornerRound = proc.cornerRound ?? 0.5;// 0 = square tile corners, 1 = fully circular
+  const roundness = proc.roundness ?? 0.06;   // gentle convex bulge across the face (0 = flat)
+  const groutDepth = proc.groutDepth ?? 0.08; // recessed mortar height (shared with slabs)
+  const nf = proc.normalFactor ?? 1.6;        // height->normal strength (was hardcoded 2.4)
   const brickW = 8, brickH = 8;
   const albedo = new Uint8Array(size * size * 4);
   const height = new Float32Array(size * size);
@@ -44,14 +52,25 @@ function genBrickTile(size, baseRGB, proc, seed, matRough) {
     const ax = (x + offset) % brickW;
     const inGrout = ax < gw || ax >= brickW - gw || ly < gw || ly >= brickH - gw;
     const cx = brickW / 2, cy = brickH / 2;
-    const dx = (ax - cx) / cx, dy = (ly - cy) / cy;
-    const dist = Math.hypot(dx, dy);
-    const dome = Math.max(0, 1 - dist * dist) * 0.28 * ds;
+    const dx = (ax - cx + 0.5) / cx, dy = (ly - cy + 0.5) / cy;
+    // Distance to the brick edge, blended from square (Chebyshev) toward round (Euclidean)
+    // so the tile CORNERS curve off instead of meeting at a sharp 90-degree step.
+    const cheby = Math.max(Math.abs(dx), Math.abs(dy));
+    const eucl = Math.min(1, Math.hypot(dx, dy));
+    const ap = cheby * (1 - cornerRound) + eucl * cornerRound;
+    let bt = Math.max(0, (ap - bevelStart) / (1 - bevelStart)); bt = Math.min(1, bt); // 0 plateau, 1 rim
+    const bevel = bt * bt * (3 - 2 * bt);        // smoothstep = rounded shoulder into the grout
+    // `dome` here is the plateau-raise (1 at flat center -> 0 at rim); reused for AO/roughness
+    // so their look is unchanged, but it no longer bulges the height field.
+    const dome = (1 - bevel) * domeH * ds;
+    // Gentle convex bulge (paraboloid, max at center) so faces read as slightly rounded.
+    const round = (1 - ap * ap) * roundness;
     const hv = hash2(bx, by, seed);
     const varR = (hv - 0.5) * 28, varH = (hv - 0.5) * 0.12;
-    let h = inGrout ? 0.08 : 0.5 + dome + varH;
+    // Rounded face at 0.5 (+ per-brick jitter + bulge); the rim chamfers down toward the grout.
+    let h = inGrout ? groutDepth : 0.5 + varH + round - bevel * bevelDepth;
     let r = baseRGB[0], g = baseRGB[1], b = baseRGB[2];
-    if (inGrout) { r *= 0.45; g *= 0.4; b *= 0.35; h = 0.08; }
+    if (inGrout) { r *= 0.45; g *= 0.4; b *= 0.35; h = groutDepth; }
     else { r += varR; g += varR * 0.7; b += varR * 0.5; }
     const onEdge = ax < 1.5 || ax > brickW - 1.5 || ly < 1.5 || ly > brickH - 1.5;
     if (onEdge && hash2(bx * 3 + 1, by * 5 + 2, seed) > 0.7) h -= 0.14 * ca;
@@ -87,7 +106,7 @@ function genBrickTile(size, baseRGB, proc, seed, matRough) {
     const ym = y > 0 ? y - 1 : 0, yp = y < size - 1 ? y + 1 : size - 1;
     const hL = height[y * size + xm], hR = height[y * size + xp];
     const hU = height[ym * size + x], hD = height[yp * size + x];
-    const n = heightToNormal(hL, hR, hU, hD, ns * 2.4);
+    const n = heightToNormal(hL, hR, hU, hD, ns * nf);
     const ni = (y * size + x) * 4;
     normal[ni] = n[0]|0; normal[ni+1]=n[1]|0; normal[ni+2]=n[2]|0; normal[ni+3]=255;
   }
@@ -105,6 +124,13 @@ function genSlabTile(size, baseRGB, proc, seed, isCeil, matRough) {
   const bs = proc.blockSize ?? 8;
   const gw = proc.groutWidth ?? 1;
   const ds = proc.domeStrength ?? 1.1;
+  const domeH = proc.domeHeight ?? 0.22;      // legacy magnitude, kept for AO/roughness feel
+  const bevelStart = proc.bevelStart ?? 0.48; // inner fraction of the slab that stays flat
+  const bevelDepth = proc.bevelDepth ?? 0.16; // how far the rim rounds down toward the grout
+  const cornerRound = proc.cornerRound ?? 0.5;// 0 = square tile corners, 1 = fully circular
+  const roundness = proc.roundness ?? 0.05;   // gentle convex bulge across the face (0 = flat)
+  const groutDepth = proc.groutDepth ?? 0.08; // recessed mortar height (shared with walls)
+  const nf = proc.normalFactor ?? 1.4;        // height->normal strength (was hardcoded 2.0)
   const baseRough = matRough ?? proc.roughness ?? (isCeil ? 0.82 : 0.78);
   const roughVar = proc.roughnessVariation ?? proc.roughVar ?? 0.09;
   const groutRoughAdd = proc.groutRoughAdd ?? 0.12;
@@ -120,13 +146,24 @@ function genSlabTile(size, baseRGB, proc, seed, isCeil, matRough) {
     const lx = x % bs, ly = y % bs;
     const inGrout = lx < gw || lx >= bs - gw || ly < gw || ly >= bs - gw;
     const cx = bs / 2, cy = bs / 2;
-    const dx = (lx - cx) / cx;
-    const dy = (ly - cy) / cy;
-    const dist = Math.hypot(dx, dy);
-    const dome = Math.max(0, 1 - dist * dist) * 0.22 * ds;
+    const dx = (lx - cx + 0.5) / cx;
+    const dy = (ly - cy + 0.5) / cy;
+    // Distance to the block edge, blended from square (Chebyshev) toward round (Euclidean)
+    // so the tile CORNERS curve off instead of meeting at a sharp 90-degree step.
+    const cheby = Math.max(Math.abs(dx), Math.abs(dy));
+    const eucl = Math.min(1, Math.hypot(dx, dy));
+    const ap = cheby * (1 - cornerRound) + eucl * cornerRound;
+    let bt = Math.max(0, (ap - bevelStart) / (1 - bevelStart)); bt = Math.min(1, bt); // 0 plateau, 1 rim
+    const bevel = bt * bt * (3 - 2 * bt);        // smoothstep = rounded shoulder into the grout
+    // Plateau-raise (1 at flat center -> 0 at rim); reused for AO/roughness only.
+    const dome = (1 - bevel) * domeH * ds;
+    // Gentle convex bulge (paraboloid, max at center) so faces read as slightly rounded.
+    const round = (1 - ap * ap) * roundness;
     const hv = hash2(bx, by, seed);
     const varR = (hv - 0.5) * 20, varH = (hv - 0.5) * 0.08;
-    let h = inGrout ? 0.28 : 0.5 + dome + varH;
+    // Rounded face at 0.5 (+ per-block jitter + bulge); the rim chamfers down toward the grout.
+    // groutDepth matches the wall generator so floor/ceiling height maps are consistent.
+    let h = inGrout ? groutDepth : 0.5 + varH + round - bevel * bevelDepth;
     let r = baseRGB[0], g = baseRGB[1], b = baseRGB[2];
     if (inGrout) { r *= 0.6; g *= 0.6; b *= 0.6; }
     else { r += varR; g += varR; b += varR; }
@@ -163,7 +200,7 @@ function genSlabTile(size, baseRGB, proc, seed, isCeil, matRough) {
     const ym = y > 0 ? y - 1 : 0, yp = y < size - 1 ? y + 1 : size - 1;
     const hL = height[y * size + xm], hR = height[y * size + xp];
     const hU = height[ym * size + x], hD = height[yp * size + x];
-    const n = heightToNormal(hL, hR, hU, hD, ns * 2.0);
+    const n = heightToNormal(hL, hR, hU, hD, ns * nf);
     const ni = (y * size + x) * 4;
     normal[ni] = n[0]|0; normal[ni+1]=n[1]|0; normal[ni+2]=n[2]|0; normal[ni+3]=255;
   }

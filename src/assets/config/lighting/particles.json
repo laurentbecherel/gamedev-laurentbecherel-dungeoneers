@@ -1,0 +1,99 @@
+{
+  "_readme": "Particle emitter defaults for torches/braziers. Flame wobble should be organic, not static.",
+  "version": 1,
+  "flame": {
+    "rate": 18,
+    "color": [
+      1,
+      0.6,
+      0.2
+    ],
+    "size": 0.07,
+    "life": 0.7,
+    "velocity": [
+      0,
+      0,
+      0.35
+    ],
+    "spread": 0.12,
+    "type": "flame",
+    "note": "organic wobble in particles.js via inharmonic sines + gust"
+  },
+  "smoke": {
+    "rate": 3,
+    "color": [
+      0.25,
+      0.22,
+      0.2
+    ],
+    "size": 0.12,
+    "life": 1.8,
+    "velocity": [
+      0,
+      0,
+      0.22
+    ],
+    "spread": 0.06,
+    "type": "smoke",
+    "alpha": 0.15
+  },
+  "spark": {
+    "rate": 0.6,
+    "color": [
+      1,
+      0.8,
+      0.3
+    ],
+    "size": 0.03,
+    "life": 0.4,
+    "velocity": [
+      0,
+      0,
+      0.5
+    ],
+    "spread": 0.18,
+    "type": "spark"
+  },
+  "presets": {
+    "torch_wall": {
+      "flame": {
+        "rate": 16,
+        "size": 0.06
+      },
+      "smoke": {
+        "rate": 2.5,
+        "size": 0.1
+      }
+    },
+    "brazier_floor": {
+      "flame": {
+        "rate": 22,
+        "size": 0.09,
+        "life": 0.9
+      },
+      "smoke": {
+        "rate": 4,
+        "size": 0.14,
+        "life": 2.2
+      }
+    },
+    "crystal_small": {
+      "flame": {
+        "rate": 0,
+        "enabled": false
+      },
+      "smoke": {
+        "rate": 0,
+        "enabled": false
+      },
+      "spark": {
+        "rate": 2,
+        "color": [
+          0.4,
+          0.7,
+          1
+        ]
+      }
+    }
+  }
+}

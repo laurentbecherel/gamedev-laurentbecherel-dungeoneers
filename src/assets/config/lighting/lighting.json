@@ -1,5 +1,5 @@
 {
-  "version": 1,
+  "version": 2,
   "ambient": {
     "level": 0.36,
     "color": [
@@ -60,5 +60,7 @@
       "b": 1,
       "name": "purple"
     }
-  ]
+  ],
+  "maxLights": 12,
+  "_readme": "Lighting config v2: now includes maxLights 12 for torch/brazier env lights plus player torch. flicker handled via organic factor in lights.js."
 }

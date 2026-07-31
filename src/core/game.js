@@ -66,10 +66,13 @@ export class Game {
     merged.raymarch = this._pickCfg(renderCfgs, baseCfg, 'raymarch', { maxSteps:64 });
     merged.map = this._pickCfg(renderCfgs, baseCfg, 'map', baseCfg.ui?.map || { display:{position:"fullscreen",size:640,opacity:0.92} });
     merged.discovery = this._pickCfg(renderCfgs, baseCfg, 'discovery', DEFAULT_DISCOVERY_FALLBACK);
+    merged.sprites = this._pickCfg(renderCfgs, baseCfg, 'sprites', { version:1, maxLights:12, sprites:[] });
+    merged.lightTypes = this._pickCfg(renderCfgs, baseCfg, 'light-types', { version:1, types:[] });
+    merged.particles = this._pickCfg(renderCfgs, baseCfg, 'particles', { version:1 });
     merged.materialsProc = renderCfgs["materials-proc"] || baseCfg.materialsProc || baseCfg["materials-proc"] || baseCfg.materialProc || { walls:{}, floors:{}, ceils:{} };
     merged.playerCfg = this._pickCfg(renderCfgs, baseCfg, 'player', baseCfg.player || { moveSpeed:3, turnSpeed:2.2, radius:0.28, height:0.5 });
     merged.debug = this._pickCfg(renderCfgs, baseCfg, 'debug', {});
-    merged.items = merged.generator?.items || baseCfg.items || { maxTorches:24, minTorchDist:6, corridorBias:1.5, torchOffset:0.35 };
+    merged.items = merged.generator?.items || merged.sprites?.generation || baseCfg.items || { maxTorches:24, minTorchDist:6, corridorBias:1.5, torchOffset:0.35 };
     merged.torchColors = merged.generator?.torchColors || merged.lighting?.torchColors || baseCfg.torchColors || lightingFallbackColors();
     merged.boundaryWallId = merged.generator?.boundaryWallId ?? baseCfg.boundaryWallId ?? 1;
 
@@ -215,7 +218,7 @@ export class Game {
     this.ui = new UI(this.cfg);
     this.ui.setDungeon(this.dungeon);
     this.hud.style.display = "none";
-    try { window.game = this; window._gamePlayer = this.player; window._gameRenderer = this.renderer; window._gameDiscovery = this.discovery; console.log("Game exposed for E2E in game.js", !!window.game); } catch(e) { console.warn("expose failed in game.js", e); }
+    try { window.game = this; window._gamePlayer = this.player; window._gameRenderer = this.renderer; window._gameDiscovery = this.discovery; window._gameDungeon = this.dungeon; console.log("Game exposed for E2E in game.js", !!window.game); } catch(e) { console.warn("expose failed in game.js", e); }
     this._resize();
     window.addEventListener("resize", () => this._resize());
     window.addEventListener("keydown", this._onKeyDown);
@@ -248,7 +251,7 @@ export class Game {
         this.player.setConfig(this.cfg);
         this._initDiscovery();
         this.ui.setDungeon(this.dungeon);
-        try { window._gameDiscovery = this.discovery; } catch(e) {}
+        try { window._gameDiscovery = this.discovery; window._gameDungeon = this.dungeon; } catch(e) {}
         return;
       } catch (e) {
         attempts++;
