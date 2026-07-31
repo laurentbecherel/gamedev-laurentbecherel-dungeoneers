@@ -99,6 +99,24 @@ You do not need to copy exact coefficients, but implement the layered feel and d
 - Then render sprites back-to-front, blending enabled, depth write off, behind UI.
 - No WebGL errors.
 
+**Material & TBN correctness — only visible with many point lights (fix now, since Task 6 gives you lights to test from):**
+
+Previous tasks had only the player torch. With many environmental torches placed close to walls and floor/ceiling, several long-standing lighting artifacts become obvious and must be fixed. Do not ignore them — they are part of this task's visual bar:
+
+- **Wall tangent sign must match wallU flip:** Wall U is flipped when `(side==0 && ray.x>0)` or `(side==1 && ray.y<0)` so that texture orientation stays consistent. The geometric tangent used for TBN must flip with the same condition, otherwise the normal map's X channel is applied backwards. Visible symptom under Task 6 lights: a torch on your right lights the LEFT edge of each brick/slab tile instead of the right. Fix: `tangentFlat = vec3(0, ray.x>0 ? -1 : 1, 0)` for side 0, and `vec3(ray.y<0 ? -1 : 1, 0, 0)` for side 1. Explain that tangent must point along increasing wallU in world space.
+
+- **Ceiling TBN must stay right-handed and face down:** Ceiling faces down (N = -Z). A right-handed TBN needs ONE in-plane axis flipped too, not just Z — think rotating the floor slab 180° about X as if mounting it overhead. Flipping only Z left a left-handed frame that mirrored the normal relief under lights. Fix: `Nw = normalize(vec3(normalTS.x, -normalTS.y, -normalTS.z))` for ceiling, i.e. flip both Y and Z. Comment the reasoning.
+
+- **Brick / slab relief must be flat plateau + beveled rim, not dome bulge:** Original Task 3 procedural materials used `Math.hypot(dx,dy)` to make a full dome bulge. Under close point lights from many torches that looks like bubbled pillows, not flat masonry. Desired: mostly-flat face (0.5 + jitter + subtle convex roundness) with a chamfered rim that rounds down into grout.
+  - Use Chebyshev distance `max(abs(dx),abs(dy))` blended toward Euclidean `hypot(dx,dy)` by `cornerRound` (0=square, 1=circular) so tile corners curve off instead of meeting at 90° sharp step.
+  - `ap` in [0,1] is distance to edge; `bt = max(0,(ap-bevelStart)/(1-bevelStart))` = 0 on plateau, 1 at rim; `bevel = smoothstep bt = bt*bt*(3-2*bt)` for rounded shoulder.
+  - Height: `h = groutDepth` in grout, otherwise `0.5 + varH + roundness*(1-ap*ap) - bevel*bevelDepth` where `round` is gentle paraboloid bulge and `bevelDepth` is chamfer depth.
+  - Keep `dome = (1-bevel)*domeHeight*domeStrength` for AO/roughness only, so AO still darkens rim but height field is flat.
+  - Make tunable via `materials-proc.json`: `bevelStart` (~0.42 brick, 0.48 slab), `bevelDepth` (~0.22 brick, 0.16 slab), `cornerRound` 0.5, `roundness` 0.06 brick / 0.05 slab, `groutDepth` 0.08, configurable `normalFactor` (1.6 brick, 1.4 slab vs hardcoded 2.4/2.0) feeding `heightToNormal(..., ns * nf)`. Also `heightScale` should be consistent 1.15 for floors/ceils to avoid washed out relief under strong torches.
+  - Result: floor/ceiling height maps consistent, no floating grout, rim catches light correctly, normal strength not blown out when torch is 1 unit away.
+
+Document these in code comments where the fix lives, so future tasks keep the correctness.
+
 **Particles (strongly recommended):** Flame without smoke feels dry. Consider Particle + Emitter + System: particles have pos/vel/size/color/alpha/life/age with drag and fade; emitters spawn at rate with type flame/smoke/spark and organic wobble; each torch owns 1–2 emitters. Render as blended quads via same sprite path or additive overlay. If omitted, document why fallback still plausible.
 
 ---
@@ -126,7 +144,8 @@ Integrate with existing config loader: add logical paths for sprites, light-type
 - Generator determinism same seed same sprites/lights.
 - Bounds: sprites inside map, Z anchored to floorHeight, not floating, at least a handful placed, max respected, min distance respected, no OOB access.
 - Unique phases to avoid sync.
-- Config validity: sprites.json v1 ≥2 types including torch_wall and brazier_floor, pools present; light-types.json v1 valid.
+- **Material & TBN correctness:** wall tangent sign logic matches wallU flip condition so normal X not inverted; ceiling normal uses `(x,-y,-z)` right-handed; `materials.js` uses plateau+bevel not dome bulge — height field logic includes `cornerRound`, `roundness`, `groutDepth`, `bevelStart`/`bevelDepth` and `normalFactor` from JSON.
+- Config validity: sprites.json v1 ≥2 types including torch_wall and brazier_floor, pools present; light-types.json v1 valid; `materials-proc.json` contains `bevelStart`, `bevelDepth`, `cornerRound`, `roundness`, `groutDepth`, `normalFactor` and `heightScale` consistent.
 
 **E2E (Playwright):**
 - Game loads without console errors, canvas WebGL2, non-empty pixels.
@@ -170,10 +189,11 @@ Placeholder magenta acceptable if PNGs missing, but must be lit.
 - Shaders: MAX_LIGHTS and array uniforms looping many lights, sprite shaders doing PBR with same lights, fog, rim.
 - Renderer uploads many flickered lights each frame, renders sprites after raycast, no WebGL errors.
 - Configs: sprites.json v1 with ≥2 defs + pools showing future extensibility, light-types.json v1 with archetypes, lighting.json with maxLights + colors, all editor-tracked and integrated into config loader.
+- **Lighting-visible correctness (now testable with many point lights, must be fixed):** wall tangent sign matches wallU flip condition `(side==0 && ray.x>0)` / `(side==1 && ray.y<0)` so normal map X not reversed; ceiling TBN flips both Y and Z to stay right-handed (`vec3(x,-y,-z)`) so relief not mirrored; brick/slab procedural height is flat plateau + beveled rim via Chebyshev→Euclidean blend (`cornerRound`), `smoothstep` bevel using `bevelStart`/`bevelDepth`, gentle `roundness` bulge, `groutDepth` consistent, tunable `normalFactor` 1.6/1.4 in `materials-proc.json` instead of hardcoded 2.4/2.0, `heightScale` 1.15 consistent — walk past a torch and left/right edges light correctly and tiles look flat not bubbled.
 - Sprites not floating, wall offset applied, look correct.
 - Game loads sprites>0 lights>0, R regen stable, M map works.
-- Editor shows new lighting configs and edits persist.
-- Unit + e2e pass including screenshot-taking e2e that populates task screenshots.
+- Editor shows new lighting configs and edits persist, and `materials-proc.json` fields (`bevelStart`, `bevelDepth`, `cornerRound`, `roundness`, `groutDepth`, `normalFactor`) are editable and survive R regen.
+- Unit + e2e pass including screenshot-taking e2e that populates task screenshots; add visual check that wall near torch does not show inverted normal lighting and ceiling relief not mirrored.
 - No new runtime deps, ES modules only, no emoji.
 
 ---

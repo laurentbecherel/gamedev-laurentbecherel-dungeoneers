@@ -761,7 +761,7 @@ void main() {
         vec3 albedoRaw = texture(u_ceilAlbedo, cuvAtlas).rgb;
         vec3 normalRaw = texture(u_ceilNormal, cuvAtlas).rgb;
         vec3 normalTS = decodeNormal(normalRaw);
-        vec3 Nw = normalize(vec3(normalTS.xy, -normalTS.z));
+        vec3 Nw = normalize(vec3(normalTS.x, -normalTS.y, -normalTS.z));
         float heightVal = texture(u_ceilHeight, cuvAtlas).r;
         vec4 rma = texture(u_ceilRoughMetal, cuvAtlas);
         float ao = rma.a;
@@ -805,12 +805,16 @@ void main() {
       vec3 NgeomFlat = vec3(0.0);
       vec3 tangentFlat = vec3(0.0);
       vec3 bitangent = vec3(0.0, 0.0, 1.0);
+      // Tangent must point along INCREASING wallU in world space. wallU is flipped
+      // (see wallU computation) when (side==0 && ray.x>0) or (side==1 && ray.y<0), so
+      // the tangent sign has to match — otherwise the normal map's X (horizontal relief)
+      // is applied backwards and a light on the right lights the LEFT edge of each tile.
       if (side == 0) {
         NgeomFlat = vec3(float(-stepDir.x), 0.0, 0.0);
-        tangentFlat = vec3(0.0, 1.0, 0.0);
+        tangentFlat = vec3(0.0, ray.x > 0.0 ? -1.0 : 1.0, 0.0);
       } else {
         NgeomFlat = vec3(0.0, float(-stepDir.y), 0.0);
-        tangentFlat = vec3(1.0, 0.0, 0.0);
+        tangentFlat = vec3(ray.y < 0.0 ? -1.0 : 1.0, 0.0, 0.0);
       }
 
       // --- Rounded corners: compute proper geometric normal FIRST ---
@@ -1022,7 +1026,7 @@ void main() {
       vec3 albedoRaw = texture(u_ceilAlbedo, cuvAtlas).rgb;
       vec3 normalRaw = texture(u_ceilNormal, cuvAtlas).rgb;
       vec3 normalTS = decodeNormal(normalRaw);
-      vec3 Nw = normalize(vec3(normalTS.xy, -normalTS.z));
+      vec3 Nw = normalize(vec3(normalTS.x, -normalTS.y, -normalTS.z));
       float heightVal = texture(u_ceilHeight, cuvAtlas).r;
       vec4 rma = texture(u_ceilRoughMetal, cuvAtlas);
       float ao = rma.a;
