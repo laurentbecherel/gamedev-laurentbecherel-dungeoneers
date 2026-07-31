@@ -45,6 +45,8 @@ export class GPURenderer {
     this.sceneTex = null;
     this.sceneFBO = null;
     this.mapUITex = null;
+    this.lightTex = null;
+    this.lightsFromTex = true; // Part 2: default to the bit-exact light-texture path (arrays kept as fallback)
     this.authentic = true;
     this.bandLevels = 32;
     this.paletteStyle = 'doom';
@@ -168,6 +170,19 @@ export class GPURenderer {
     gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
     gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, 160, 160, 0, gl.RGBA, gl.UNSIGNED_BYTE, null);
 
+    // Part 2: light data texture (RGBA32F, 5 texels/row × MAX_LIGHTS rows).
+    // Holds the same per-light floats as the uniform arrays; sampled via
+    // texelFetch (NEAREST, no float-linear extension needed). Filled per frame.
+    this.LIGHT_TEX_W = 5; this.LIGHT_TEX_H = 12;
+    this.lightTex = gl.createTexture();
+    gl.bindTexture(gl.TEXTURE_2D, this.lightTex);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.NEAREST);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.NEAREST);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+    gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA32F, this.LIGHT_TEX_W, this.LIGHT_TEX_H, 0, gl.RGBA, gl.FLOAT, null);
+    this._lightTexData = new Float32Array(this.LIGHT_TEX_W * this.LIGHT_TEX_H * 4);
+
     // cache uniforms for raycast — extended with MAX_LIGHTS arrays
     const ul = this.uLoc, p = this.program;
     const names = [
@@ -192,7 +207,8 @@ export class GPURenderer {
       'u_pbrEmissiveAlbedoMul','u_pbrEmissiveStrength','u_pbrF0','u_pbrAttenQuad','u_pbrGGXEps',
       'u_renderFloorMul','u_renderCeilMul','u_renderWallDarken','u_renderEyeFactor',
       'u_bobPixels',
-      'u_numLights'
+      'u_numLights',
+      'u_lightTex','u_lightsFromTex'
     ];
     names.forEach(n => ul[n] = gl.getUniformLocation(p, n));
 
@@ -461,6 +477,8 @@ export class GPURenderer {
   toggleFog() { this.fogEnabled ^= 1; return this.fogEnabled; }
   toggleChamfer() { this.chamferEnabled ^= 1; return this.chamferEnabled; }
   toggleCorner() { this.cornerEnabled ^= 1; return this.cornerEnabled; }
+  setLightsFromTex(v) { this.lightsFromTex = !!v; return this.lightsFromTex; }
+  toggleLightsFromTex() { this.lightsFromTex = !this.lightsFromTex; return this.lightsFromTex; }
   cyclePBRDebug() { this.pbrDebugMode = (this.pbrDebugMode + 1) % 9; return this.pbrDebugMode; }
 
   // ── Live-edit update hooks (Tier 1 & 2) ──
@@ -1076,6 +1094,31 @@ export class GPURenderer {
         if (ul.u_lightType[i]) gl.uniform1i(ul.u_lightType[i], 0);
         if (ul.u_lightNoShadow[i]) gl.uniform1i(ul.u_lightNoShadow[i], 0);
       }
+    }
+
+    // Part 2: pack the SAME per-light floats into the RGBA32F light texture
+    // (bit-exact alternative to the arrays above). Row i = light i; 5 texels.
+    {
+      const td = this._lightTexData;
+      const H = this.LIGHT_TEX_H; // 12
+      for (let i = 0; i < H; i++) {
+        const b = i * this.LIGHT_TEX_W * 4; // 20 floats/row
+        if (i < numLights) {
+          const L = lightList[i];
+          td[b+0]=L.pos[0];   td[b+1]=L.pos[1];   td[b+2]=L.pos[2];   td[b+3]=L.intensity;
+          td[b+4]=L.color[0]; td[b+5]=L.color[1]; td[b+6]=L.color[2]; td[b+7]=L.radius;
+          td[b+8]=L.dir[0];   td[b+9]=L.dir[1];   td[b+10]=L.dir[2];  td[b+11]=L.typeId;
+          td[b+12]=L.coneInner; td[b+13]=L.coneOuter; td[b+14]=L.pulseSpeed; td[b+15]=L.pulseAmount;
+          td[b+16]=L.noShadow?1:0; td[b+17]=L.flickerSpeed; td[b+18]=L.flickerAmount; td[b+19]=L.phase;
+        } else {
+          for (let k = 0; k < 20; k++) td[b+k] = 0;
+        }
+      }
+      gl.activeTexture(gl.TEXTURE0 + 14);
+      gl.bindTexture(gl.TEXTURE_2D, this.lightTex);
+      gl.texSubImage2D(gl.TEXTURE_2D, 0, 0, 0, this.LIGHT_TEX_W, this.LIGHT_TEX_H, gl.RGBA, gl.FLOAT, td);
+      if (ul.u_lightTex) gl.uniform1i(ul.u_lightTex, 14);
+      if (ul.u_lightsFromTex) gl.uniform1i(ul.u_lightsFromTex, this.lightsFromTex ? 1 : 0);
     }
 
     // store for sprite rendering same flickered list
