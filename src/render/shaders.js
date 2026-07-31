@@ -691,7 +691,14 @@ void applyGridChamfer(inout vec3 albedo, inout vec3 N, inout vec4 rma, inout flo
 //     copies. surfaceZ = world Z of the floor here; eyeZ = camera eye height;
 //     useRoundCham gates the rounded-corner cove form (wall-hit path used it,
 //     no-hit path did not — preserved). ---
-vec3 shadeFloorSurface(vec2 floorWorld, vec2 ray, float surfaceZ, float eyeZ, bool useRoundCham) {
+// Part-split seam: the shaded surface's material (pre-lighting). The forward
+// path feeds it to pbrShade; the future deferred geometry pass will write it to
+// the G-buffer. Same producer -> no divergence.
+struct Material { vec3 albedo; vec3 N; float rough; float metal; float ao; vec3 emissive; vec3 worldPos; };
+
+// Floor material producer (no debug, no lighting). Byte-faithful to the old
+// shadeFloorSurface normal/gridDebug path.
+Material floorMaterial(vec2 floorWorld, vec2 ray, float surfaceZ, bool useRoundCham) {
   float emissiveAlbedoMul = u_pbrEmissiveAlbedoMul > 0.0 ? u_pbrEmissiveAlbedoMul : 0.8;
   float emissiveStrength = u_pbrEmissiveStrength > 0.0 ? u_pbrEmissiveStrength : 2.5;
   float floorMul = u_renderFloorMul > 0.0 ? u_renderFloorMul : 0.7;
@@ -716,13 +723,9 @@ vec3 shadeFloorSurface(vec2 floorWorld, vec2 ray, float surfaceZ, float eyeZ, bo
   vec3 normalRaw = texture(u_floorNormal, fuvAtlas).rgb;
   vec3 normalTS = decodeNormal(normalRaw);
   vec3 Nw = normalize(vec3(normalTS.xy, normalTS.z));
-  float heightVal = texture(u_floorHeight, fuvAtlas).r;
   vec4 rma = texture(u_floorRoughMetal, fuvAtlas);
   float ao = rma.a;
   vec3 emissive = albedoRaw * emissiveAlbedoMul * rma.b * emissiveStrength;
-  if (u_pbrDebugMode != 0 && u_gridDebug == 0) {
-    return debugShowPBR(u_pbrDebugMode, albedoRaw, normalRaw, Nw, heightVal, rma, emissive);
-  }
   vec3 albedo = (u_gridDebug == 1) ? vec3(0.0, (fract(floorWorld).x > 0.97 || fract(floorWorld).y > 0.97 ? 1.0 : 0.25) * 0.9, 0.0) : albedoRaw * floorMul;
   vec3 N = (u_gridDebug == 1) ? vec3(0,0,1) : Nw;
   if (u_gridDebug == 1) { rma = vec4(0.9,0,0,1); ao = 1.0; emissive = vec3(0); }
@@ -756,15 +759,39 @@ vec3 shadeFloorSurface(vec2 floorWorld, vec2 ray, float surfaceZ, float eyeZ, bo
                        gridCreviceSmooth, gridTStart, gridTMid, gridTEnd);
     }
   }
-  vec3 worldPos = vec3(floorWorld, surfaceZ);
-  vec3 viewDir = normalize(vec3(u_playerPos, eyeZ) - worldPos);
-  return pbrShade(albedo, N, rma.r, rma.g, ao, emissive, worldPos, viewDir);
+  Material m;
+  m.albedo = albedo; m.N = N; m.rough = rma.r; m.metal = rma.g; m.ao = ao;
+  m.emissive = emissive; m.worldPos = vec3(floorWorld, surfaceZ);
+  return m;
+}
+
+vec3 shadeFloorSurface(vec2 floorWorld, vec2 ray, float surfaceZ, float eyeZ, bool useRoundCham) {
+  if (u_pbrDebugMode != 0 && u_gridDebug == 0) {
+    float emissiveAlbedoMul = u_pbrEmissiveAlbedoMul > 0.0 ? u_pbrEmissiveAlbedoMul : 0.8;
+    float emissiveStrength = u_pbrEmissiveStrength > 0.0 ? u_pbrEmissiveStrength : 2.5;
+    vec2 fuvAtlas = atlasUV(1.0, fract(floorWorld), u_atlasFloors, u_texSize);
+    if (u_pomEnabled == 1) {
+      vec3 viewDirTS = normalize(vec3(-ray, 0.8));
+      fuvAtlas += pomOffset(u_floorHeight, fuvAtlas, viewDirTS, u_pomFloor, u_pomSteps);
+    }
+    vec3 albedoRaw = texture(u_floorAlbedo, fuvAtlas).rgb;
+    vec3 normalRaw = texture(u_floorNormal, fuvAtlas).rgb;
+    vec3 Nw = normalize(vec3(decodeNormal(normalRaw).xy, decodeNormal(normalRaw).z));
+    float heightVal = texture(u_floorHeight, fuvAtlas).r;
+    vec4 rma = texture(u_floorRoughMetal, fuvAtlas);
+    vec3 emissive = albedoRaw * emissiveAlbedoMul * rma.b * emissiveStrength;
+    return debugShowPBR(u_pbrDebugMode, albedoRaw, normalRaw, Nw, heightVal, rma, emissive);
+  }
+  Material m = floorMaterial(floorWorld, ray, surfaceZ, useRoundCham);
+  vec3 viewDir = normalize(vec3(u_playerPos, eyeZ) - m.worldPos);
+  return pbrShade(m.albedo, m.N, m.rough, m.metal, m.ao, m.emissive, m.worldPos, viewDir);
 }
 
 // --- Extracted ceiling surface shading — unifies wall-hit & no-hit ceil copies.
 //     coveRoughK 0.35 (wall-hit) / 0.3 (no-hit); gridDbgMin 0.25 (wall-hit) / 0.2
 //     (no-hit) — both preserved exactly from the originals. ---
-vec3 shadeCeilSurface(vec2 ceilWorld, vec2 ray, float surfaceZ, float eyeZ, bool useRoundCham, float coveRoughK, float gridDbgMin) {
+// Ceiling material producer. Byte-faithful to the old shadeCeilSurface path.
+Material ceilMaterial(vec2 ceilWorld, vec2 ray, float surfaceZ, bool useRoundCham, float coveRoughK, float gridDbgMin) {
   float emissiveAlbedoMul = u_pbrEmissiveAlbedoMul > 0.0 ? u_pbrEmissiveAlbedoMul : 0.8;
   float emissiveStrength = u_pbrEmissiveStrength > 0.0 ? u_pbrEmissiveStrength : 2.5;
   float ceilMul = u_renderCeilMul > 0.0 ? u_renderCeilMul : 0.8;
@@ -789,13 +816,9 @@ vec3 shadeCeilSurface(vec2 ceilWorld, vec2 ray, float surfaceZ, float eyeZ, bool
   vec3 normalRaw = texture(u_ceilNormal, cuvAtlas).rgb;
   vec3 normalTS = decodeNormal(normalRaw);
   vec3 Nw = normalize(vec3(normalTS.x, -normalTS.y, -normalTS.z));
-  float heightVal = texture(u_ceilHeight, cuvAtlas).r;
   vec4 rma = texture(u_ceilRoughMetal, cuvAtlas);
   float ao = rma.a;
   vec3 emissive = albedoRaw * emissiveAlbedoMul * rma.b * emissiveStrength;
-  if (u_pbrDebugMode != 0 && u_gridDebug == 0) {
-    return debugShowPBR(u_pbrDebugMode, albedoRaw, normalRaw, Nw, heightVal, rma, emissive);
-  }
   vec3 albedo = (u_gridDebug == 1) ? vec3(0.0, 0.0, (fract(ceilWorld).x > 0.97 || fract(ceilWorld).y > 0.97 ? 1.0 : gridDbgMin) * 0.9) : albedoRaw * ceilMul;
   vec3 N = (u_gridDebug == 1) ? vec3(0,0,-1) : Nw;
   if (u_gridDebug == 1) { rma = vec4(0.9,0,0,1); ao = 1.0; emissive = vec3(0); }
@@ -827,9 +850,33 @@ vec3 shadeCeilSurface(vec2 ceilWorld, vec2 ray, float surfaceZ, float eyeZ, bool
                        gridCreviceSmooth, gridTStart, gridTMid, gridTEnd);
     }
   }
-  vec3 worldPos = vec3(ceilWorld, surfaceZ);
-  vec3 viewDir = normalize(vec3(u_playerPos, eyeZ) - worldPos);
-  return pbrShade(albedo, N, rma.r, rma.g, ao, emissive, worldPos, viewDir);
+  Material m;
+  m.albedo = albedo; m.N = N; m.rough = rma.r; m.metal = rma.g; m.ao = ao;
+  m.emissive = emissive; m.worldPos = vec3(ceilWorld, surfaceZ);
+  return m;
+}
+
+vec3 shadeCeilSurface(vec2 ceilWorld, vec2 ray, float surfaceZ, float eyeZ, bool useRoundCham, float coveRoughK, float gridDbgMin) {
+  if (u_pbrDebugMode != 0 && u_gridDebug == 0) {
+    float emissiveAlbedoMul = u_pbrEmissiveAlbedoMul > 0.0 ? u_pbrEmissiveAlbedoMul : 0.8;
+    float emissiveStrength = u_pbrEmissiveStrength > 0.0 ? u_pbrEmissiveStrength : 2.5;
+    vec2 cuvAtlas = atlasUV(1.0, fract(ceilWorld), u_atlasCeils, u_texSize);
+    if (u_pomEnabled == 1) {
+      vec3 viewDirTS_ceil = normalize(vec3(-ray, 0.5));
+      cuvAtlas += pomOffset(u_ceilHeight, cuvAtlas, viewDirTS_ceil, u_pomCeil, u_pomSteps);
+    }
+    vec3 albedoRaw = texture(u_ceilAlbedo, cuvAtlas).rgb;
+    vec3 normalRaw = texture(u_ceilNormal, cuvAtlas).rgb;
+    vec3 normalTS = decodeNormal(normalRaw);
+    vec3 Nw = normalize(vec3(normalTS.x, -normalTS.y, -normalTS.z));
+    float heightVal = texture(u_ceilHeight, cuvAtlas).r;
+    vec4 rma = texture(u_ceilRoughMetal, cuvAtlas);
+    vec3 emissive = albedoRaw * emissiveAlbedoMul * rma.b * emissiveStrength;
+    return debugShowPBR(u_pbrDebugMode, albedoRaw, normalRaw, Nw, heightVal, rma, emissive);
+  }
+  Material m = ceilMaterial(ceilWorld, ray, surfaceZ, useRoundCham, coveRoughK, gridDbgMin);
+  vec3 viewDir = normalize(vec3(u_playerPos, eyeZ) - m.worldPos);
+  return pbrShade(m.albedo, m.N, m.rough, m.metal, m.ao, m.emissive, m.worldPos, viewDir);
 }
 
 
