@@ -58,6 +58,7 @@ export class GPURenderer {
     this.chamferEnabled = 1;
     this.cornerEnabled = 1;
     this.modifiersEnabled = 1;
+    this.modDebugMode = 1; // 0=OFF clean,1=ON normal,2=moss,3=damaged,4=water,5=puddle,6=blood,7=dust,8=combined
     this._cfgCache = null;
     // Task 6 additions
     this.lightManager = null;
@@ -489,17 +490,27 @@ export class GPURenderer {
   toggleFog() { this.fogEnabled ^= 1; return this.fogEnabled; }
   toggleChamfer() { this.chamferEnabled ^= 1; return this.chamferEnabled; }
   toggleCorner() { this.cornerEnabled ^= 1; return this.cornerEnabled; }
-  toggleModifiers() { this.modifiersEnabled ^= 1; return this.modifiersEnabled; }
-  setModifiersEnabled(v) { this.modifiersEnabled = v ? 1 : 0; }
-
+  toggleModifiers() { return this.cycleModifiersDebug(); }
+  setModifiersEnabled(v) { this.modifiersEnabled = v ? 1 : 0; if (v) this.modDebugMode = 1; else this.modDebugMode = 0; }
+  cycleModifiersDebug() {
+    this.modDebugMode = (this.modDebugMode + 1) % 9; // 0..8 cycle
+    // Mode mapping: 0=OFF clean,1=ON normal,2=moss,3=damaged,4=water,5=puddle,6=blood,7=dust,8=combined
+    if (this.modDebugMode === 0) this.modifiersEnabled = 0;
+    else if (this.modDebugMode === 1) this.modifiersEnabled = 1;
+    else this.modifiersEnabled = 0; // debug mask modes show mask only, no PBR alteration
+    return this.modDebugMode;
+  }
+  getModifiersModeName() {
+    const names = ["OFF (clean base)", "ON (moss/damaged/water/puddle/blood/dust)", "MOSS mask (green)", "DAMAGED mask (gray)", "WATER mask (blue streaks)", "PUDDLE mask (mirror pools)", "BLOOD mask (red splatter)", "DUST mask (beige)", "COMBINED mask (RGB mix)"];
+    return names[this.modDebugMode] || "UNKNOWN";
+  }
   updateMaterialModifiers(modCfg) {
     if (!modCfg) return;
     if (!this._cfgCache) this._cfgCache = {};
     this._cfgCache["material-modifiers"] = modCfg;
     this._cfgCache.materialModifiers = modCfg;
     const enabled = modCfg.enabled ?? true;
-    // we keep this.modifiersEnabled as local toggle, but if config says disabled, respect
-    if (enabled === false) this.modifiersEnabled = 0;
+    if (enabled === false) { this.modifiersEnabled = 0; this.modDebugMode = 0; }
   }
   cyclePBRDebug() { this.pbrDebugMode = (this.pbrDebugMode + 1) % 9; return this.pbrDebugMode; }
 
@@ -993,8 +1004,9 @@ export class GPURenderer {
     const cfgModEnabled = modCfg.enabled ?? true;
     const modEnabledUpload = cfgModEnabled && (this.modifiersEnabled !== 0) ? 1 : 0;
     if (ul.u_modEnabled) gl.uniform1i(ul.u_modEnabled, modEnabledUpload);
-    const dbgOverlay = modCfg.debug?.overlayMode ?? modCfg.debug?.showModifierOverlay ? 1 : 0;
-    if (ul.u_modDebugOverlay) gl.uniform1i(ul.u_modDebugOverlay, dbgOverlay|0);
+    // Task 9: debug overlay mode 0=OFF clean,1=ON normal,2..8 colored mask per type - cycles via Key9
+    const dbgOverlayUpload = (this.modDebugMode >= 2) ? this.modDebugMode : 0;
+    if (ul.u_modDebugOverlay) gl.uniform1i(ul.u_modDebugOverlay, dbgOverlayUpload);
 
     const getMod = (name) => mods[name] || {};
     // Moss
@@ -1359,6 +1371,8 @@ export class GPURenderer {
     this._renderUIPass();
   }
 }
+
+
 
 
 

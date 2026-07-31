@@ -193,3 +193,26 @@ npm start # http://localhost:8000/game.html
 npm test # or npx playwright test --reporter=list
 npx playwright test tests/e2e/chamfer-grid.spec.js tests/e2e/game-lighting.spec.js --reporter=list
 ```
+
+## Debug Tooling (Improved via user feedback)
+
+Original design had Key 9 as simple ON/OFF toggle for modifiers. Better tools needed:
+
+- **Key 9 now cycles through 9 modes** (0..8): OFF clean, ON normal, MOSS mask green, DAMAGED gray, WATER blue streaks, PUDDLE mirror pools dark blue, BLOOD red splatter, DUST beige, COMBINED RGB mix.
+- Each mask map is **colored per type** using `modDebugOverlayColor()` sampling `u_modTexA/B` cell intensities (generator story spread) tinted with distinct colors: moss `vec3(0.12,0.88,0.24)`, damaged `0.62 gray`, water `0.18,0.48,1.0 blue`, puddle `0.08,0.32,0.78 dark blue`, blood `0.92,0.08,0.16 red`, dust `0.82,0.72,0.52 beige`.
+- For combined mode, all 6 masks blended additively to show storytelling overlap per cell.
+- Masks show generator intensity (40x40 map) plus subtle noise grain `modNoise(worldXY*0.35)` to differentiate flat cell vs organic noise shape, plus faint cell edge darkening `fract(worldXY)` <0.025 → *0.65 to see grid boundaries.
+- Implemented in shader: `modDebugOverlayColor()` + `modDebugIntensity()`, overlay after `pbrShade` and after `debugShowPBR` for both normal and PBR-debug paths. Renderer uploads `u_modDebugOverlay` = `modDebugMode` when >=2 else 0, via unit 14/15 textures NEAREST.
+- Game.js HUD: `Modifiers [mode]: Name - 9 cycles OFF/ON/MOSS/DAMAGED/WATER/PUDDLE/BLOOD/DUST/COMBINED`
+- Screenshots captured for each debug mode (`screen-mod-debug-*.png`) proving colored masks.
+
+**PBR toggle interaction (Key 6):**
+
+User noted PBR debug cycle (key 6) didn't take modifiers into account. Fixed:
+
+- Early injection `// Task 9 early {label} - modifiers before PBR debug` added in each of 5 render paths BEFORE `if (u_pbrDebugMode !=0)` check, guarded with `u_modEnabled==1 && u_pbrDebugMode !=0` to avoid double in normal rendering.
+- Now when you press `6` to view Albedo, Normal raw, World Normal, Height, Rough, etc, you see **modified** values: albedo shows moss green/blood red patches, normal shows lumpy/flat/ripple perturbations, rough shows glossy puddle 0.08 vs moss 0.9, height shows bumpy +0.22 moss vs depressed -0.19 puddle.
+- Normal path still has late injection after chamfer/grid (`applyMaterialModifiers` after chamfer) so final shading shows modifiers on top of geometry details.
+- Screenshots `screen-pbr-debug-albedo-with-mods.png` and `screen-pbr-debug-normal-with-mods.png` prove this.
+- PBR OFF toggle (Key 3, `u_pbrEnabled==0`) also respects modifiers because `pbrShade` returns `albedo+emissive` after modifiers applied (diffuse Lambert still uses modified albedo).
+

@@ -851,6 +851,48 @@ void applyMaterialModifiers(
   }
 }
 
+vec3 modDebugOverlayColor(vec2 worldXY, int mode) {
+  if (mode==0) return vec3(0.0);
+  vec4 a; vec4 b;
+  sampleModCell(worldXY, a, b);
+  float m = a.r; // moss
+  float d = a.g; // damaged
+  float wa = a.b; // water
+  float pu = a.a; // puddle
+  float bl = b.r; // blood
+  float du = b.g; // dust
+  if (mode==2) return vec3(0.12,0.88,0.24) * m; // moss green
+  if (mode==3) return vec3(0.62,0.62,0.62) * d; // damaged gray
+  if (mode==4) return vec3(0.18,0.48,1.0) * wa; // water blue
+  if (mode==5) return vec3(0.08,0.32,0.78) * pu; // puddle dark blue
+  if (mode==6) return vec3(0.92,0.08,0.16) * bl; // blood red
+  if (mode==7) return vec3(0.82,0.72,0.52) * du; // dust beige
+  if (mode==8) {
+    vec3 col = vec3(0.0);
+    col += vec3(0.12,0.88,0.24) * m * 0.9;
+    col += vec3(0.62,0.62,0.62) * d * 0.8;
+    col += vec3(0.18,0.48,1.0) * wa * 0.8;
+    col += vec3(0.08,0.32,0.78) * pu * 1.0;
+    col += vec3(0.92,0.08,0.16) * bl * 1.0;
+    col += vec3(0.82,0.72,0.52) * du * 0.9;
+    return col;
+  }
+  return vec3(0.0);
+}
+float modDebugIntensity(vec2 worldXY, int mode) {
+  vec4 a; vec4 b;
+  sampleModCell(worldXY, a, b);
+  if (mode==2) return a.r;
+  if (mode==3) return a.g;
+  if (mode==4) return a.b;
+  if (mode==5) return a.a;
+  if (mode==6) return b.r;
+  if (mode==7) return b.g;
+  if (mode==8) return clamp((a.r + a.g + a.b + a.a + b.r + b.g)/2.0, 0.0, 1.0);
+  return 0.0;
+}
+
+
 vec3 pbrShade(vec3 albedo, vec3 N, float rough, float metal, float ao, vec3 emissive, vec3 worldPos, vec3 viewDir) {
   if (u_lightingEnabled == 0) { return albedo + emissive; }
   float aoSunEff = mix(1.0, ao, clamp(u_aoSun, 0.0, 1.0));
@@ -1143,9 +1185,34 @@ void main() {
         vec4 rma = texture(u_floorRoughMetal, fuvAtlas);
         float ao = rma.a;
         vec3 emissive = albedoRaw * emissiveAlbedoMul * rma.b * emissiveStrength;
+        // Task 9 early: apply modifiers before PBR debug so debug modes show modified channels (fixes key 6 not showing modifiers)
+        if (u_modEnabled == 1 && u_pbrDebugMode != 0) {
+          vec3 _earlyAlbedo = albedoRaw;
+          vec3 _earlyN = Nw;
+          float _earlyRough = rma.r;
+          float _earlyMetal = rma.g;
+          float _earlyHeight = heightVal;
+          float _earlyAO = ao;
+          vec3 _earlyWPos = vec3(floorWorld, floorH_atRay);
+          applyMaterialModifiers(_earlyAlbedo, _earlyN, _earlyRough, _earlyMetal, _earlyHeight, _earlyAO, _earlyWPos, floorWorld, vec3(0.0,0.0,1.0), true, false, false, 0.0, 0.0);
+          albedoRaw = _earlyAlbedo; Nw = _earlyN; rma.r = _earlyRough; rma.g = _earlyMetal; heightVal = _earlyHeight; ao = _earlyAO;
+        }
         if (u_pbrDebugMode != 0 && u_gridDebug == 0) {
           finalColor = debugShowPBR(u_pbrDebugMode, albedoRaw, normalRaw, Nw, heightVal, rma, emissive);
-        } else {
+        
+          // Task 9 debug overlay for PBR debug path
+          if (u_modDebugOverlay >= 2) {
+            vec3 _dbgColD = modDebugOverlayColor(floorWorld, u_modDebugOverlay);
+            float _dbgIntD = modDebugIntensity(floorWorld, u_modDebugOverlay);
+            if (u_modDebugOverlay == 8) {
+              finalColor = mix(vec3(0.06,0.06,0.07), _dbgColD, clamp(_dbgIntD*1.2, 0.0, 1.0));
+            } else {
+              vec3 _baseDark = vec3(0.08,0.08,0.09);
+              finalColor = mix(_baseDark, _dbgColD + vec3(0.12), clamp(_dbgIntD, 0.0, 1.0));
+            }
+          }
+
+} else {
           vec3 albedo = (u_gridDebug == 1) ? vec3(0.0, (fract(floorWorld).x > 0.97 || fract(floorWorld).y > 0.97 ? 1.0 : 0.25) * 0.9, 0.0) : albedoRaw * floorMul;
           vec3 N = (u_gridDebug == 1) ? vec3(0,0,1) : Nw;
           if (u_gridDebug == 1) { rma = vec4(0.9,0,0,1); ao = 1.0; emissive = vec3(0); }
@@ -1208,6 +1275,32 @@ void main() {
           vec3 worldPos = vec3(floorWorld, floorH_atRay);
           vec3 viewDir = normalize(vec3(u_playerPos, eyeZ) - worldPos);
           finalColor = pbrShade(albedo, N, rma.r, rma.g, ao, emissive, worldPos, viewDir);
+
+          // Task 9 debug overlay: colored mask per modifier type when u_modDebugOverlay >=2
+          if (u_modDebugOverlay >= 2) {
+            vec3 _dbgCol = modDebugOverlayColor(worldPos.xy, u_modDebugOverlay);
+            float _dbgInt = modDebugIntensity(worldPos.xy, u_modDebugOverlay);
+            // For single-mod masks, show dark base with colored intensity; for combined, show mixed col directly
+            if (u_modDebugOverlay == 8) {
+              // Combined - show mixed colors, brighten a bit
+              finalColor = mix(vec3(0.06,0.06,0.07), _dbgCol, clamp(_dbgInt*1.2, 0.0, 1.0));
+              // add faint grid to see cell boundaries
+              vec2 f = fract(worldPos.xy);
+              float edge = min(min(f.x, 1.0-f.x), min(f.y, 1.0-f.y));
+              if (edge < 0.03) finalColor *= 0.75;
+            } else {
+              vec3 _baseDark = vec3(0.08,0.08,0.09);
+              finalColor = mix(_baseDark, _dbgCol + vec3(0.12), clamp(_dbgInt, 0.0, 1.0));
+              // subtle noise grain to show organic mask shape vs flat cell intensity
+              float _n = modNoise(worldPos.xy * 0.35 + vec2(float(u_modDebugOverlay)*1.7));
+              finalColor *= 0.85 + _n * 0.35;
+              // edge darkening for cell border visibility
+              vec2 f = fract(worldPos.xy);
+              float edge = min(min(f.x, 1.0-f.x), min(f.y, 1.0-f.y));
+              if (edge < 0.025) finalColor *= 0.65;
+            }
+          }
+
         }
         perpDist = dist;
       } else {
@@ -1229,10 +1322,35 @@ void main() {
         float heightVal = texture(u_ceilHeight, cuvAtlas).r;
         vec4 rma = texture(u_ceilRoughMetal, cuvAtlas);
         float ao = rma.a;
-        vec3 emissive = albedoRaw * emissiveAlbedoMul * rma.b * emissiveStrength;
-        if (u_pbrDebugMode != 0 && u_gridDebug == 0) {
+              vec3 emissive = albedoRaw * emissiveAlbedoMul * rma.b * emissiveStrength;
+        // Task 9 early ceil hit - modifiers before PBR debug (fixes key 6)
+        if (u_modEnabled == 1 && u_pbrDebugMode != 0) {
+          vec3 _earlyAlbedo = albedoRaw;
+          vec3 _earlyN = Nw;
+          float _earlyRough = rma.r;
+          float _earlyMetal = rma.g;
+          float _earlyHeight = heightVal;
+          float _earlyAO = ao;
+          vec3 _earlyWPos = vec3(ceilWorld, ceilH_atRay);
+          applyMaterialModifiers(_earlyAlbedo, _earlyN, _earlyRough, _earlyMetal, _earlyHeight, _earlyAO, _earlyWPos, ceilWorld, vec3(0.0,0.0,-1.0), false, true, false, 0.0, 0.0);
+          albedoRaw = _earlyAlbedo; Nw = _earlyN; rma.r = _earlyRough; rma.g = _earlyMetal; heightVal = _earlyHeight; ao = _earlyAO;
+        }
+      if (u_pbrDebugMode != 0 && u_gridDebug == 0) {
           finalColor = debugShowPBR(u_pbrDebugMode, albedoRaw, normalRaw, Nw, heightVal, rma, emissive);
-        } else {
+        
+          // Task 9 debug overlay for PBR debug path
+          if (u_modDebugOverlay >= 2) {
+            vec3 _dbgColD = modDebugOverlayColor(ceilWorld, u_modDebugOverlay);
+            float _dbgIntD = modDebugIntensity(ceilWorld, u_modDebugOverlay);
+            if (u_modDebugOverlay == 8) {
+              finalColor = mix(vec3(0.06,0.06,0.07), _dbgColD, clamp(_dbgIntD*1.2, 0.0, 1.0));
+            } else {
+              vec3 _baseDark = vec3(0.08,0.08,0.09);
+              finalColor = mix(_baseDark, _dbgColD + vec3(0.12), clamp(_dbgIntD, 0.0, 1.0));
+            }
+          }
+
+} else {
           vec3 albedo = (u_gridDebug == 1) ? vec3(0.0, 0.0, (fract(ceilWorld).x > 0.97 || fract(ceilWorld).y > 0.97 ? 1.0 : 0.25) * 0.9) : albedoRaw * ceilMul;
           vec3 N = (u_gridDebug == 1) ? vec3(0,0,-1) : Nw;
           if (u_gridDebug == 1) { rma = vec4(0.9,0,0,1); ao = 1.0; emissive = vec3(0); }
@@ -1294,6 +1412,32 @@ void main() {
           vec3 worldPos = vec3(ceilWorld, ceilH_atRay);
           vec3 viewDir = normalize(vec3(u_playerPos, eyeZ) - worldPos);
           finalColor = pbrShade(albedo, N, rma.r, rma.g, ao, emissive, worldPos, viewDir);
+
+          // Task 9 debug overlay: colored mask per modifier type when u_modDebugOverlay >=2
+          if (u_modDebugOverlay >= 2) {
+            vec3 _dbgCol = modDebugOverlayColor(worldPos.xy, u_modDebugOverlay);
+            float _dbgInt = modDebugIntensity(worldPos.xy, u_modDebugOverlay);
+            // For single-mod masks, show dark base with colored intensity; for combined, show mixed col directly
+            if (u_modDebugOverlay == 8) {
+              // Combined - show mixed colors, brighten a bit
+              finalColor = mix(vec3(0.06,0.06,0.07), _dbgCol, clamp(_dbgInt*1.2, 0.0, 1.0));
+              // add faint grid to see cell boundaries
+              vec2 f = fract(worldPos.xy);
+              float edge = min(min(f.x, 1.0-f.x), min(f.y, 1.0-f.y));
+              if (edge < 0.03) finalColor *= 0.75;
+            } else {
+              vec3 _baseDark = vec3(0.08,0.08,0.09);
+              finalColor = mix(_baseDark, _dbgCol + vec3(0.12), clamp(_dbgInt, 0.0, 1.0));
+              // subtle noise grain to show organic mask shape vs flat cell intensity
+              float _n = modNoise(worldPos.xy * 0.35 + vec2(float(u_modDebugOverlay)*1.7));
+              finalColor *= 0.85 + _n * 0.35;
+              // edge darkening for cell border visibility
+              vec2 f = fract(worldPos.xy);
+              float edge = min(min(f.x, 1.0-f.x), min(f.y, 1.0-f.y));
+              if (edge < 0.025) finalColor *= 0.65;
+            }
+          }
+
         }
         perpDist = dist;
       }
@@ -1363,6 +1507,17 @@ void main() {
       vec3 emissiveW = albedoRaw * emissiveAlbedoMul * rmaW.b * emissiveStrength;
       // Proper PBR: normal map applied on top of rounded TBN, preserving detail
       vec3 Nw = normalize(tangent * normalTSw.x + bitangent * normalTSw.y + Ngeom * normalTSw.z);
+      // Task 9 early wall: modifiers before PBR debug so key 6 shows them
+      if (u_modEnabled == 1 && u_pbrDebugMode != 0) {
+        vec3 _earlyAlbedoW = albedoRaw;
+        vec3 _earlyNW = Nw;
+        float _earlyRoughW = rmaW.r;
+        float _earlyMetalW = rmaW.g;
+        float _earlyHeightW = heightVal;
+        float _earlyAOW = rmaW.a;
+        applyMaterialModifiers(_earlyAlbedoW, _earlyNW, _earlyRoughW, _earlyMetalW, _earlyHeightW, _earlyAOW, worldPos, hitPos, Ngeom, false, false, true, wallU, wallV);
+        albedoRaw = _earlyAlbedoW; Nw = _earlyNW; rmaW.r = _earlyRoughW; rmaW.g = _earlyMetalW; heightVal = _earlyHeightW; rmaW.a = _earlyAOW;
+      }
 
       if (hasCornerRound && u_pbrDebugMode == 0 && u_gridDebug == 0) {
         // Keep material tweaks but do NOT overwrite Nw — detail is already in Nw via TBN
@@ -1427,7 +1582,20 @@ void main() {
 
       if (u_pbrDebugMode != 0 && u_gridDebug == 0) {
         finalColor = debugShowPBR(u_pbrDebugMode, albedoRaw, normalRaw, Nw, heightVal, rmaW, emissiveW);
-      } else if (u_gridDebug == 1) {
+      
+          // Task 9 debug overlay for PBR debug path
+          if (u_modDebugOverlay >= 2) {
+            vec3 _dbgColD = modDebugOverlayColor(vec2(0.0), u_modDebugOverlay);
+            float _dbgIntD = modDebugIntensity(vec2(0.0), u_modDebugOverlay);
+            if (u_modDebugOverlay == 8) {
+              finalColor = mix(vec3(0.06,0.06,0.07), _dbgColD, clamp(_dbgIntD*1.2, 0.0, 1.0));
+            } else {
+              vec3 _baseDark = vec3(0.08,0.08,0.09);
+              finalColor = mix(_baseDark, _dbgColD + vec3(0.12), clamp(_dbgIntD, 0.0, 1.0));
+            }
+          }
+
+} else if (u_gridDebug == 1) {
         float wallH = ceilH - floorH;
         vec2 wuv = vec2(fract(wallU), fract(wallV * wallH));
         float grid = (wuv.x > 0.95 || wuv.y > 0.95 || wuv.x < 0.05 || wuv.y < 0.05) ? 1.0 : 0.25;
@@ -1444,6 +1612,32 @@ void main() {
         albedoRaw = _modAlbedoW; Nw = _modNW; rmaW.r = _modRoughW; rmaW.g = _modMetalW; heightVal = _modHeightW; rmaW.a = _modAOW;
       }
         finalColor = pbrShade(albedoRaw, Nw, rmaW.r, rmaW.g, rmaW.a, emissiveW, worldPos, viewDir);
+
+          // Task 9 debug overlay: colored mask per modifier type when u_modDebugOverlay >=2
+          if (u_modDebugOverlay >= 2) {
+            vec3 _dbgCol = modDebugOverlayColor(worldPos.xy, u_modDebugOverlay);
+            float _dbgInt = modDebugIntensity(worldPos.xy, u_modDebugOverlay);
+            // For single-mod masks, show dark base with colored intensity; for combined, show mixed col directly
+            if (u_modDebugOverlay == 8) {
+              // Combined - show mixed colors, brighten a bit
+              finalColor = mix(vec3(0.06,0.06,0.07), _dbgCol, clamp(_dbgInt*1.2, 0.0, 1.0));
+              // add faint grid to see cell boundaries
+              vec2 f = fract(worldPos.xy);
+              float edge = min(min(f.x, 1.0-f.x), min(f.y, 1.0-f.y));
+              if (edge < 0.03) finalColor *= 0.75;
+            } else {
+              vec3 _baseDark = vec3(0.08,0.08,0.09);
+              finalColor = mix(_baseDark, _dbgCol + vec3(0.12), clamp(_dbgInt, 0.0, 1.0));
+              // subtle noise grain to show organic mask shape vs flat cell intensity
+              float _n = modNoise(worldPos.xy * 0.35 + vec2(float(u_modDebugOverlay)*1.7));
+              finalColor *= 0.85 + _n * 0.35;
+              // edge darkening for cell border visibility
+              vec2 f = fract(worldPos.xy);
+              float edge = min(min(f.x, 1.0-f.x), min(f.y, 1.0-f.y));
+              if (edge < 0.025) finalColor *= 0.65;
+            }
+          }
+
       }
       if (side == 1 && u_pbrDebugMode == 0 && u_gridDebug == 0) finalColor *= wallDarken;
     }
@@ -1485,10 +1679,35 @@ void main() {
       float heightVal = texture(u_floorHeight, fuvAtlas).r;
       vec4 rma = texture(u_floorRoughMetal, fuvAtlas);
       float ao = rma.a;
-      vec3 emissive = albedoRaw * emissiveAlbedoMul * rma.b * emissiveStrength;
+            vec3 emissive = albedoRaw * emissiveAlbedoMul * rma.b * emissiveStrength;
+        // Task 9 early floor fallback - modifiers before PBR debug
+        if (u_modEnabled == 1 && u_pbrDebugMode != 0) {
+          vec3 _earlyAlbedo = albedoRaw;
+          vec3 _earlyN = Nw;
+          float _earlyRough = rma.r;
+          float _earlyMetal = rma.g;
+          float _earlyHeight = heightVal;
+          float _earlyAO = ao;
+          vec3 _earlyWPos = vec3(floorWorld, floorH);
+          applyMaterialModifiers(_earlyAlbedo, _earlyN, _earlyRough, _earlyMetal, _earlyHeight, _earlyAO, _earlyWPos, floorWorld, vec3(0.0,0.0,1.0), true, false, false, 0.0, 0.0);
+          albedoRaw = _earlyAlbedo; Nw = _earlyN; rma.r = _earlyRough; rma.g = _earlyMetal; heightVal = _earlyHeight; ao = _earlyAO;
+        }
       if (u_pbrDebugMode != 0 && u_gridDebug == 0) {
         finalColor = debugShowPBR(u_pbrDebugMode, albedoRaw, normalRaw, Nw, heightVal, rma, emissive);
-      } else {
+      
+          // Task 9 debug overlay for PBR debug path
+          if (u_modDebugOverlay >= 2) {
+            vec3 _dbgColD = modDebugOverlayColor(floorWorld, u_modDebugOverlay);
+            float _dbgIntD = modDebugIntensity(floorWorld, u_modDebugOverlay);
+            if (u_modDebugOverlay == 8) {
+              finalColor = mix(vec3(0.06,0.06,0.07), _dbgColD, clamp(_dbgIntD*1.2, 0.0, 1.0));
+            } else {
+              vec3 _baseDark = vec3(0.08,0.08,0.09);
+              finalColor = mix(_baseDark, _dbgColD + vec3(0.12), clamp(_dbgIntD, 0.0, 1.0));
+            }
+          }
+
+} else {
         vec3 albedo = (u_gridDebug == 1) ? vec3(0.0, (fract(floorWorld).x > 0.97 || fract(floorWorld).y > 0.97 ? 1.0 : 0.25) * 0.9, 0.0) : albedoRaw * floorMul;
         vec3 N = (u_gridDebug == 1) ? vec3(0,0,1) : Nw;
         if (u_gridDebug == 1) { rma = vec4(0.9,0,0,1); ao = 1.0; emissive = vec3(0); }
@@ -1549,6 +1768,32 @@ void main() {
         vec3 worldPos = vec3(floorWorld, floorH);
         vec3 viewDir = normalize(vec3(u_playerPos, eyeZ2) - worldPos);
         finalColor = pbrShade(albedo, N, rma.r, rma.g, ao, emissive, worldPos, viewDir);
+
+          // Task 9 debug overlay: colored mask per modifier type when u_modDebugOverlay >=2
+          if (u_modDebugOverlay >= 2) {
+            vec3 _dbgCol = modDebugOverlayColor(worldPos.xy, u_modDebugOverlay);
+            float _dbgInt = modDebugIntensity(worldPos.xy, u_modDebugOverlay);
+            // For single-mod masks, show dark base with colored intensity; for combined, show mixed col directly
+            if (u_modDebugOverlay == 8) {
+              // Combined - show mixed colors, brighten a bit
+              finalColor = mix(vec3(0.06,0.06,0.07), _dbgCol, clamp(_dbgInt*1.2, 0.0, 1.0));
+              // add faint grid to see cell boundaries
+              vec2 f = fract(worldPos.xy);
+              float edge = min(min(f.x, 1.0-f.x), min(f.y, 1.0-f.y));
+              if (edge < 0.03) finalColor *= 0.75;
+            } else {
+              vec3 _baseDark = vec3(0.08,0.08,0.09);
+              finalColor = mix(_baseDark, _dbgCol + vec3(0.12), clamp(_dbgInt, 0.0, 1.0));
+              // subtle noise grain to show organic mask shape vs flat cell intensity
+              float _n = modNoise(worldPos.xy * 0.35 + vec2(float(u_modDebugOverlay)*1.7));
+              finalColor *= 0.85 + _n * 0.35;
+              // edge darkening for cell border visibility
+              vec2 f = fract(worldPos.xy);
+              float edge = min(min(f.x, 1.0-f.x), min(f.y, 1.0-f.y));
+              if (edge < 0.025) finalColor *= 0.65;
+            }
+          }
+
       }
       perpDist = dist;
     } else {
@@ -1580,10 +1825,35 @@ void main() {
       float heightVal = texture(u_ceilHeight, cuvAtlas).r;
       vec4 rma = texture(u_ceilRoughMetal, cuvAtlas);
       float ao = rma.a;
-      vec3 emissive = albedoRaw * emissiveAlbedoMul * rma.b * emissiveStrength;
+            vec3 emissive = albedoRaw * emissiveAlbedoMul * rma.b * emissiveStrength;
+        // Task 9 early ceil fb early - modifiers before PBR debug so key 6 shows them
+        if (u_modEnabled == 1 && u_pbrDebugMode != 0) {
+          vec3 _earlyAlbedo = albedoRaw;
+          vec3 _earlyN = Nw;
+          float _earlyRough = rma.r;
+          float _earlyMetal = rma.g;
+          float _earlyHeight = heightVal;
+          float _earlyAO = ao;
+          vec3 _earlyWPos = vec3(ceilWorld, ceilH);
+          applyMaterialModifiers(_earlyAlbedo, _earlyN, _earlyRough, _earlyMetal, _earlyHeight, _earlyAO, _earlyWPos, ceilWorld, vec3(0.0,0.0,-1.0), false, true, false, 0.0, 0.0);
+          albedoRaw = _earlyAlbedo; Nw = _earlyN; rma.r = _earlyRough; rma.g = _earlyMetal; heightVal = _earlyHeight; ao = _earlyAO;
+        }
       if (u_pbrDebugMode != 0 && u_gridDebug == 0) {
         finalColor = debugShowPBR(u_pbrDebugMode, albedoRaw, normalRaw, Nw, heightVal, rma, emissive);
-      } else {
+      
+          // Task 9 debug overlay for PBR debug path
+          if (u_modDebugOverlay >= 2) {
+            vec3 _dbgColD = modDebugOverlayColor(ceilWorld, u_modDebugOverlay);
+            float _dbgIntD = modDebugIntensity(ceilWorld, u_modDebugOverlay);
+            if (u_modDebugOverlay == 8) {
+              finalColor = mix(vec3(0.06,0.06,0.07), _dbgColD, clamp(_dbgIntD*1.2, 0.0, 1.0));
+            } else {
+              vec3 _baseDark = vec3(0.08,0.08,0.09);
+              finalColor = mix(_baseDark, _dbgColD + vec3(0.12), clamp(_dbgIntD, 0.0, 1.0));
+            }
+          }
+
+} else {
         vec3 albedo = (u_gridDebug == 1) ? vec3(0.0, 0.0, (fract(ceilWorld).x > 0.97 || fract(ceilWorld).y > 0.97 ? 1.0 : 0.2) * 0.9) : albedoRaw * ceilMul;
         vec3 N = (u_gridDebug == 1) ? vec3(0,0,-1) : Nw;
         if (u_gridDebug == 1) { rma = vec4(0.9,0,0,1); ao = 1.0; emissive = vec3(0); }
@@ -1644,6 +1914,32 @@ void main() {
         vec3 worldPos = vec3(ceilWorld, ceilH);
         vec3 viewDir = normalize(vec3(u_playerPos, eyeZ2) - worldPos);
         finalColor = pbrShade(albedo, N, rma.r, rma.g, ao, emissive, worldPos, viewDir);
+
+          // Task 9 debug overlay: colored mask per modifier type when u_modDebugOverlay >=2
+          if (u_modDebugOverlay >= 2) {
+            vec3 _dbgCol = modDebugOverlayColor(worldPos.xy, u_modDebugOverlay);
+            float _dbgInt = modDebugIntensity(worldPos.xy, u_modDebugOverlay);
+            // For single-mod masks, show dark base with colored intensity; for combined, show mixed col directly
+            if (u_modDebugOverlay == 8) {
+              // Combined - show mixed colors, brighten a bit
+              finalColor = mix(vec3(0.06,0.06,0.07), _dbgCol, clamp(_dbgInt*1.2, 0.0, 1.0));
+              // add faint grid to see cell boundaries
+              vec2 f = fract(worldPos.xy);
+              float edge = min(min(f.x, 1.0-f.x), min(f.y, 1.0-f.y));
+              if (edge < 0.03) finalColor *= 0.75;
+            } else {
+              vec3 _baseDark = vec3(0.08,0.08,0.09);
+              finalColor = mix(_baseDark, _dbgCol + vec3(0.12), clamp(_dbgInt, 0.0, 1.0));
+              // subtle noise grain to show organic mask shape vs flat cell intensity
+              float _n = modNoise(worldPos.xy * 0.35 + vec2(float(u_modDebugOverlay)*1.7));
+              finalColor *= 0.85 + _n * 0.35;
+              // edge darkening for cell border visibility
+              vec2 f = fract(worldPos.xy);
+              float edge = min(min(f.x, 1.0-f.x), min(f.y, 1.0-f.y));
+              if (edge < 0.025) finalColor *= 0.65;
+            }
+          }
+
       }
       perpDist = dist;
     }
@@ -2008,6 +2304,7 @@ void main(){
   outColor = vec4(v_color.rgb * fog, v_color.a);
 }
 `;
+
 
 
 

@@ -13,12 +13,22 @@ screenshots = [
   "./screenshots/screen-dusty-secret.png",
   "./screenshots/screen-water-streak.png",
   "./screenshots/screen-damaged-hub.png",
-  "./screenshots/screen-editor-modifiers.png"
+  "./screenshots/screen-editor-modifiers.png",
+  "./screenshots/screen-mod-debug-off.png",
+  "./screenshots/screen-mod-debug-on.png",
+  "./screenshots/screen-mod-debug-moss.png",
+  "./screenshots/screen-mod-debug-puddle.png",
+  "./screenshots/screen-mod-debug-blood.png",
+  "./screenshots/screen-mod-debug-dust.png",
+  "./screenshots/screen-mod-debug-water.png",
+  "./screenshots/screen-mod-debug-damaged.png",
+  "./screenshots/screen-mod-debug-combined.png",
+  "./screenshots/screen-pbr-debug-albedo-with-mods.png",
+  "./screenshots/screen-pbr-debug-normal-with-mods.png"
 ]
 videos = []
 teaser = "./screenshots/screen-moss-wall.png"
 base-commit-hash = "31facfcb8ba6d269f4cccbadec9327d29c38aa3d"
 commit-hash = "5ffe3631564950c8ac09c21e23b74a3fecf0dbd9"
 avocado-model = "Muse Spark 1.1"
-
 

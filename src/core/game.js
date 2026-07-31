@@ -670,7 +670,12 @@ export class Game {
     if (code === "Digit6" || code === "Numpad6") { const v = this.renderer.cyclePBRDebug(); const names=["OFF","Albedo","Normal raw","World Normal","Height","Rough","Metal","AO","Emissive"]; this._showHud("PBR Debug: " + names[v] + " (" + v + ")"); return; }
     if (code === "Digit7" || code === "Numpad7") { const v = this.renderer.toggleChamfer(); this._showHud("Chamfer: " + (v ? "ON (floor/ceil baseboard + vertical edges)" : "OFF (sharp 90°)")); return; }
         if (code === "Digit8" || code === "Numpad8") { const v = this.renderer.toggleCorner(); this._showHud("Corner Geometry: " + (v ? "ON (rounded intruding r=0.15 outer+inner)" : "OFF")); return; }
-    if (code === "Digit9" || code === "Numpad9") { const v = this.renderer.toggleModifiers ? this.renderer.toggleModifiers() : 0; this._showHud("Material Modifiers: " + (v ? "ON (moss/damaged/water/puddle/blood/dust)" : "OFF (clean base)")); return; }
+    if (code === "Digit9" || code === "Numpad9") {
+      const mode = this.renderer.cycleModifiersDebug ? this.renderer.cycleModifiersDebug() : (this.renderer.toggleModifiers ? this.renderer.toggleModifiers() : 0);
+      const name = this.renderer.getModifiersModeName ? this.renderer.getModifiersModeName() : (mode ? "ON" : "OFF");
+      this._showHud("Modifiers ["+mode+"]: " + name + " - 9 cycles OFF/ON/MOSS/DAMAGED/WATER/PUDDLE/BLOOD/DUST/COMBINED");
+      return;
+    }
   }
 
   _showHud(msg) {
@@ -691,6 +696,7 @@ function lightingFallbackColors(){
     { r:0.8,g:0.3,b:1,name:"purple" }
   ];
 }
+
 
 
 
