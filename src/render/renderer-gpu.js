@@ -7,6 +7,7 @@ import { createProgram, createTexture } from './gl-utils.js';
 import { vsSource, fsSource, vsQuantize, fsQuantize, vsUI, fsUI, MAX_LIGHTS, vsSpriteSrc, fsSpritePBRSrc } from './shaders.js';
 import { uploadMapTexture, updateMapTexture } from './map-upload.js';
 import { generateMaterialAtlases } from '../world/materials.js';
+import { bakeCoveField, COVE_SUPERSAMPLE } from '../world/coveField.js';
 import { getAsset } from '../config/config.js';
 import { genPalette, buildRGBToPal } from './palette.js';
 import { LightManager, Light } from '../systems/lights.js';
@@ -47,6 +48,9 @@ export class GPURenderer {
     this.mapUITex = null;
     this.lightTex = null;
     this.lightsFromTex = true; // Part 2: default to the bit-exact light-texture path (arrays kept as fallback)
+    this.coveTex = null;
+    this.coveField = 0;        // Part 3: default to the live analytic scan (baked path is opt-in)
+    this.coveW = 0; this.coveH = 0; this.coveS = COVE_SUPERSAMPLE;
     this.authentic = true;
     this.bandLevels = 32;
     this.paletteStyle = 'doom';
@@ -183,6 +187,16 @@ export class GPURenderer {
     gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA32F, this.LIGHT_TEX_W, this.LIGHT_TEX_H, 0, gl.RGBA, gl.FLOAT, null);
     this._lightTexData = new Float32Array(this.LIGHT_TEX_W * this.LIGHT_TEX_H * 4);
 
+    // Part 3: cove field texture (RGBA32F, supersampled grid). Baked from the map.
+    this.coveTex = gl.createTexture();
+    gl.bindTexture(gl.TEXTURE_2D, this.coveTex);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.NEAREST);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.NEAREST);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+    gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA32F, 1, 1, 0, gl.RGBA, gl.FLOAT, null); // placeholder (kept complete even if never baked)
+    this._bakeCoveField(dungeon);
+
     // cache uniforms for raycast — extended with MAX_LIGHTS arrays
     const ul = this.uLoc, p = this.program;
     const names = [
@@ -208,7 +222,8 @@ export class GPURenderer {
       'u_renderFloorMul','u_renderCeilMul','u_renderWallDarken','u_renderEyeFactor',
       'u_bobPixels',
       'u_numLights',
-      'u_lightTex','u_lightsFromTex'
+      'u_lightTex','u_lightsFromTex',
+      'u_coveTex','u_coveField','u_coveScale','u_coveTexSize'
     ];
     names.forEach(n => ul[n] = gl.getUniformLocation(p, n));
 
@@ -479,6 +494,8 @@ export class GPURenderer {
   toggleCorner() { this.cornerEnabled ^= 1; return this.cornerEnabled; }
   setLightsFromTex(v) { this.lightsFromTex = !!v; return this.lightsFromTex; }
   toggleLightsFromTex() { this.lightsFromTex = !this.lightsFromTex; return this.lightsFromTex; }
+  setCoveField(v) { this.coveField = v | 0; return this.coveField; }
+  toggleCoveField() { this.coveField = this.coveField ? 0 : 1; return this.coveField; }
   cyclePBRDebug() { this.pbrDebugMode = (this.pbrDebugMode + 1) % 9; return this.pbrDebugMode; }
 
   // ── Live-edit update hooks (Tier 1 & 2) ──
@@ -607,9 +624,20 @@ export class GPURenderer {
     }
   }
 
+  _bakeCoveField(dungeon) {
+    try {
+      const gl = this.gl;
+      const { data, W, H, S } = bakeCoveField(dungeon, this.coveS);
+      this.coveW = W; this.coveH = H; this.coveS = S;
+      gl.bindTexture(gl.TEXTURE_2D, this.coveTex);
+      gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA32F, W, H, 0, gl.RGBA, gl.FLOAT, data);
+    } catch (e) { console.warn('[GPURenderer] cove field bake failed', e); }
+  }
+
   uploadMap(dungeon) {
     if (this.mapTex && this.matMapTex) updateMapTexture(this.gl, this.mapTex, this.matMapTex, dungeon);
     else { const t = uploadMapTexture(this.gl, dungeon); this.mapTex = t.mapTex; this.matMapTex = t.matTex; }
+    if (this.coveTex) this._bakeCoveField(dungeon);
     // Update lights/sprites for Task 6
     try {
       if (this.lightManager) {
@@ -1119,6 +1147,16 @@ export class GPURenderer {
       gl.texSubImage2D(gl.TEXTURE_2D, 0, 0, 0, this.LIGHT_TEX_W, this.LIGHT_TEX_H, gl.RGBA, gl.FLOAT, td);
       if (ul.u_lightTex) gl.uniform1i(ul.u_lightTex, 14);
       if (ul.u_lightsFromTex) gl.uniform1i(ul.u_lightsFromTex, this.lightsFromTex ? 1 : 0);
+    }
+
+    // Part 3: bind cove field texture (unit 15) + params
+    if (this.coveTex) {
+      gl.activeTexture(gl.TEXTURE0 + 15);
+      gl.bindTexture(gl.TEXTURE_2D, this.coveTex);
+      if (ul.u_coveTex) gl.uniform1i(ul.u_coveTex, 15);
+      if (ul.u_coveField) gl.uniform1i(ul.u_coveField, this.coveField);
+      if (ul.u_coveScale) gl.uniform1f(ul.u_coveScale, this.coveS);
+      if (ul.u_coveTexSize) gl.uniform2f(ul.u_coveTexSize, this.coveW, this.coveH);
     }
 
     // store for sprite rendering same flickered list

@@ -34,6 +34,14 @@ uniform sampler2D u_mapTex;
 uniform sampler2D u_matMap;
 uniform vec2  u_mapSize;
 
+// Part 3: baked cove field (dist-to-nearest-wall + normal.xy), a per-level
+// alternative to the per-fragment nearestWallDistAndNormal() scan for the
+// floor/ceiling cove chamfer. u_coveField: 0 = live scan, 1 = sample texture.
+uniform sampler2D u_coveTex;
+uniform int   u_coveField;
+uniform float u_coveScale;    // texels per world cell
+uniform vec2  u_coveTexSize;  // texture dimensions in texels
+
 uniform sampler2D u_wallAlbedo, u_wallNormal, u_wallHeight, u_wallRoughMetal;
 uniform sampler2D u_floorAlbedo, u_floorNormal, u_floorHeight, u_floorRoughMetal;
 uniform sampler2D u_ceilAlbedo,  u_ceilNormal,  u_ceilHeight,  u_ceilRoughMetal;
@@ -265,6 +273,20 @@ float nearestWallDistAndNormal(vec2 world, out vec3 outNorm) {
 
   outNorm = bestN;
   return best;
+}
+
+// Part 3: cove chamfer distance/normal source. Live path (0) runs the analytic
+// scan above; baked path (1) reads the precomputed field (nearest texel = the
+// scan evaluated at that texel's centre). Same signature so callers just swap.
+float coveSample(vec2 world, out vec3 outNorm) {
+  if (u_coveField == 1) {
+    ivec2 tc = ivec2(floor(world * u_coveScale));
+    tc = clamp(tc, ivec2(0), ivec2(u_coveTexSize) - ivec2(1));
+    vec4 c = texelFetch(u_coveTex, tc, 0);
+    outNorm = vec3(c.g, c.b, 0.0);
+    return c.r;
+  }
+  return nearestWallDistAndNormal(world, outNorm);
 }
 
 bool isOuterConvex(ivec2 W, ivec2 E, ivec2 W2, ivec2 D) {
@@ -728,7 +750,7 @@ vec3 shadeFloorSurface(vec2 floorWorld, vec2 ray, float surfaceZ, float eyeZ, bo
   if (u_gridDebug == 1) { rma = vec4(0.9,0,0,1); ao = 1.0; emissive = vec3(0); }
   else {
     if (u_chamferEnabled == 1) {
-      vec3 wN; float wd = nearestWallDistAndNormal(floorWorld, wN);
+      vec3 wN; float wd = coveSample(floorWorld, wN);
       float fS = max(u_chamferFloorSize, 0.001);
       if (wd < fS && length(wN) > 0.1) {
         float t = wd / fS;
@@ -801,7 +823,7 @@ vec3 shadeCeilSurface(vec2 ceilWorld, vec2 ray, float surfaceZ, float eyeZ, bool
   if (u_gridDebug == 1) { rma = vec4(0.9,0,0,1); ao = 1.0; emissive = vec3(0); }
   else {
     if (u_chamferEnabled == 1) {
-      vec3 wN; float wd = nearestWallDistAndNormal(ceilWorld, wN);
+      vec3 wN; float wd = coveSample(ceilWorld, wN);
       float cS = max(u_chamferCeilSize, 0.001);
       if (wd < cS && length(wN) > 0.1) {
         float t = wd / cS;
