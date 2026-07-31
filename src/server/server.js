@@ -189,6 +189,97 @@ const server = http.createServer(async (req, res) => {
     try { const data = await fs.readFile(fp); if (!res.headersSent) { res.writeHead(200, { 'Content-Type': ctype(fp) }); res.end(data); } } catch { if (!res.headersSent) { res.writeHead(404, { 'Content-Type': 'text/plain' }); res.end('Not Found'); } }
   } catch (e) { console.error('Server error:', e); if (!res.headersSent) { res.writeHead(500, { 'Content-Type': 'application/json' }); res.end(JSON.stringify({ error: 'Internal server error' })); } }
 });
-server.listen(PORT, () => console.log('Dungeoneers server running at http://localhost:' + PORT));
-process.on('SIGINT', () => { server.close(() => process.exit(0)); });
-process.on('SIGTERM', () => { server.close(() => process.exit(0)); });
+
+// --- Robust startup with EADDRINUSE handling ---
+function parsePort(v) {
+  const n = Number(v);
+  return Number.isInteger(n) && n > 0 && n < 65535 ? n : null;
+}
+const DEFAULT_PORT = 8000;
+let initialPort = parsePort(PORT) ?? DEFAULT_PORT;
+let attemptedPort = initialPort;
+
+function printAddrInUseHelp(port, err) {
+  console.error(`\n[server] Port ${port} already in use (EADDRINUSE).`);
+  console.error(`[server] Another Dungeoneers server or process is listening on ${port}.`);
+  console.error(`[server] Fix options:`);
+  console.error(`  PowerShell: $env:PORT=8001; npm start`);
+  console.error(`  Bash/Unix:  PORT=8001 npm start`);
+  console.error(`  Or find & kill:`);
+  console.error(`    Windows: netstat -ano | findstr :${port}  -> taskkill /PID <pid> /F`);
+  console.error(`    Unix:    lsof -i :${port}  -> kill <pid>`);
+  if (err) console.error(`[server] Original error: ${err.message}`);
+}
+
+async function tryListen(port, maxRetries = 10) {
+  // Attach error handler BEFORE listen to avoid unhandled 'error' event (Node throws if no listener)
+  return new Promise((resolve, reject) => {
+    const onError = (err) => {
+      server.off('error', onError);
+      if (err && err.code === 'EADDRINUSE') {
+        printAddrInUseHelp(port, err);
+        // If user explicitly set PORT env, don't auto-try next ports - respect explicit choice but exit cleanly
+        const userSetPort = process.env.PORT != null && String(process.env.PORT).trim() !== '';
+        if (userSetPort) {
+          console.error(`[server] PORT env was explicitly set to ${port}, not auto-retrying. Use a different PORT or free ${port}.`);
+          reject(err);
+          return;
+        }
+        if (port - initialPort < maxRetries) {
+          const next = port + 1;
+          console.warn(`[server] Trying next port ${next}...`);
+          tryListen(next, maxRetries).then(resolve).catch(reject);
+        } else {
+          console.error(`[server] All ports ${initialPort}..${port} are busy. Free a port or set PORT env.`);
+          reject(err);
+        }
+      } else if (err && err.code === 'EACCES') {
+        console.error(`[server] Permission denied for port ${port} (EACCES). Try a higher port >=1024.`);
+        reject(err);
+      } else {
+        console.error(`[server] Failed to start:`, err);
+        reject(err);
+      }
+    };
+
+    server.once('error', onError);
+
+    server.listen(port, () => {
+      server.off('error', onError);
+      attemptedPort = port;
+      console.log(`Dungeoneers server running at http://localhost:${port}`);
+      if (port !== initialPort) {
+        console.log(`[server] Note: default ${initialPort} was busy, using ${port} instead.`);
+        console.log(`[server] Update browser URL to http://localhost:${port}/game.html`);
+      }
+      resolve(port);
+    });
+  });
+}
+
+// Graceful shutdown
+function shutdown(signal) {
+  console.log(`\n[server] Received ${signal}, shutting down...`);
+  // Close SSE clients
+  for (const res of [...sseClients]) {
+    try { res.end(); } catch {}
+  }
+  sseClients.clear();
+  try {
+    server.close(() => {
+      console.log('[server] Closed.');
+      process.exit(0);
+    });
+  } catch {
+    process.exit(0);
+  }
+  // Force exit if close hangs
+  setTimeout(() => { console.warn('[server] Force exit after timeout'); process.exit(0); }, 3000);
+}
+
+process.on('SIGINT', () => shutdown('SIGINT'));
+process.on('SIGTERM', () => shutdown('SIGTERM'));
+process.on('uncaughtException', (e) => { console.error('[server] uncaughtException', e); shutdown('uncaughtException'); });
+process.on('unhandledRejection', (e) => { console.error('[server] unhandledRejection', e); });
+
+tryListen(initialPort).catch(() => { process.exit(1); });
