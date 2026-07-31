@@ -24,17 +24,15 @@ if (!['baseline', 'after'].includes(MODE) || !OUT) {
 }
 
 const LIGHTS_MODE = process.env.LIGHTS_FROM_TEX == null ? null : (process.env.LIGHTS_FROM_TEX === '1');
-const COVE_MODE = process.env.COVE_FIELD == null ? null : parseInt(process.env.COVE_FIELD, 10);
 
 const capture = async (page) => {
-  return await page.evaluate(async ({ seed, T, lightsMode, coveMode }) => {
+  return await page.evaluate(async ({ seed, T, lightsMode }) => {
     const g = window.game;
     const canvas = document.getElementById('game-canvas');
     const r = () => window._gameRenderer;
     // Deterministic dungeon + camera
     await g.regen(seed);
     if (lightsMode !== null && typeof r().setLightsFromTex === 'function') r().setLightsFromTex(lightsMode);
-    if (coveMode !== null && typeof r().setCoveField === 'function') r().setCoveField(coveMode);
     const d = window._gameDungeon;
     const p = window._gamePlayer;
     const sx = Math.floor(d.startX) + 0.5;
@@ -71,7 +69,7 @@ const capture = async (page) => {
       setPbrDbg(0);
     }
     return frames;
-  }, { seed: SEED, T: FROZEN_T, lightsMode: LIGHTS_MODE, coveMode: COVE_MODE });
+  }, { seed: SEED, T: FROZEN_T, lightsMode: LIGHTS_MODE });
 };
 
 const diff = async (page, baselineFrames, afterFrames) => {
