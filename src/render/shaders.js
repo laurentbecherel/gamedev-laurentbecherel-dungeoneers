@@ -119,6 +119,24 @@ uniform float u_chamferTrimStart;
 uniform float u_chamferTrimMid;
 uniform float u_chamferTrimEnd;
 
+// Grid tile chamfer (chamfer.json grid + gridRanges) — Task 8: subtle 1m grout
+uniform int   u_chamferGridEnabled;
+uniform float u_chamferGridFloorSize;
+uniform float u_chamferGridCeilSize;
+uniform float u_chamferGridFloorDarken;
+uniform float u_chamferGridCeilDarken;
+uniform float u_chamferGridFloorTrim;
+uniform float u_chamferGridCeilTrim;
+uniform float u_chamferGridFloorRough;
+uniform float u_chamferGridCeilRough;
+uniform float u_chamferGridFloorBlend;
+uniform float u_chamferGridCeilBlend;
+uniform float u_chamferGridCreviceEnd;
+uniform float u_chamferGridCreviceSmoothEnd;
+uniform float u_chamferGridTrimStart;
+uniform float u_chamferGridTrimMid;
+uniform float u_chamferGridTrimEnd;
+
 // True geometry rounded corners (corners.json)
 uniform int   u_cornerEnabled;
 uniform float u_cornerRadius;
@@ -674,6 +692,13 @@ void main() {
   float roughMul = u_cornerRoughMul > 0.0 ? u_cornerRoughMul : 0.82;
   float aoMul = u_cornerAoMul > 0.0 ? u_cornerAoMul : 0.96;
 
+  // Grid tile chamfer fallbacks — Task 8 subtle 1m grout, separate from wall-to-floor cove
+  float gridCreviceEnd = u_chamferGridCreviceEnd > 0.0 ? u_chamferGridCreviceEnd : 0.10;
+  float gridCreviceSmooth = u_chamferGridCreviceSmoothEnd > 0.0 ? u_chamferGridCreviceSmoothEnd : 0.30;
+  float gridTStart = u_chamferGridTrimStart >= 0.0 ? u_chamferGridTrimStart : 0.10;
+  float gridTMid = u_chamferGridTrimMid > 0.0 ? u_chamferGridTrimMid : 0.35;
+  float gridTEnd = u_chamferGridTrimEnd > 0.0 ? u_chamferGridTrimEnd : 1.0;
+
   if (hit == 1) {
 
     float floorH = 0.0;
@@ -740,6 +765,32 @@ void main() {
                 rma.r = mix(rma.r * (1.0 - u_chamferRough*0.5), rma.r, t);
               }
             }
+            // --- Task 8: grid tile chamfer for floor (1m dungeon tile grooves, subtle) ---
+            if (u_chamferEnabled == 1 && u_chamferGridEnabled == 1) {
+              vec2 f = fract(floorWorld);
+              float distX = min(f.x, 1.0 - f.x);
+              float distY = min(f.y, 1.0 - f.y);
+              float edgeDist = min(distX, distY);
+              float gSize = max(u_chamferGridFloorSize, 0.001);
+              if (edgeDist < gSize) {
+                float t = edgeDist / gSize;
+                float bevel = 1.0 - smoothstep(0.0, 1.0, t);
+                float gDarken = u_chamferGridFloorDarken > 0.0 ? u_chamferGridFloorDarken : 0.88;
+                float gBlend = u_chamferGridFloorBlend > 0.0 ? u_chamferGridFloorBlend : 0.85;
+                float gRough = u_chamferGridFloorRough > 0.0 ? u_chamferGridFloorRough : 0.35;
+                float gTrim = u_chamferGridFloorTrim >= 0.0 ? u_chamferGridFloorTrim : 0.06;
+                ao *= mix(gDarken, 1.0, smoothstep(0.0, gridCreviceSmooth, t));
+                vec2 edgeN = vec2(0.0);
+                if (distX < distY) edgeN.x = (f.x < 0.5 ? -1.0 : 1.0);
+                else              edgeN.y = (f.y < 0.5 ? -1.0 : 1.0);
+                vec3 chamN = normalize(vec3(edgeN * 0.6, 1.0));
+                N = normalize(mix(N, chamN, bevel * clamp(gBlend, 0.0, 1.0)));
+                float trimBand = smoothstep(gridTStart, gridTMid, t) * (1.0 - smoothstep(gridTMid, gridTEnd, t));
+                albedo += vec3(trimBand * gTrim);
+                rma.r = mix(rma.r * (1.0 - gRough * 0.5), rma.r, t);
+                if (distX < gSize && distY < gSize) ao *= 0.97;
+              }
+            }
           }
           vec3 worldPos = vec3(floorWorld, floorH_atRay);
           vec3 viewDir = normalize(vec3(u_playerPos, eyeZ) - worldPos);
@@ -786,6 +837,32 @@ void main() {
                 float trimBand = smoothstep(tStart, tMid, t) * (1.0 - smoothstep(tMid, tEnd, t));
                 albedo += vec3(trimBand * trimCeilAlt);
                 rma.r = mix(rma.r * (1.0 - u_chamferRough*0.35), rma.r, t);
+              }
+            }
+            // --- Task 8: grid tile chamfer for ceiling ---
+            if (u_chamferEnabled == 1 && u_chamferGridEnabled == 1) {
+              vec2 f = fract(ceilWorld);
+              float distX = min(f.x, 1.0 - f.x);
+              float distY = min(f.y, 1.0 - f.y);
+              float edgeDist = min(distX, distY);
+              float gSize = max(u_chamferGridCeilSize, 0.001);
+              if (edgeDist < gSize) {
+                float t = edgeDist / gSize;
+                float bevel = 1.0 - smoothstep(0.0, 1.0, t);
+                float gDarken = u_chamferGridCeilDarken > 0.0 ? u_chamferGridCeilDarken : 0.90;
+                float gBlend = u_chamferGridCeilBlend > 0.0 ? u_chamferGridCeilBlend : 0.80;
+                float gRough = u_chamferGridCeilRough > 0.0 ? u_chamferGridCeilRough : 0.30;
+                float gTrim = u_chamferGridCeilTrim >= 0.0 ? u_chamferGridCeilTrim : 0.04;
+                ao *= mix(gDarken, 1.0, smoothstep(0.0, gridCreviceSmooth, t));
+                vec2 edgeN = vec2(0.0);
+                if (distX < distY) edgeN.x = (f.x < 0.5 ? -1.0 : 1.0);
+                else              edgeN.y = (f.y < 0.5 ? -1.0 : 1.0);
+                vec3 chamN = normalize(vec3(edgeN * 0.6, -1.0));
+                N = normalize(mix(N, chamN, bevel * clamp(gBlend, 0.0, 1.0)));
+                float trimBand = smoothstep(gridTStart, gridTMid, t) * (1.0 - smoothstep(gridTMid, gridTEnd, t));
+                albedo += vec3(trimBand * gTrim);
+                rma.r = mix(rma.r * (1.0 - gRough * 0.3), rma.r, t);
+                if (distX < gSize && distY < gSize) ao *= 0.97;
               }
             }
           }
@@ -995,6 +1072,32 @@ void main() {
               rma.r = mix(rma.r * (1.0 - u_chamferRough*0.5), rma.r, t);
             }
           }
+          // Task 8: grid tile chamfer for floor — fallback path
+          if (u_chamferEnabled == 1 && u_chamferGridEnabled == 1) {
+            vec2 f = fract(floorWorld);
+            float distX = min(f.x, 1.0 - f.x);
+            float distY = min(f.y, 1.0 - f.y);
+            float edgeDist = min(distX, distY);
+            float gSize = max(u_chamferGridFloorSize, 0.001);
+            if (edgeDist < gSize) {
+              float t = edgeDist / gSize;
+              float bevel = 1.0 - smoothstep(0.0, 1.0, t);
+              float gDarken = u_chamferGridFloorDarken > 0.0 ? u_chamferGridFloorDarken : 0.88;
+              float gBlend = u_chamferGridFloorBlend > 0.0 ? u_chamferGridFloorBlend : 0.85;
+              float gRough = u_chamferGridFloorRough > 0.0 ? u_chamferGridFloorRough : 0.35;
+              float gTrim = u_chamferGridFloorTrim >= 0.0 ? u_chamferGridFloorTrim : 0.06;
+              ao *= mix(gDarken, 1.0, smoothstep(0.0, gridCreviceSmooth, t));
+              vec2 edgeN = vec2(0.0);
+              if (distX < distY) edgeN.x = (f.x < 0.5 ? -1.0 : 1.0);
+              else              edgeN.y = (f.y < 0.5 ? -1.0 : 1.0);
+              vec3 chamN = normalize(vec3(edgeN * 0.6, 1.0));
+              N = normalize(mix(N, chamN, bevel * clamp(gBlend, 0.0, 1.0)));
+              float trimBand = smoothstep(gridTStart, gridTMid, t) * (1.0 - smoothstep(gridTMid, gridTEnd, t));
+              albedo += vec3(trimBand * gTrim);
+              rma.r = mix(rma.r * (1.0 - gRough * 0.5), rma.r, t);
+              if (distX < gSize && distY < gSize) ao *= 0.97;
+            }
+          }
         }
         vec3 worldPos = vec3(floorWorld, floorH);
         vec3 viewDir = normalize(vec3(u_playerPos, eyeZ2) - worldPos);
@@ -1050,6 +1153,32 @@ void main() {
               float trimBand = smoothstep(tStart, tMid, t) * (1.0 - smoothstep(tMid, tEnd, t));
               albedo += vec3(trimBand * trimCeilAlt);
               rma.r = mix(rma.r * (1.0 - u_chamferRough*0.3), rma.r, t);
+            }
+          }
+          // Task 8: grid tile chamfer for ceiling — fallback path
+          if (u_chamferEnabled == 1 && u_chamferGridEnabled == 1) {
+            vec2 f = fract(ceilWorld);
+            float distX = min(f.x, 1.0 - f.x);
+            float distY = min(f.y, 1.0 - f.y);
+            float edgeDist = min(distX, distY);
+            float gSize = max(u_chamferGridCeilSize, 0.001);
+            if (edgeDist < gSize) {
+              float t = edgeDist / gSize;
+              float bevel = 1.0 - smoothstep(0.0, 1.0, t);
+              float gDarken = u_chamferGridCeilDarken > 0.0 ? u_chamferGridCeilDarken : 0.90;
+              float gBlend = u_chamferGridCeilBlend > 0.0 ? u_chamferGridCeilBlend : 0.80;
+              float gRough = u_chamferGridCeilRough > 0.0 ? u_chamferGridCeilRough : 0.30;
+              float gTrim = u_chamferGridCeilTrim >= 0.0 ? u_chamferGridCeilTrim : 0.04;
+              ao *= mix(gDarken, 1.0, smoothstep(0.0, gridCreviceSmooth, t));
+              vec2 edgeN = vec2(0.0);
+              if (distX < distY) edgeN.x = (f.x < 0.5 ? -1.0 : 1.0);
+              else              edgeN.y = (f.y < 0.5 ? -1.0 : 1.0);
+              vec3 chamN = normalize(vec3(edgeN * 0.6, -1.0));
+              N = normalize(mix(N, chamN, bevel * clamp(gBlend, 0.0, 1.0)));
+              float trimBand = smoothstep(gridTStart, gridTMid, t) * (1.0 - smoothstep(gridTMid, gridTEnd, t));
+              albedo += vec3(trimBand * gTrim);
+              rma.r = mix(rma.r * (1.0 - gRough * 0.3), rma.r, t);
+              if (distX < gSize && distY < gSize) ao *= 0.97;
             }
           }
         }
