@@ -146,22 +146,21 @@ export class GPURenderer {
     this.mapTex = mapTexs.mapTex;
     this.matMapTex = mapTexs.matTex;
 
-    // Task 9: Material Modifiers map textures (grid-sized, per-cell intensities)
+    // Task 9: Material Modifiers packed single texture (w x h*2) to reduce sampler count 16->15 fixing link error
     try {
       const modTexs = createModifierTextures(gl, dungeon.modifiers);
-      this.modTexA = modTexs.texA;
-      this.modTexB = modTexs.texB;
+      this.modTex = modTexs.tex || modTexs.texA;
+      this.modTexA = this.modTex;
+      this.modTexB = this.modTex;
       this.modMapSize = [modTexs.w, modTexs.h];
     } catch (e) {
       console.warn("[modifiers] texture creation failed", e);
-      const dummyA = gl.createTexture();
-      gl.bindTexture(gl.TEXTURE_2D, dummyA);
-      gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, 1, 1, 0, gl.RGBA, gl.UNSIGNED_BYTE, new Uint8Array([0,0,0,0]));
-      const dummyB = gl.createTexture();
-      gl.bindTexture(gl.TEXTURE_2D, dummyB);
-      gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, 1, 1, 0, gl.RGBA, gl.UNSIGNED_BYTE, new Uint8Array([0,0,0,255]));
-      this.modTexA = dummyA;
-      this.modTexB = dummyB;
+      const dummy = gl.createTexture();
+      gl.bindTexture(gl.TEXTURE_2D, dummy);
+      gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, 1, 2, 0, gl.RGBA, gl.UNSIGNED_BYTE, new Uint8Array([0,0,0,0, 0,0,0,255]));
+      this.modTex = dummy;
+      this.modTexA = dummy;
+      this.modTexB = dummy;
       this.modMapSize = [1,1];
     }
 
@@ -208,7 +207,7 @@ export class GPURenderer {
       'u_chamferEnabled','u_chamferFloorSize','u_chamferCeilSize','u_chamferWallSize','u_chamferCornerRadius','u_chamferDarken','u_chamferRoundCorners','u_chamferBlendFloor','u_chamferBlendWall','u_chamferRough','u_chamferFloor','u_chamferCeil','u_chamferWall',
       'u_chamferTrimFloor','u_chamferTrimCeil','u_chamferTrimWall','u_chamferTrimFloorAlt','u_chamferTrimCeilAlt','u_chamferCreviceEnd','u_chamferCreviceSmoothEnd','u_chamferTrimStart','u_chamferTrimMid','u_chamferTrimEnd',
       'u_chamferGridEnabled','u_chamferGridFloorSize','u_chamferGridCeilSize','u_chamferGridFloorDarken','u_chamferGridCeilDarken','u_chamferGridFloorTrim','u_chamferGridCeilTrim','u_chamferGridFloorRough','u_chamferGridCeilRough','u_chamferGridFloorBlend','u_chamferGridCeilBlend','u_chamferGridCreviceEnd','u_chamferGridCreviceSmoothEnd','u_chamferGridTrimStart','u_chamferGridTrimMid','u_chamferGridTrimEnd',
-      'u_modEnabled','u_modTexA','u_modTexB','u_modMapSize','u_modDebugOverlay',
+      'u_modEnabled','u_modTex','u_modMapSize','u_modDebugOverlay',
       'u_modMossEnabled','u_modMossAlbedo','u_modMossAlbedo2','u_modMossAlbedoStr','u_modMossRoughAdd','u_modMossRoughMin','u_modMossRoughMax','u_modMossHeightAdd','u_modMossNormalStr','u_modMossNoiseScale','u_modMossThresh','u_modMossSoft','u_modMossSeed',
       'u_modDamagedEnabled','u_modDamagedDarken','u_modDamagedDarkenStr','u_modDamagedDesat','u_modDamagedRoughAdd','u_modDamagedHeightAdd','u_modDamagedNormalStr','u_modDamagedNoiseScale','u_modDamagedThresh','u_modDamagedSoft','u_modDamagedSeed',
       'u_modWaterEnabled','u_modWaterDarken','u_modWaterDarkenStr','u_modWaterRoughAdd','u_modWaterRoughMin','u_modWaterHeightAdd','u_modWaterFlat','u_modWaterStreak','u_modWaterNoiseScale','u_modWaterStreakScale','u_modWaterThresh','u_modWaterSoft','u_modWaterSeed',
@@ -265,7 +264,7 @@ export class GPURenderer {
     gl.useProgram(this.program);
     gl.uniform1i(ul.u_mapTex, 0);
     gl.uniform1i(ul.u_matMap, 13);
-    const texUnits = {u_wallAlbedo:1,u_wallNormal:2,u_wallHeight:3,u_wallRoughMetal:4,u_floorAlbedo:5,u_floorNormal:6,u_floorHeight:7,u_floorRoughMetal:8,u_ceilAlbedo:9,u_ceilNormal:10,u_ceilHeight:11,u_ceilRoughMetal:12,u_modTexA:14,u_modTexB:15};
+    const texUnits = {u_wallAlbedo:1,u_wallNormal:2,u_wallHeight:3,u_wallRoughMetal:4,u_floorAlbedo:5,u_floorNormal:6,u_floorHeight:7,u_floorRoughMetal:8,u_ceilAlbedo:9,u_ceilNormal:10,u_ceilHeight:11,u_ceilRoughMetal:12,u_modTex:14};
     Object.entries(texUnits).forEach(([name, unit]) => { if (ul[name]) gl.uniform1i(ul[name], unit); });
 
     // Task 6: LightManager + SpriteRenderer init
@@ -643,14 +642,17 @@ export class GPURenderer {
   uploadMap(dungeon) {
     if (this.mapTex && this.matMapTex) updateMapTexture(this.gl, this.mapTex, this.matMapTex, dungeon);
     else { const t = uploadMapTexture(this.gl, dungeon); this.mapTex = t.mapTex; this.matMapTex = t.matTex; }
-    // Task 9: update modifier textures on regen
+    // Task 9: update packed modifier texture on regen (single sampler 15 total)
     try {
-      if (this.modTexA && this.modTexB && dungeon.modifiers) {
-        updateModifierTextures(this.gl, this.modTexA, this.modTexB, dungeon.modifiers);
+      if (this.modTex && dungeon.modifiers) {
+        updateModifierTextures(this.gl, this.modTex, this.modTex, dungeon.modifiers);
         this.modMapSize = [dungeon.modifiers.w, dungeon.modifiers.h];
       } else if (dungeon.modifiers) {
         const mt = createModifierTextures(this.gl, dungeon.modifiers);
-        this.modTexA = mt.texA; this.modTexB = mt.texB; this.modMapSize = [mt.w, mt.h];
+        this.modTex = mt.tex || mt.texA;
+        this.modTexA = this.modTex;
+        this.modTexB = this.modTex;
+        this.modMapSize = [mt.w, mt.h];
       }
     } catch (e) { console.warn("[modifiers] update failed", e); }
     // Update lights/sprites for Task 6
@@ -782,9 +784,8 @@ export class GPURenderer {
     bind(a.wa, 1, 'u_wallAlbedo'); bind(a.wn, 2, 'u_wallNormal'); bind(a.wh, 3, 'u_wallHeight'); bind(a.wrma, 4, 'u_wallRoughMetal');
     bind(a.fa, 5, 'u_floorAlbedo'); bind(a.fn, 6, 'u_floorNormal'); bind(a.fh, 7, 'u_floorHeight'); bind(a.frma, 8, 'u_floorRoughMetal');
     bind(a.ca, 9, 'u_ceilAlbedo'); bind(a.cn, 10, 'u_ceilNormal'); bind(a.ch, 11, 'u_ceilHeight'); bind(a.crma, 12, 'u_ceilRoughMetal');
-    // Task 9: bind modifier map textures (units 14,15 pre-assigned)
-    if (this.modTexA) { gl.activeTexture(gl.TEXTURE0 + 14); gl.bindTexture(gl.TEXTURE_2D, this.modTexA); if (ul.u_modTexA) gl.uniform1i(ul.u_modTexA, 14); }
-    if (this.modTexB) { gl.activeTexture(gl.TEXTURE0 + 15); gl.bindTexture(gl.TEXTURE_2D, this.modTexB); if (ul.u_modTexB) gl.uniform1i(ul.u_modTexB, 15); }
+    // Task 9: bind packed modifier texture (single sampler, unit 14) reduces count 16->15 fixing link error
+    if (this.modTex) { gl.activeTexture(gl.TEXTURE0 + 14); gl.bindTexture(gl.TEXTURE_2D, this.modTex); if (ul.u_modTex) gl.uniform1i(ul.u_modTex, 14); if (ul.u_modTexA) gl.uniform1i(ul.u_modTexA, 14); if (ul.u_modTexB) gl.uniform1i(ul.u_modTexB, 14); }
     if (ul.u_modMapSize && this.modMapSize) gl.uniform2f(ul.u_modMapSize, this.modMapSize[0], this.modMapSize[1]);
 
     const ai = this.atlasInfo;
@@ -1371,6 +1372,8 @@ export class GPURenderer {
     this._renderUIPass();
   }
 }
+
+
 
 
 

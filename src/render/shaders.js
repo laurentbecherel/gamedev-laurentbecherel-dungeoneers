@@ -139,8 +139,7 @@ uniform float u_chamferGridTrimEnd;
  // Material Modifiers - Task 9: moss, damaged, water, puddle, blood, dust
 // Generator provides per-cell intensity map (40x40 trivial) + shader evaluates noise mask + AO/height/rough cues
 uniform int   u_modEnabled;
-uniform sampler2D u_modTexA; // R=moss G=damaged B=water A=puddle
-uniform sampler2D u_modTexB; // R=blood G=dust
+uniform sampler2D u_modTex; // packed double-height: top=RGBA moss/damaged/water/puddle, bottom=R=blood G=dust
 uniform vec2  u_modMapSize;
 uniform int   u_modDebugOverlay;
 // Moss
@@ -590,8 +589,11 @@ void sampleModCell(vec2 worldXY, out vec4 outA, out vec4 outB) {
   vec2 uv = (cell + vec2(0.5)) / u_modMapSize;
   // clamp to avoid border
   uv = clamp(uv, vec2(0.0), vec2(1.0));
-  outA = texture(u_modTexA, uv);
-  outB = texture(u_modTexB, uv);
+  // Packed single texture double-height
+  vec2 uvA = vec2(uv.x, uv.y * 0.5);
+  vec2 uvB = vec2(uv.x, uv.y * 0.5 + 0.5);
+  outA = texture(u_modTex, uvA);
+  outB = texture(u_modTex, uvB);
 }
 
 // Core modifier application - alters all PBR channels

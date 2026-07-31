@@ -45,7 +45,8 @@ test('task9 material modifiers exist and alter PBR', async ({ page }) => {
       hasHeight: txt.includes('height'),
       hasRough: txt.includes('rough'),
       uModEnabled: txt.includes('u_modEnabled'),
-      uModTexA: txt.includes('u_modTexA')
+      uModTexA: txt.includes('u_modTex') || txt.includes('u_modTexA'),
+      uModTex: txt.includes('u_modTex')
     };
   });
   expect(shaderInfo.hasModHash).toBe(true);
@@ -54,6 +55,7 @@ test('task9 material modifiers exist and alter PBR', async ({ page }) => {
   expect(shaderInfo.hasApply).toBe(true);
   expect(shaderInfo.uModEnabled).toBe(true);
   expect(shaderInfo.uModTexA).toBe(true);
+  expect(shaderInfo.uModTex).toBe(true);
 
   // Renderer has modifiersEnabled and toggle
   const rendererInfo = await page.evaluate(() => {
@@ -105,3 +107,4 @@ test('task9 material modifiers exist and alter PBR', async ({ page }) => {
   const serious = errors.filter(e => !e.includes('favicon') && !e.includes('fonts') && !e.includes('Failed to load resource'));
   expect(serious.length).toBe(0);
 });
+
