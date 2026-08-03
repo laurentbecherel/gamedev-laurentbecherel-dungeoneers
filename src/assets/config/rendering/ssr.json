@@ -1,0 +1,142 @@
+{
+  "version": 1,
+  "enabled": true,
+  "_readme": "Screen Space Reflections - puddle-only, roughness-gated, sprite-aware. T1 live-edit via SSRBlock UBO binding=2.",
+  "note": "v1 gated to puddles via modifierMap.b mask + roughTarget 0.04. 640x360 early-exit fullscreen pass.",
+  "gating": {
+    "puddleOnly": true,
+    "requireModifiersEnabled": true,
+    "minPuddleMask": 0.18,
+    "roughnessThreshold": 0.18,
+    "normalThreshold": 0.35,
+    "maxGrazingAngle": 0.92,
+    "facingOnly": true,
+    "eyeFacingThreshold": 0.15,
+    "note": "Only floor where puddle mask > min gets SSR"
+  },
+  "rayMarch": {
+    "steps": 20,
+    "binarySteps": 4,
+    "maxDistance": 12.0,
+    "thickness": 0.35,
+    "stride": 1.2,
+    "jitter": 0.35,
+    "depthBias": 0.015,
+    "zThicknessScale": 0.8,
+    "maxRayAngle": 0.98,
+    "worldExpire": 20.0,
+    "note": "Linear + binary refine, thickness tolerant to POM + floorDepress"
+  },
+  "reprojection": {
+    "viewSpace": false,
+    "useGBufferDepth": true,
+    "linearDepth": true,
+    "depthRange": 25.0,
+    "planeLenFromFov": true,
+    "reconstructFrom": "gNormalDepth",
+    "normalEncoding": "octa",
+    "note": "View ray from playerPos/Angle/FOV + gBuffer depth B=perpDist/depthRange"
+  },
+  "fade": {
+    "edgeFadeStart": 0.82,
+    "edgeFadeEnd": 1.08,
+    "distanceFadeStart": 4.5,
+    "distanceFadeEnd": 11.0,
+    "fresnelPower": 4.5,
+    "fresnelMin": 0.08,
+    "fresnelMax": 1.0,
+    "blendStrength": 0.78,
+    "puddleMaskInfluence": 0.95,
+    "roughnessFade": true,
+    "selfAlphaFade": 0.22,
+    "note": "Edge vignette, distance, fresnel"
+  },
+  "roughness": {
+    "blurEnabled": true,
+    "blurRadius": 1.2,
+    "blurMips": 2,
+    "jitterRoughnessScale": 1.4,
+    "useMaterialRoughness": true,
+    "maxLobeSteps": 1,
+    "coneAngle": 0.08,
+    "note": "Puddle 0.04 mirror, small blur"
+  },
+  "quality": {
+    "useBlueNoise": true,
+    "blueNoiseSize": 64,
+    "useTemporal": false,
+    "temporalBlend": 0.85,
+    "halfResolution": false,
+    "earlyExit": true,
+    "hierarchicalZ": false,
+    "hiZMips": 5,
+    "note": "halfRes 320x180 upscale, Hi-Z v2"
+  },
+  "composition": {
+    "blendMode": "fresnel_puddle",
+    "tint": [
+      0.22,
+      0.32,
+      0.45
+    ],
+    "tintStrength": 0.12,
+    "additiveBoost": 0.0,
+    "specularBoost": 0.35,
+    "preserveQuantize": true,
+    "quantizeReflection": true,
+    "note": "lerp base/mirror by fresnel*mask*blend, tint water, quantize after"
+  },
+  "debug": {
+    "mode": 0,
+    "modes": [
+      "OFF",
+      "PuddleMask",
+      "Depth",
+      "Normal",
+      "ReflectionUV",
+      "HitMask",
+      "RayDir",
+      "Fresnel",
+      "SSR only"
+    ],
+    "showReflectionOnly": false,
+    "overlayIntensity": 1.8,
+    "note": "Key 7 cycles, bright viz before quantize"
+  },
+  "docs": {
+    "gating": {
+      "puddleOnly": "true = only floor where modifierMap.b > minPuddleMask gets SSR. false = walls too (expensive).",
+      "requireModifiersEnabled": "If materialModifiers.enabled==0 skip SSR (no puddles).",
+      "minPuddleMask": "0-1 threshold on computePuddleMaskTweakable. 0.18 skips faint feather, keeps sharp interior.",
+      "roughnessThreshold": "Max roughness still reflecting. Puddle roughTarget 0.04 gate 0.18 glossy only.",
+      "normalThreshold": "Min N.z for flat water, avoids grout verticals. 0.35 mostly flat.",
+      "maxGrazingAngle": "Kill extreme grazing stretch. 0.92 ~23deg cutoff.",
+      "facingOnly": "Only when looking down onto puddle.",
+      "eyeFacingThreshold": "V.z threshold 0.15 slight down enough."
+    },
+    "rayMarch": {
+      "steps": "Linear steps 20 enough at 640x360 puddle-only.",
+      "binarySteps": "Binary refine after hit 4 good.",
+      "maxDistance": "World units max 12 = room sized.",
+      "thickness": "Depth tolerance 0.35 tolerant POM wobble + floorDepress -0.08.",
+      "stride": "Step multiplier 1.2 slight exponential.",
+      "jitter": "Blue-noise dither 0-1 removes banding.",
+      "depthBias": "Lift along N to avoid self-intersect 0.015.",
+      "zThicknessScale": "Thickness grows with distance.",
+      "maxRayAngle": "Abort if R.z~0 parallel floor."
+    },
+    "fade": {
+      "edgeFadeStart": "Screen UV fade start 0.82 near border",
+      "edgeFadeEnd": "Fully faded >1 offscreen early",
+      "distanceFadeStart": "Ray travel fade start",
+      "distanceFadeEnd": "Ray travel fade end",
+      "fresnelPower": "pow(1-NdotV,p) 4.5 strong edge",
+      "fresnelMin": "Min at facing 0.08 always-on sheen",
+      "fresnelMax": "Max at grazing",
+      "blendStrength": "Global multiplier 0.78",
+      "puddleMaskInfluence": "How much mask scales blend 0.95",
+      "roughnessFade": "Rougher edges fade more"
+    },
+    "system": "MRT GBuffer: COLOR0 sceneColor RGBA8 lit+sprites, COLOR1 gNormalDepth RGBA16F RG octa normal XY B linear depth/depthRange A puddleMask, COLOR2 gMaterial optional. UBO SSRBlock binding=2 192 bytes like ModifiersBlock for T1 live-edit. Fullscreen fsSSR 20+4 steps puddle-masked earlyExit 0.6-1.2ms. Sprites write depth+color so SSR sees monsters."
+  }
+}
