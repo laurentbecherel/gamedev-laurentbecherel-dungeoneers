@@ -1,1 +1,8 @@
-{"version":1,"materials":[{"id":1,"name":"stone_slab","type":"slab","base":[90,88,80],"roughness":0.88,"metal":0,"tag":"floor","role":"Stone slab floor"},{"id":2,"name":"cobblestone","type":"cobble","base":[70,68,60],"roughness":0.95,"metal":0,"tag":"floor","role":"Cobblestone path"}]}
+{
+  "version": 2,
+  "_readme": "Floor mats with per-mat proc overrides",
+  "materials": [
+    {"id":1, "name":"stone_slab", "type":"slab", "base":[90,88,80], "roughness":0.88, "metal":0, "tag":"floor", "role":"Stone slab floor", "variationSeed":201, "proc":{"blockSize":8, "groutWidth":1, "domeHeight":0.22}},
+    {"id":2, "name":"cobblestone", "type":"cobble", "base":[70,68,60], "roughness":0.95, "metal":0, "tag":"floor", "role":"Cobblestone path", "variationSeed":202, "proc":{"blockSize":6, "groutWidth":2, "domeHeight":0.18, "roundness":0.08}}
+  ]
+}

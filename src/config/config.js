@@ -16,6 +16,7 @@ export const CONFIG_PATHS = {
   'ao':             ['config/rendering/ao', 'config/ao', 'config/main'],
   'raymarch':       ['config/rendering/raymarch', 'config/raymarch', 'config/main'],
   'materials-proc': ['config/rendering/materials-proc', 'config/materials-proc', 'config/main'],
+  'material-assignments': ['config/rendering/material-assignments', 'config/material-assignments', 'config/main'],
   'material-modifiers': ['config/rendering/material-modifiers', 'config/material-modifiers', 'config/main'],
   'material-modifiers.json': ['config/rendering/material-modifiers', 'config/main'],
   // lighting — Task 6 extended, Task10: 8 lights
@@ -141,6 +142,8 @@ export async function getSpritesConfig(){ return _fetchConfig('sprites'); }
 export async function getLightTypesConfig(){ return _fetchConfig('light-types'); }
 export async function getParticlesConfig(){ return _fetchConfig('particles'); }
 export async function getMaterialModifiersConfig(){ return _fetchConfig('material-modifiers'); }
+export async function getMaterialAssignmentsConfig(){ return _fetchConfig('material-assignments'); }
+export async function saveMaterialAssignmentsConfig(cfg){ return _saveConfig('material-assignments', cfg); }
 export async function saveSpritesConfig(cfg){ return _saveConfig('sprites', cfg); }
 export async function saveLightTypesConfig(cfg){ return _saveConfig('light-types', cfg); }
 export async function saveParticlesConfig(cfg){ return _saveConfig('particles', cfg); }
@@ -158,13 +161,14 @@ export async function saveFogConfig(cfg){
 
 // Batch load all rendering configs at once for Game init
 export async function getAllRenderConfigs(){
-  const names = ['rendering','palette','pom','pbr','ao','lighting','shadows','chamfer','corners','raymarch','fog','generator','map','materials-proc','material-modifiers','player','debug','discovery','sprites','light-types','particles'];
+  const names = ['rendering','palette','pom','pbr','ao','lighting','shadows','chamfer','corners','raymarch','fog','generator','map','materials-proc','material-assignments','material-modifiers','player','debug','discovery','sprites','light-types','particles'];
   const promises = names.map(n => _fetchConfig(n).catch(()=>null));
   const results = await Promise.all(promises);
   const out = {};
   names.forEach((n,i)=> out[n]=results[i]);
   // also legacy flat aliases for convenience
   out['materials-proc'] = out['materials-proc'] || null;
+  out['material-assignments'] = out['material-assignments'] || null;
   return out;
 }
 

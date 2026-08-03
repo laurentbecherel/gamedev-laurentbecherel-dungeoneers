@@ -52,7 +52,17 @@ test("chamfer.json has grid tile chamfer section with subtle defaults", async ()
 });
 
 test("shaders.js contains grid tile chamfer logic for floor and ceiling using fract world (array path refactored)", async () => {
-  const shaderSrc = await fs.readFile(path.join(SRC, "render", "shaders.js"), "utf8");
+  let shaderSrc = await fs.readFile(path.join(SRC, "render", "shaders.js"), "utf8");
+  // Also check modular lib files for new architecture
+  try {
+    const libFiles = await fs.readdir(path.join(SRC, "render", "shader-lib"));
+    for (const f of libFiles) {
+      if (f.endsWith(".glsl.js")) {
+        const c = await fs.readFile(path.join(SRC, "render", "shader-lib", f), "utf8");
+        shaderSrc += "\n" + c;
+      }
+    }
+  } catch {}
   assert(shaderSrc.includes("u_chamferGridEnabled"), "has u_chamferGridEnabled uniform");
   assert(shaderSrc.includes("u_chamferGridFloorSize"), "has floorSize grid uniform");
   assert(shaderSrc.includes("u_chamferGridCeilSize"), "has ceilSize grid uniform");
@@ -67,9 +77,11 @@ test("shaders.js contains grid tile chamfer logic for floor and ceiling using fr
   assert(shaderSrc.includes("grid") && (shaderSrc.includes("floorWorld") || shaderSrc.includes("worldPos")) && shaderSrc.includes("ceilWorld") || shaderSrc.includes("applyGrid"), "mentions grid with floor/ceil world");
   // Ensure it checks both chamferEnabled and gridEnabled (via if inside function or inline)
   assert(shaderSrc.includes("u_chamferEnabled") && shaderSrc.includes("u_chamferGridEnabled") && shaderSrc.includes("0"), "checks both enabled flags");
-  // New: must have reusable helpers, not 4 duplicate blocks
+  // New: must have reusable helpers, not 4 duplicate blocks – check for unified or deduped functions
   if (hasFunctions) {
-    assert(shaderSrc.includes("void applyGridFloor") && shaderSrc.includes("void applyGridCeil"), "has deduped functions");
+    const hasDedup = shaderSrc.includes("void applyGridFloor") && shaderSrc.includes("void applyGridCeil");
+    const hasUnified = shaderSrc.includes("applyGridChamferUnified");
+    assert(hasDedup || hasUnified, "has deduped functions or unified");
   } else {
     const gridComments = (shaderSrc.match(/grid tile chamfer/g) || []).length;
     assert(gridComments >= 2, `should have at least 2 grid chamfer mentions, got ${gridComments}`);

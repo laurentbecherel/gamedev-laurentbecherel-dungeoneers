@@ -137,6 +137,8 @@ export class Game {
     merged.lightTypes = this._pickCfg(renderCfgs, baseCfg, 'light-types', { version:1, types:[] });
     merged.particles = this._pickCfg(renderCfgs, baseCfg, 'particles', { version:1 });
     merged.materialsProc = renderCfgs["materials-proc"] || baseCfg.materialsProc || baseCfg["materials-proc"] || baseCfg.materialProc || { walls:{}, floors:{}, ceils:{} };
+    merged.materialAssignments = renderCfgs["material-assignments"] || baseCfg.materialAssignments || baseCfg["material-assignments"] || { version:1, policy:{}, fallback:{wall:1,floor:1,ceil:1} };
+    merged['material-assignments'] = merged.materialAssignments;
     merged.materialModifiers = renderCfgs["material-modifiers"] || baseCfg.materialModifiers || baseCfg["material-modifiers"] || { version:1, enabled:false, modifiers:{} };
     merged['material-modifiers'] = merged.materialModifiers;
     merged.playerCfg = this._pickCfg(renderCfgs, baseCfg, 'player', baseCfg.player || { moveSpeed:3, turnSpeed:2.2, radius:0.28, height:0.5 });
@@ -675,10 +677,10 @@ export class Game {
     if (code === "Digit3" || code === "Numpad3") { const v = this.renderer.togglePBR(); this._showHud("PBR: " + (v ? "ON" : "OFF (diffuse only)")); return; }
     if (code === "Digit4" || code === "Numpad4") { const v = this.renderer.togglePOM(); this._showHud("POM: " + (v ? "ON" : "OFF")); return; }
     if (code === "Digit5" || code === "Numpad5") { const v = this.renderer.toggleFog(); this._showHud("Fog: " + (v ? "ON" : "OFF")); return; }
-    if (code === "Digit6" || code === "Numpad6") { const v = this.renderer.cyclePBRDebug(); const names=["OFF","Albedo","Normal raw","World Normal","Height","Rough","Metal","AO","Emissive"]; this._showHud("PBR Debug: " + names[v] + " (" + v + ")"); return; }
+    if (code === "Digit6" || code === "Numpad6") { const v = this.renderer.cyclePBRDebug(); const names=["OFF","Albedo","Normal raw","World Normal","Height","Rough","Metal","AO","Emissive","ModMap1 RGB moss/water/puddle","ModMap2 dust/damaged/blood","Moss only","Water only","Puddle only","Dust only","Damaged only","Blood only","Moss/Water/Blood"]; this._showHud("PBR Debug: " + (names[v]||"Mode "+v) + " (" + v + ")"); return; }
     if (code === "Digit7" || code === "Numpad7") { const v = this.renderer.toggleChamfer(); this._showHud("Chamfer: " + (v ? "ON (floor/ceil baseboard + vertical edges)" : "OFF (sharp 90°)")); return; }
     if (code === "Digit8" || code === "Numpad8") { const v = this.renderer.toggleCorner(); this._showHud("Corner Geometry: " + (v ? "ON (rounded intruding r=0.15 outer+inner)" : "OFF")); return; }
-    if (code === "Digit9" || code === "Numpad9") { const v = this.renderer.toggleModifiers(); this._showHud("Modifiers: " + (v ? "ON (moss/water/blood/dust via modifierMap + noiseTex + params)" : "OFF (clean PBR)")); return; }
+    if (code === "Digit9" || code === "Numpad9") { const v = this.renderer.toggleModifiers(); this._showHud("Modifiers: " + (v ? "ON (moss/water/puddle/dust/damaged/blood via 2x modifierMap + procNoise + UBO 192B)" : "OFF (clean PBR)")); return; }
   }
 
   _showHud(msg) {

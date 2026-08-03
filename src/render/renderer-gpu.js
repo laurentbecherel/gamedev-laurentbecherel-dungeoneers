@@ -7,7 +7,7 @@
 // - Sprite PBR billboards same lights/fog
 // - Live-edit T1 instant uniforms + T2 material array rebuild + T3 regen banner
 
-import { createProgram, createTexture, createTexture2DArray, isTexture2DArraySupported } from './gl-utils.js';
+import { createProgram, createProgramAsync, createTexture, createTexture2DArray, isTexture2DArraySupported, createUniformBuffer, updateUniformBuffer, bindUniformBlock, bindUniformBufferBase } from './gl-utils.js';
 import { vsSource, fsSource, vsQuantize, fsQuantize, vsUI, fsUI, MAX_LIGHTS, vsSpriteSrc, fsSpritePBRSrc } from './shaders.js';
 import { uploadMapTexture, updateMapTexture } from './map-upload.js';
 import { generateMaterialArrayData, generateMaterialAtlases } from '../world/materials.js';
@@ -41,7 +41,11 @@ export class GPURenderer {
     this.mapTex = null;
     this.matMapTex = null;
     this.modifierTex = null;
+    this.modifierTex2 = null;
     this.noiseTex = null;
+    this.modifiersUBO = null;
+    this.modifiersBlockBinding = 1;
+    this.modifiersBlockIndex = -1;
     this.atlases = {};
     this.materialInfo = null;
     this.useArrayPath = true;
@@ -75,11 +79,23 @@ export class GPURenderer {
 
   async init(dungeon, config) {
     const gl = this.gl;
-    this.program = createProgram(gl, vsSource, fsSource);
+    // Parallel compile all 3 programs at once – faster than sequential await, uses KHR_parallel_shader_compile
+    const glUtils = await import('./gl-utils.js');
+    const { createProgramAsync, createProgram } = glUtils;
+    const compileAsync = (vs, fs) => {
+      try { return createProgramAsync(gl, vs, fs).catch(()=>null); } catch { return Promise.resolve(null); }
+    };
+    // Start all in parallel
+    const [pMain, pQuant, pUI] = await Promise.all([
+      compileAsync(vsSource, fsSource),
+      compileAsync(vsQuantize, fsQuantize),
+      compileAsync(vsUI, fsUI)
+    ]);
+    this.program = pMain || createProgram(gl, vsSource, fsSource);
     if (!this.program) throw new Error('Shader compile failed raycast');
-    this.quantProgram = createProgram(gl, vsQuantize, fsQuantize);
+    this.quantProgram = pQuant || createProgram(gl, vsQuantize, fsQuantize);
     if (!this.quantProgram) throw new Error('Shader compile failed quantize');
-    this.uiProgram = createProgram(gl, vsUI, fsUI);
+    this.uiProgram = pUI || createProgram(gl, vsUI, fsUI);
     if (!this.uiProgram) throw new Error('Shader compile failed UI');
 
     this.vao = gl.createVertexArray();
@@ -202,7 +218,7 @@ export class GPURenderer {
       gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.REPEAT);
     } catch (e) { console.warn('[Renderer] noise tex failed', e); this.noiseTex = null; }
 
-    // Modifier map (per-cell field)
+    // Modifier maps v2 – 2 textures lossless (moss/water/puddle/dust + damaged/blood)
     try {
       const modMap = generateModifierMap(dungeon, config);
       this.modifierTex = gl.createTexture();
@@ -212,8 +228,16 @@ export class GPURenderer {
       gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
       gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
       gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, modMap.w, modMap.h, 0, gl.RGBA, gl.UNSIGNED_BYTE, modMap.data);
+      this.modifierTex2 = gl.createTexture();
+      gl.bindTexture(gl.TEXTURE_2D, this.modifierTex2);
+      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.NEAREST);
+      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.NEAREST);
+      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+      const data2 = modMap.data2 || modMap.data; // fallback for old maps
+      gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, modMap.w, modMap.h, 0, gl.RGBA, gl.UNSIGNED_BYTE, data2);
       this._modifierMapInfo = modMap;
-    } catch (e) { console.warn('[Renderer] modifier tex failed', e); this.modifierTex = null; }
+    } catch (e) { console.warn('[Renderer] modifier tex failed', e); this.modifierTex = null; this.modifierTex2 = null; }
 
     this.paletteTex = gl.createTexture();
     this.lutTex = gl.createTexture();
@@ -247,7 +271,7 @@ export class GPURenderer {
       'u_wallAlbedo','u_wallNormal','u_wallHeight','u_wallRoughMetal',
       'u_floorAlbedo','u_floorNormal','u_floorHeight','u_floorRoughMetal',
       'u_ceilAlbedo','u_ceilNormal','u_ceilHeight','u_ceilRoughMetal',
-      'u_texSize','u_atlasWalls','u_atlasFloors','u_atlasCeils',
+      // legacy atlas uniforms removed in v10 (array pipeline)
       'u_ambientColor','u_ambientLevel','u_worldAmbientMul',
       'u_sunDir','u_sunDirZ','u_sunIntensity','u_sunColor',
       'u_fogBase','u_fogSquared','u_fogColor','u_fogEnabled',
@@ -265,9 +289,10 @@ export class GPURenderer {
       'u_renderFloorMul','u_renderCeilMul','u_renderWallDarken','u_renderEyeFactor',
       'u_bobPixels',
       'u_numLights',
-      // new for array path + modifiers
+      // array path counts
       'u_wallCount','u_floorCount','u_ceilCount',
-      'u_modifierMap','u_noiseTex','u_modifiersEnabled',
+      // modifiers v11.3 PROPER: 2 textures (14&15) + Full UBO 192 bytes (no individual uniforms)
+      'u_modifierMap','u_modifierMap2','u_modifiersEnabled',
     ];
     names.forEach(n => ul[n] = gl.getUniformLocation(p, n));
 
@@ -314,9 +339,34 @@ export class GPURenderer {
       u_wallAlbedo:1,u_wallNormal:2,u_wallHeight:3,u_wallRoughMetal:4,
       u_floorAlbedo:5,u_floorNormal:6,u_floorHeight:7,u_floorRoughMetal:8,
       u_ceilAlbedo:9,u_ceilNormal:10,u_ceilHeight:11,u_ceilRoughMetal:12,
-      u_noiseTex:14, u_modifierMap:15
+      u_modifierMap:14, u_modifierMap2:15 // noiseTex optional legacy, procedural now frees unit
     };
+    // u_noiseTex kept at 13? Actually matMap is 13, so 14-15 for modifiers = 16 units total (0-15)
     Object.entries(arrayUnits).forEach(([name, unit]) => { if (ul[name]) gl.uniform1i(ul[name], unit); });
+
+    // Full UBO for modifiers – binding point 1 (192 bytes = 12 vec4)
+    try {
+      this.modifiersBlockBinding = 1;
+      const blockIdx = gl.getUniformBlockIndex(this.program, 'ModifiersBlock');
+      if (blockIdx !== gl.INVALID_INDEX && blockIdx !== -1) {
+        bindUniformBlock(gl, this.program, 'ModifiersBlock', this.modifiersBlockBinding);
+        this.modifiersBlockIndex = blockIdx;
+        this.modifiersUBO = createUniformBuffer(gl, 192, gl.DYNAMIC_DRAW);
+        bindUniformBufferBase(gl, this.modifiersBlockBinding, this.modifiersUBO);
+      } else {
+        // Fast path: shader uses individual uniforms (v11.2 instant ANGLE compile) – UBO not present, not an error
+        this.modifiersBlockIndex = -1;
+        this.modifiersUBO = null;
+        console.log('[GPURenderer] ModifiersBlock not present – using fast individual uniforms path (instant compile)');
+      }
+      const maxUnits = gl.getParameter(gl.MAX_TEXTURE_IMAGE_UNITS);
+      if (maxUnits < 16) {
+        console.warn('[GPURenderer] MAX_TEXTURE_IMAGE_UNITS=' + maxUnits + ' <16, material arrays may fallback; need >=16 (WebGL2 minimum, usually 32).');
+      }
+      // v11 uses 16 units total: 0 map, 1-12 arrays, 13 matMap, 14 mod1, 15 mod2 (noise procedural, no unit) – fits 16
+    } catch (e) {
+      console.warn('[GPURenderer] UBO setup failed', e);
+    }
 
     // Lighting & sprites init
     try {
@@ -512,12 +562,16 @@ export class GPURenderer {
   setBandLevels(n) { this.bandLevels = Math.max(8, Math.min(64, n | 0)); }
   setGridDebug(v) { this.gridDebug = v ? 1 : 0; }
   setLightingEnabled(v) { this.lightingEnabled = v ? 1 : 0; }
+  setGridDebug(v) { this.gridDebug = v ? 1 : 0; }
+  setLightingEnabled(v) { this.lightingEnabled = v ? 1 : 0; }
   setPBREnabled(v) { this.pbrEnabled = v ? 1 : 0; }
   setPOMEnabled(v) { this.pomEnabled = v ? 1 : 0; }
   setFogEnabled(v) { this.fogEnabled = v ? 1 : 0; }
   setChamferEnabled(v) { this.chamferEnabled = v ? 1 : 0; }
   setCornerEnabled(v) { this.cornerEnabled = v ? 1 : 0; }
-  setPBRDebugMode(v) { this.pbrDebugMode = Math.max(0, Math.min(8, v | 0)); }
+  setPBRDebugMode(v) { this.pbrDebugMode = Math.max(0, Math.min(17, v | 0)); }
+  setModifiersEnabled(v){ this.modifiersEnabled = v?1:0; }
+
   toggleGridDebug() { this.gridDebug ^= 1; return this.gridDebug; }
   toggleLighting() { this.lightingEnabled ^= 1; return this.lightingEnabled; }
   togglePBR() { this.pbrEnabled ^= 1; return this.pbrEnabled; }
@@ -525,9 +579,31 @@ export class GPURenderer {
   toggleFog() { this.fogEnabled ^= 1; return this.fogEnabled; }
   toggleChamfer() { this.chamferEnabled ^= 1; return this.chamferEnabled; }
   toggleCorner() { this.cornerEnabled ^= 1; return this.cornerEnabled; }
-  cyclePBRDebug() { this.pbrDebugMode = (this.pbrDebugMode + 1) % 9; return this.pbrDebugMode; }
-  toggleModifiers() { this.modifiersEnabled ^= 1; return this.modifiersEnabled; }
-  setModifiersEnabled(v){ this.modifiersEnabled = v?1:0; }
+  toggleModifiers() { 
+    this.modifiersEnabled ^= 1; 
+    // Regen maps when turning ON if they were all-zero from disabled init
+    try {
+      if (this.modifiersEnabled && this._lastDungeon && this.modifierTex) {
+        const cfg = this._cfgCache || {};
+        // force enabled true for generation
+        const genCfg = { ...cfg, materialModifiers: { ...(cfg.materialModifiers||{}), enabled:true } };
+        const mm = generateModifierMap(this._lastDungeon, genCfg);
+        const gl = this.gl;
+        if (mm && mm.data) {
+          gl.bindTexture(gl.TEXTURE_2D, this.modifierTex);
+          gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, mm.w, mm.h, 0, gl.RGBA, gl.UNSIGNED_BYTE, mm.data);
+          if (this.modifierTex2 && mm.data2) {
+            gl.bindTexture(gl.TEXTURE_2D, this.modifierTex2);
+            gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, mm.w, mm.h, 0, gl.RGBA, gl.UNSIGNED_BYTE, mm.data2);
+          }
+          this._modifierMapInfo = mm;
+          this._lastDungeon.modifierMap = mm;
+        }
+      }
+    } catch (e) { console.warn('[toggleModifiers] regen failed', e); }
+    return this.modifiersEnabled; 
+  }
+  cyclePBRDebug() { this.pbrDebugMode = (this.pbrDebugMode + 1) % 18; return this.pbrDebugMode; }
 
   updateConfig(partial) {
     if (!partial) return;
@@ -554,10 +630,27 @@ export class GPURenderer {
   updateMaterialModifiers(mmCfg){
     if(!mmCfg) return; if(!this._cfgCache) this._cfgCache={}; this._cfgCache.materialModifiers = mmCfg; this._cfgCache['material-modifiers']=mmCfg;
     this.modifiersEnabled = (mmCfg.enabled===true)?1:0;
+    // Regen maps if we have dungeon and we are turning ON or params changed
+    try {
+      if (this._lastDungeon && this.modifierTex) {
+        const genCfg = { ...this._cfgCache, materialModifiers: { ...mmCfg, enabled: mmCfg.enabled===true } };
+        const mm = generateModifierMap(this._lastDungeon, genCfg);
+        const gl = this.gl;
+        if (mm && mm.data) {
+          gl.bindTexture(gl.TEXTURE_2D, this.modifierTex);
+          gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, mm.w, mm.h, 0, gl.RGBA, gl.UNSIGNED_BYTE, mm.data);
+          if (this.modifierTex2 && mm.data2) {
+            gl.bindTexture(gl.TEXTURE_2D, this.modifierTex2);
+            gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, mm.w, mm.h, 0, gl.RGBA, gl.UNSIGNED_BYTE, mm.data2);
+          }
+          this._modifierMapInfo = mm;
+          this._lastDungeon.modifierMap = mm;
+        }
+      }
+    } catch (e) { console.warn('[updateMaterialModifiers] regen failed', e); }
   }
 
   reuploadAtlases(atl) {
-    // Legacy shim: atl may be old atlas or new arrayData
     if (!atl) return;
     const gl = this.gl;
     if (!gl) return;
@@ -566,53 +659,31 @@ export class GPURenderer {
       const legacyRenderer = this._cfgCache?.renderer || {};
       const texFilterStr = renderingCfg.textureFilter || legacyRenderer.textureFilter || 'nearest';
       const tf = texFilterStr === 'linear' ? gl.LINEAR : gl.NEAREST;
-      // Prefer array path if available
       const arr = atl.arrayData || atl;
+      const old = this.atlases;
+      const toDelete = [old.wa, old.wn, old.wh, old.wrma, old.fa, old.fn, old.fh, old.frma, old.ca, old.cn, old.ch, old.crma].filter(Boolean);
+      try { toDelete.forEach(t => { try { gl.deleteTexture(t); } catch {} }); } catch {}
+
       if (arr.walls && arr.walls.albedo && arr.wallCount) {
-        // Array path
-        const old = this.atlases;
-        const toDelete = [old.wa, old.wn, old.wh, old.wrma, old.fa, old.fn, old.fh, old.frma, old.ca, old.cn, old.ch, old.crma].filter(Boolean);
-        try { toDelete.forEach(t => { try { gl.deleteTexture(t); } catch {} }); } catch {}
+        // Preferred array path – uses existing createTexture2DArray helper (clean, no duplication)
         const ts = arr.texSize || 64;
-        const upArr = (data, w, h, depth) => {
-          const { createTexture2DArray } = require ? (()=>null) : { createTexture2DArray: null };
-          // Use direct import via dynamic reference: we already imported createTexture2DArray at top
-          return createTexture2DArray(gl, w, h, depth, data, tf);
-        };
-        // We need to capture imported function via closure: reuse createTexture2DArray from module scope
-        // Since we cannot require, call directly
-        const make = (data, depth) => {
-          const tex = gl.createTexture();
-          gl.bindTexture(gl.TEXTURE_2D_ARRAY, tex);
-          const lp = ts*ts;
-          let internalFormat, format;
-          if (data.length === lp*depth) { internalFormat=gl.R8; format=gl.RED; }
-          else { internalFormat=gl.RGBA8; format=gl.RGBA; }
-          gl.texImage3D(gl.TEXTURE_2D_ARRAY, 0, internalFormat, ts, ts, depth, 0, format, gl.UNSIGNED_BYTE, data);
-          gl.texParameteri(gl.TEXTURE_2D_ARRAY, gl.TEXTURE_MIN_FILTER, tf);
-          gl.texParameteri(gl.TEXTURE_2D_ARRAY, gl.TEXTURE_MAG_FILTER, tf);
-          gl.texParameteri(gl.TEXTURE_2D_ARRAY, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
-          gl.texParameteri(gl.TEXTURE_2D_ARRAY, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
-          gl.texParameteri(gl.TEXTURE_2D_ARRAY, gl.TEXTURE_WRAP_R, gl.CLAMP_TO_EDGE);
-          return tex;
-        };
-        this.atlases.wa = make(arr.walls.albedo, arr.wallCount);
-        this.atlases.wn = make(arr.walls.normal, arr.wallCount);
-        this.atlases.wh = make(arr.walls.height, arr.wallCount);
-        this.atlases.wrma = make(arr.walls.roughMetalAO, arr.wallCount);
-        this.atlases.fa = make(arr.floors.albedo, arr.floorCount);
-        this.atlases.fn = make(arr.floors.normal, arr.floorCount);
-        this.atlases.fh = make(arr.floors.height, arr.floorCount);
-        this.atlases.frma = make(arr.floors.roughMetalAO, arr.floorCount);
-        this.atlases.ca = make(arr.ceils.albedo, arr.ceilCount);
-        this.atlases.cn = make(arr.ceils.normal, arr.ceilCount);
-        this.atlases.ch = make(arr.ceils.height, arr.ceilCount);
-        this.atlases.crma = make(arr.ceils.roughMetalAO, arr.ceilCount);
+        this.atlases.wa = createTexture2DArray(gl, ts, ts, arr.wallCount, arr.walls.albedo, tf);
+        this.atlases.wn = createTexture2DArray(gl, ts, ts, arr.wallCount, arr.walls.normal, tf);
+        this.atlases.wh = createTexture2DArray(gl, ts, ts, arr.wallCount, arr.walls.height, tf);
+        this.atlases.wrma = createTexture2DArray(gl, ts, ts, arr.wallCount, arr.walls.roughMetalAO, tf);
+        this.atlases.fa = createTexture2DArray(gl, ts, ts, arr.floorCount, arr.floors.albedo, tf);
+        this.atlases.fn = createTexture2DArray(gl, ts, ts, arr.floorCount, arr.floors.normal, tf);
+        this.atlases.fh = createTexture2DArray(gl, ts, ts, arr.floorCount, arr.floors.height, tf);
+        this.atlases.frma = createTexture2DArray(gl, ts, ts, arr.floorCount, arr.floors.roughMetalAO, tf);
+        this.atlases.ca = createTexture2DArray(gl, ts, ts, arr.ceilCount, arr.ceils.albedo, tf);
+        this.atlases.cn = createTexture2DArray(gl, ts, ts, arr.ceilCount, arr.ceils.normal, tf);
+        this.atlases.ch = createTexture2DArray(gl, ts, ts, arr.ceilCount, arr.ceils.height, tf);
+        this.atlases.crma = createTexture2DArray(gl, ts, ts, arr.ceilCount, arr.ceils.roughMetalAO, tf);
         this.materialInfo = arr;
         this.atlasInfo = { texSize: ts, wallAtlasW: ts, floorAtlasW: ts, ceilAtlasW: ts, wallCount: arr.wallCount, floorCount: arr.floorCount, ceilCount: arr.ceilCount, arrayData: arr };
       } else {
-        // Legacy horizontal atlas
-        const up = (arrData, w, h) => {
+        // Legacy horizontal atlas – kept only for unit tests / old save compat, not used in game (WebGL2 guarantees ARRAY)
+        const upLegacy = (arrData, w, h) => {
           const tex = gl.createTexture();
           gl.bindTexture(gl.TEXTURE_2D, tex);
           gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, tf);
@@ -624,14 +695,11 @@ export class GPURenderer {
           else gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, w, h, 0, gl.RGBA, gl.UNSIGNED_BYTE, arrData);
           return tex;
         };
-        const old = this.atlases;
-        const toDelete = [old.wa, old.wn, old.wh, old.wrma, old.fa, old.fn, old.fh, old.frma, old.ca, old.cn, old.ch, old.crma].filter(Boolean);
-        try { toDelete.forEach(t => { try { gl.deleteTexture(t); } catch {} }); } catch {}
         const tw = atl.wallAtlasW, fw = atl.floorAtlasW, cw = atl.ceilAtlasW;
         const th = 64;
-        this.atlases.wa = up(atl.wallAlbedo, tw, th); this.atlases.wn = up(atl.wallNormal, tw, th); this.atlases.wh = up(atl.wallHeight, tw, th); this.atlases.wrma = up(atl.wallRoughMetalAO, tw, th);
-        this.atlases.fa = up(atl.floorAlbedo, fw, th); this.atlases.fn = up(atl.floorNormal, fw, th); this.atlases.fh = up(atl.floorHeight, fw, th); this.atlases.frma = up(atl.floorRoughMetalAO, fw, th);
-        this.atlases.ca = up(atl.ceilAlbedo, cw, th); this.atlases.cn = up(atl.ceilNormal, cw, th); this.atlases.ch = up(atl.ceilHeight, cw, th); this.atlases.crma = up(atl.ceilRoughMetalAO, cw, th);
+        this.atlases.wa = upLegacy(atl.wallAlbedo, tw, th); this.atlases.wn = upLegacy(atl.wallNormal, tw, th); this.atlases.wh = upLegacy(atl.wallHeight, tw, th); this.atlases.wrma = upLegacy(atl.wallRoughMetalAO, tw, th);
+        this.atlases.fa = upLegacy(atl.floorAlbedo, fw, th); this.atlases.fn = upLegacy(atl.floorNormal, fw, th); this.atlases.fh = upLegacy(atl.floorHeight, fw, th); this.atlases.frma = upLegacy(atl.floorRoughMetalAO, fw, th);
+        this.atlases.ca = upLegacy(atl.ceilAlbedo, cw, th); this.atlases.cn = upLegacy(atl.ceilNormal, cw, th); this.atlases.ch = upLegacy(atl.ceilHeight, cw, th); this.atlases.crma = upLegacy(atl.ceilRoughMetalAO, cw, th);
         this.atlasInfo = atl;
       }
     } catch (e) { console.warn('[Renderer] reuploadAtlases failed', e); }
@@ -648,13 +716,23 @@ export class GPURenderer {
         const ids = [...new Set(this._sprites.map(s => s.spriteId || s.type || 'torch_wall'))].filter(Boolean);
         this.spriteRenderer.ensureSprites(gl, ids).catch(()=>{});
       }
-      // Upload modifier map if changed
+      this._lastDungeon = dungeon;
+      // Upload modifier maps v2 – always regen with current cfg (fixes invisible when toggled ON after init with all-zero map)
       if (this.modifierTex) {
         const gl = this.gl;
-        const modMap = dungeon.modifierMap || (()=>{ try{return generateModifierMap(dungeon, this._cfgCache||{});}catch{return null;}})();
+        let modMap = null;
+        try { modMap = generateModifierMap(dungeon, this._cfgCache || {}); } catch {}
+        // fallback to pre-baked if generator failed
+        if (!modMap) modMap = dungeon.modifierMap;
         if (modMap && modMap.data) {
           gl.bindTexture(gl.TEXTURE_2D, this.modifierTex);
           gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, modMap.w, modMap.h, 0, gl.RGBA, gl.UNSIGNED_BYTE, modMap.data);
+          if (this.modifierTex2 && modMap.data2) {
+            gl.bindTexture(gl.TEXTURE_2D, this.modifierTex2);
+            gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, modMap.w, modMap.h, 0, gl.RGBA, gl.UNSIGNED_BYTE, modMap.data2);
+          }
+          this._modifierMapInfo = modMap;
+          dungeon.modifierMap = modMap; // keep in sync for next regen
         }
       }
     } catch (e) { console.warn('[uploadMap] sprite/light/modifier update failed', e); }
@@ -779,18 +857,52 @@ export class GPURenderer {
     bindArray(a.fa, 5, 'u_floorAlbedo'); bindArray(a.fn, 6, 'u_floorNormal'); bindArray(a.fh, 7, 'u_floorHeight'); bindArray(a.frma, 8, 'u_floorRoughMetal');
     bindArray(a.ca, 9, 'u_ceilAlbedo'); bindArray(a.cn, 10, 'u_ceilNormal'); bindArray(a.ch, 11, 'u_ceilHeight'); bindArray(a.crma, 12, 'u_ceilRoughMetal');
 
-    // Noise + modifier
-    if (this.noiseTex) { gl.activeTexture(gl.TEXTURE0+14); gl.bindTexture(gl.TEXTURE_2D, this.noiseTex); if (ul.u_noiseTex) gl.uniform1i(ul.u_noiseTex, 14); }
-    if (this.modifierTex) { gl.activeTexture(gl.TEXTURE0+15); gl.bindTexture(gl.TEXTURE_2D, this.modifierTex); if (ul.u_modifierMap) gl.uniform1i(ul.u_modifierMap, 15); }
+    // Modifiers v11: 2 textures lossless (14 & 15) + UBO 192 bytes; noise procedural (frees unit)
+    if (this.modifierTex) { gl.activeTexture(gl.TEXTURE0+14); gl.bindTexture(gl.TEXTURE_2D, this.modifierTex); if (ul.u_modifierMap) gl.uniform1i(ul.u_modifierMap, 14); }
+    if (this.modifierTex2) { gl.activeTexture(gl.TEXTURE0+15); gl.bindTexture(gl.TEXTURE_2D, this.modifierTex2); if (ul.u_modifierMap2) gl.uniform1i(ul.u_modifierMap2, 15); }
+    // Legacy noiseTex kept but not required (procedural procNoise frees unit)
+    if (this.noiseTex && ul.u_noiseTex) { /* optional legacy – not bound to conserve units */ }
     if (ul.u_modifiersEnabled) gl.uniform1i(ul.u_modifiersEnabled, this.modifiersEnabled?1:0);
 
+    // Modifiers params: fast path individual uniforms (instant compile), UBO optional if block exists
+    try {
+      const mm = cfg.materialModifiers || cfg['material-modifiers'] || this._cfgCache?.materialModifiers || {};
+      const mods = mm.modifiers || {};
+      const moss = mods.moss || {}; const water = mods.water || {}; const puddle = mods.puddle || {};
+      const blood = mods.blood || {}; const dust = mods.dust || {}; const damaged = mods.damaged || {};
+      if (this.modifiersUBO && this.modifiersBlockIndex !== -1) {
+        const buf = new Float32Array(48);
+        function setVec4(off, xyz, w) { buf[off]=xyz[0]; buf[off+1]=xyz[1]; buf[off+2]=xyz[2]; buf[off+3]=w; }
+        setVec4(0, moss.albedo || [0.18,0.42,0.15], moss.roughAdd ?? 0.35);
+        setVec4(4, [moss.colorStrength ?? 0.85,0,0,0], 0);
+        setVec4(8, water.albedo || [0.2,0.3,0.45], water.roughAdd ?? -0.45);
+        setVec4(12, [0,0,0,0], 0);
+        setVec4(16, puddle.albedo || [0.15,0.18,0.22], puddle.roughTarget ?? 0.08);
+        setVec4(24, blood.albedo || [0.55,0.12,0.12], blood.colorStrength ?? 0.75);
+        setVec4(32, dust.albedo || [0.65,0.6,0.5], dust.roughAdd ?? 0.28);
+        setVec4(40, damaged.albedo || [0.18,0.15,0.12], damaged.roughAdd ?? 0.3);
+        updateUniformBuffer(gl, this.modifiersUBO, buf);
+        bindUniformBufferBase(gl, this.modifiersBlockBinding, this.modifiersUBO);
+      } else {
+        // Fast path – individual uniforms (no UBO, instant compile on ANGLE)
+        if (ul.u_modMossAlbedo) { const a=moss.albedo||[0.18,0.42,0.15]; gl.uniform3f(ul.u_modMossAlbedo,a[0],a[1],a[2]); }
+        if (ul.u_modMossRoughAdd) gl.uniform1f(ul.u_modMossRoughAdd, moss.roughAdd ?? 0.35);
+        if (ul.u_modMossColorStrength) gl.uniform1f(ul.u_modMossColorStrength, moss.colorStrength ?? 0.85);
+        if (ul.u_modWaterAlbedo) { const a=water.albedo||[0.2,0.3,0.45]; gl.uniform3f(ul.u_modWaterAlbedo,a[0],a[1],a[2]); }
+        if (ul.u_modWaterRoughAdd) gl.uniform1f(ul.u_modWaterRoughAdd, water.roughAdd ?? -0.45);
+        if (ul.u_modPuddleAlbedo) { const a=puddle.albedo||[0.15,0.18,0.22]; gl.uniform3f(ul.u_modPuddleAlbedo,a[0],a[1],a[2]); }
+        if (ul.u_modPuddleRoughTarget) gl.uniform1f(ul.u_modPuddleRoughTarget, puddle.roughTarget ?? 0.08);
+        if (ul.u_modBloodAlbedo) { const a=blood.albedo||[0.55,0.12,0.12]; gl.uniform3f(ul.u_modBloodAlbedo,a[0],a[1],a[2]); }
+        if (ul.u_modBloodMix) gl.uniform1f(ul.u_modBloodMix, blood.colorStrength ?? 0.75);
+        if (ul.u_modDustAlbedo) { const a=dust.albedo||[0.65,0.6,0.5]; gl.uniform3f(ul.u_modDustAlbedo,a[0],a[1],a[2]); }
+        if (ul.u_modDustRoughAdd) gl.uniform1f(ul.u_modDustRoughAdd, dust.roughAdd ?? 0.28);
+        if (ul.u_modDamagedAlbedo) { const a=damaged.albedo||[0.18,0.15,0.12]; gl.uniform3f(ul.u_modDamagedAlbedo,a[0],a[1],a[2]); }
+        if (ul.u_modDamagedRoughAdd) gl.uniform1f(ul.u_modDamagedRoughAdd, damaged.roughAdd ?? 0.3);
+      }
+    } catch (e) { console.warn('[GPURenderer] modifier params upload failed', e); }
+
     const ai = this.atlasInfo || this.materialInfo || { texSize:64, wallCount:1, floorCount:1, ceilCount:1 };
-    const ts = ai.texSize || 64;
-    if (ul.u_texSize) gl.uniform1f(ul.u_texSize, ts);
-    if (ul.u_atlasWalls) gl.uniform1f(ul.u_atlasWalls, ai.wallAtlasW || ts);
-    if (ul.u_atlasFloors) gl.uniform1f(ul.u_atlasFloors, ai.floorAtlasW || ts);
-    if (ul.u_atlasCeils) gl.uniform1f(ul.u_atlasCeils, ai.ceilAtlasW || ts);
-    if (ul.u_wallCount) gl.uniform1f(ul.u_wallCount, ai.wallCount || ai.wallCount===0? ai.wallCount : 1);
+    if (ul.u_wallCount) gl.uniform1f(ul.u_wallCount, ai.wallCount || 1);
     if (ul.u_floorCount) gl.uniform1f(ul.u_floorCount, ai.floorCount || 1);
     if (ul.u_ceilCount) gl.uniform1f(ul.u_ceilCount, ai.ceilCount || 1);
 

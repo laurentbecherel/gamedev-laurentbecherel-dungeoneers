@@ -204,6 +204,37 @@ export function generateMaterialArrayData(wallMats, floorMats, ceilMats, procCon
   const fCount = Math.max(1, floorMats.length || 1);
   const cCount = Math.max(1, ceilMats.length || 1);
 
+  function mergeProc(baseProc, overrideProc) {
+    if (!overrideProc) return baseProc;
+    // shallow merge with nested micro merging
+    const out = { ...baseProc, ...overrideProc };
+    if (baseProc.micro || overrideProc.micro) {
+      out.micro = { ...(baseProc.micro||{}), ...(overrideProc.micro||{}) };
+    }
+    if (baseProc.groutDarken && overrideProc.groutDarken) {
+      out.groutDarken = { ...baseProc.groutDarken, ...overrideProc.groutDarken };
+    } else if (overrideProc.groutDarken) {
+      out.groutDarken = overrideProc.groutDarken;
+    }
+    if (baseProc.brick && overrideProc.brick) {
+      out.brick = { ...baseProc.brick, ...overrideProc.brick };
+    }
+    return out;
+  }
+
+  function pickTileType(mat, defaultType) {
+    // Data-driven tile generator registry – allows new types without code change if added to registry
+    const reg = {
+      'brick': (sz, base, pr, sd, rv) => genBrickTile(sz, base, pr, sd, rv),
+      'stone_block': (sz, base, pr, sd, rv) => genBrickTile(sz, base, { ...pr, blockSize: pr.blockSize ?? 10 }, sd, rv),
+      'slab': (sz, base, pr, sd, rv) => genSlabTile(sz, base, pr, sd, false, rv),
+      'cobble': (sz, base, pr, sd, rv) => genSlabTile(sz, base, { ...pr, blockSize: pr.blockSize ?? 6, groutWidth: pr.groutWidth ?? 2 }, sd, true, rv),
+      'beams': (sz, base, pr, sd, rv) => genSlabTile(sz, base, { ...pr, blockSize: pr.blockSize ?? 12 }, sd, true, rv),
+    };
+    const fn = reg[mat.type] || (defaultType === 'brick' ? reg['brick'] : reg['slab']);
+    return fn;
+  }
+
   function packArray(mats, count, type, proc) {
     const layerPix = texSize * texSize;
     const albedo = new Uint8Array(layerPix * count * 4);
@@ -214,13 +245,14 @@ export function generateMaterialArrayData(wallMats, floorMats, ceilMats, procCon
       const mat = mats[mi] || mats[0] || { base: [128,128,128], roughness:0.72, metal:0 };
       const seed = mat.variationSeed ?? (101 + mi);
       const base = mat.base ?? [128,128,128];
-      const roughValRaw = (mat.roughness ?? proc.roughness ?? 0.72);
+      // P3: per-material proc override support – mat.proc overrides category proc
+      const finalProc = mergeProc(proc, mat.proc || {});
+      const roughValRaw = (mat.roughness ?? finalProc.roughness ?? 0.72);
       const roughVal = Math.round((typeof roughValRaw === 'number' ? roughValRaw : 0.72) * 255);
       const metalVal = Math.round((mat.metal ?? 0) * 255);
       const emissStr = Math.round((mat.emissiveStrength ?? 0) * 255);
-      const tile = type === 'brick'
-        ? genBrickTile(texSize, base, proc, seed, roughValRaw)
-        : genSlabTile(texSize, base, proc, seed, type === 'ceils', roughValRaw);
+      const tileGen = pickTileType(mat, type);
+      const tile = tileGen(texSize, base, finalProc, seed, roughValRaw);
       const off = mi * layerPix;
       const off4 = off * 4;
       for (let y = 0; y < texSize; y++) for (let x = 0; x < texSize; x++) {

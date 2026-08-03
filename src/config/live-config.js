@@ -31,8 +31,9 @@ const TIER_MAP = {
   'main': 'T1',
   // T2 array rebuild
   'materials-proc': 'T2',
-  // T3 regen-required
-  'generator': 'T3'
+  // T3 regen-required (map structure + per-cell mat IDs)
+  'generator': 'T3',
+  'material-assignments': 'T3'
 };
 
 const PATH_TIER_OVERRIDES = {
@@ -46,6 +47,8 @@ const PATH_TIER_OVERRIDES = {
   'materials/ceils': 'T2',
   'config/gameplay/generator': 'T3',
   'config/generator': 'T3',
+  'config/rendering/material-assignments': 'T3',
+  'config/material-assignments': 'T3',
   'config/lighting/fog': 'T1',
   'config/fog': 'T1',
   'config/lighting/lighting': 'T1',

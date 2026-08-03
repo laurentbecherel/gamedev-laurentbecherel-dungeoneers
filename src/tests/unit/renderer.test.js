@@ -17,8 +17,8 @@ const REQUIRED_UNIFORMS = [
   'u_ceilAlbedo','u_ceilNormal','u_ceilHeight','u_ceilRoughMetal',
   // material count (array)
   'u_wallCount','u_floorCount','u_ceilCount',
-  // modifier-ready
-  'u_modifierMap','u_noiseTex','u_modifiersEnabled',
+  // modifier-ready v11: 2 textures + UBO, noise procedural (no texture)
+  'u_modifierMap','u_modifierMap2','u_modifiersEnabled',
   'u_lightPos','u_lightColor','u_lightIntensity','u_lightRadius',
   'u_ambientColor','u_ambientLevel','u_worldAmbientMul',
   'u_sunDir','u_sunDirZ','u_sunIntensity','u_sunColor',
@@ -206,7 +206,7 @@ test("createTexture helper exists and handles NEAREST filter", async () => {
   assert(content.includes("NEAREST") || content.includes("texParameteri"), "should set texture filter param");
 });
 
-test("renderer-gpu.js caches extended uniform locations (+27)", async () => {
+test("renderer-gpu.js caches extended uniform locations (+27) and UBO + second modifier texture", async () => {
   const content = await fs.readFile(rendererPath, "utf8");
   // must cache all extended uniforms
   const mustCache = [
@@ -215,15 +215,17 @@ test("renderer-gpu.js caches extended uniform locations (+27)", async () => {
     'u_chamferEnabled','u_chamferFloorSize','u_chamferCornerRadius','u_chamferTrimFloor',
     'u_cornerEnabled','u_cornerRadius','u_cornerBandNear','u_cornerNormalMix',
     'u_pbrEmissiveAlbedoMul','u_pbrF0','u_pbrAttenQuad',
-    'u_renderFloorMul','u_renderEyeFactor'
+    'u_renderFloorMul','u_renderEyeFactor',
+    'u_modifierMap2','ModifiersBlock','modifiersUBO','modifiersBlockBinding'
   ];
   for (const u of mustCache) {
-    assert(content.includes(u), `renderer-gpu should cache ${u}`);
+    assert(content.includes(u), `renderer-gpu should cache/have ${u}`);
   }
   assert(content.includes('toggleChamfer') && content.includes('toggleCorner'), "should have toggleChamfer/toggleCorner methods");
   assert(content.includes('toggleFog') && content.includes('toggleGridDebug'), "should have fog/grid toggles");
   assert(content.includes('cyclePBRDebug'), "should have cyclePBRDebug");
   assert(content.includes('renderMapOnly'), "should have renderMapOnly for fullscreen map");
+  assert(content.includes('createUniformBuffer') && content.includes('bindUniformBufferBase'), "should use UBO helpers");
 });
 
 test("renderer resolves toggles from dedicated configs with fallback chain", async () => {

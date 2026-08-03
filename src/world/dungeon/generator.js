@@ -312,24 +312,60 @@ export async function generateDungeon(config, seedOverride = null) {
     if (ri === entryRoomIdx && entryStairWall) r.stairWall = entryStairWall;
     if (ri === exitRoomIdx && exitStairWall) r.stairWall = exitStairWall;
     const hx = Math.floor(r.cx), hy = Math.floor(r.cy);
-    // Task10: material array pipeline — per-room variation. One layer per type, trivial to add new type.
-    // We have 2 materials per category in JSON (brick/rough_stone, stone_slab/cobblestone, stone_ceiling/wooden_beams)
-    // Assign based on role + seeded hash for determinism.
-    const roll = hash2i(hx*2+ri, hy*3+ri*2, seed);
+    // Task10+: data-driven material assignment via material-assignments.json (per-role, weighted)
+    // Allows adding new mat type without code change – just edit JSON weights.
+    const matAssignCfg = config.materialAssignments || config['material-assignments'] || config.material_assignments || null;
+    const policy = matAssignCfg?.policy || null;
+    const fallback = matAssignCfg?.fallback || { wall:1, floor:1, ceil:1 };
+
+    function resolveSpec(spec, hxs, hys, sSalt) {
+      if (spec == null) return fallback.wall || 1;
+      if (typeof spec === 'number') return spec;
+      if (typeof spec === 'object') {
+        const vals = spec.values || spec.ids || [];
+        const wts = spec.weights || spec.weight || [];
+        if (vals.length === 0) return typeof spec === 'number' ? spec : 1;
+        const total = wts.length === vals.length ? wts.reduce((a,b)=>a+b,0) : vals.length;
+        const roll = hash2i(hxs, hys, seed + sSalt);
+        let acc = 0;
+        for (let i=0;i<vals.length;i++) {
+          const wt = wts.length === vals.length ? wts[i] : 1;
+          acc += wt;
+          if (roll * total < acc) return vals[i];
+        }
+        return vals[vals.length-1];
+      }
+      return 1;
+    }
+
     let wallMat = 1, floorMat = 1, ceilMat = 1;
-    // Floor policy: corridors more cobble, treasure/secret more stone slab, entrance brick consistent
-    // Use role weighting: guardians rough stone walls + cobble floors for battle-worn feel
-    if (role === 'entrance') { wallMat = 1; floorMat = 1; ceilMat = 1; }
-    else if (role === 'guardian') { wallMat = 2; floorMat = 2; ceilMat = 1; }
-    else if (role === 'treasure' || role === 'secret') { wallMat = (roll < 0.6 ? 1 : 2); floorMat = 1; ceilMat = 2; }
-    else if (role === 'shrine') { wallMat = 2; floorMat = 1; ceilMat = 2; }
-    else if (role === 'hub') { wallMat = (roll < 0.4 ? 1 : 2); floorMat = (roll < 0.5 ? 1 : 2); ceilMat = (roll < 0.7 ? 1 : 2); }
-    else if (role === 'armory') { wallMat = 2; floorMat = 2; ceilMat = 1; }
-    else if (role === 'exit') { wallMat = (roll < 0.3 ? 1 : 2); floorMat = 2; ceilMat = 1; }
-    else { // hall / corridor generic — mix
-      wallMat = (roll < 0.55 ? 1 : 2);
-      floorMat = (hash2i(hx+11, hy+22, seed+5) < 0.45 ? 1 : 2);
-      ceilMat = (hash2i(hx+33, hy+44, seed+9) < 0.75 ? 1 : 2);
+    if (policy && policy[role]) {
+      // data-driven path
+      const entry = policy[role];
+      wallMat = resolveSpec(entry.wall, hx*2+ri, hy*3+ri*2, 10);
+      floorMat = resolveSpec(entry.floor, hx+11, hy+22, 20);
+      ceilMat = resolveSpec(entry.ceil, hx+33, hy+44, 30);
+    } else if (policy && policy['hall']) {
+      // fallback to hall policy if role unknown but policy exists
+      const entry = policy['hall'];
+      wallMat = resolveSpec(entry.wall, hx*2+ri, hy*3+ri*2, 10);
+      floorMat = resolveSpec(entry.floor, hx+11, hy+22, 20);
+      ceilMat = resolveSpec(entry.ceil, hx+33, hy+44, 30);
+    } else {
+      // Legacy hardcoded fallback (kept for tests / when no config)
+      const roll = hash2i(hx*2+ri, hy*3+ri*2, seed);
+      if (role === 'entrance') { wallMat = 1; floorMat = 1; ceilMat = 1; }
+      else if (role === 'guardian') { wallMat = 2; floorMat = 2; ceilMat = 1; }
+      else if (role === 'treasure' || role === 'secret') { wallMat = (roll < 0.6 ? 1 : 2); floorMat = 1; ceilMat = 2; }
+      else if (role === 'shrine') { wallMat = 2; floorMat = 1; ceilMat = 2; }
+      else if (role === 'hub') { wallMat = (roll < 0.4 ? 1 : 2); floorMat = (roll < 0.5 ? 1 : 2); ceilMat = (roll < 0.7 ? 1 : 2); }
+      else if (role === 'armory') { wallMat = 2; floorMat = 2; ceilMat = 1; }
+      else if (role === 'exit') { wallMat = (roll < 0.3 ? 1 : 2); floorMat = 2; ceilMat = 1; }
+      else {
+        wallMat = (roll < 0.55 ? 1 : 2);
+        floorMat = (hash2i(hx+11, hy+22, seed+5) < 0.45 ? 1 : 2);
+        ceilMat = (hash2i(hx+33, hy+44, seed+9) < 0.75 ? 1 : 2);
+      }
     }
     // Clamp to valid IDs (max mat count will be validated in renderer)
     wallMat = Math.max(1, Math.min(8, wallMat|0));

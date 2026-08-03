@@ -1,1 +1,8 @@
-{"version":1,"materials":[{"id":1,"name":"stone_ceiling","type":"slab","base":[80,78,70],"roughness":0.9,"metal":0,"tag":"ceiling","role":"Flat stone ceiling"},{"id":2,"name":"wooden_beams","type":"beams","base":[60,45,30],"roughness":0.8,"metal":0,"tag":"ceiling","role":"Wooden beam ceiling"}]}
+{
+  "version": 2,
+  "_readme": "Ceil mats with per-mat proc overrides",
+  "materials": [
+    {"id":1, "name":"stone_ceiling", "type":"slab", "base":[80,78,70], "roughness":0.9, "metal":0, "tag":"ceiling", "role":"Flat stone ceiling", "variationSeed":301, "proc":{"blockSize":8, "groutWidth":1}},
+    {"id":2, "name":"wooden_beams", "type":"beams", "base":[60,45,30], "roughness":0.8, "metal":0, "tag":"ceiling", "role":"Wooden beam ceiling", "variationSeed":302, "proc":{"blockSize":12, "groutWidth":1, "domeHeight":0.12}}
+  ]
+}
