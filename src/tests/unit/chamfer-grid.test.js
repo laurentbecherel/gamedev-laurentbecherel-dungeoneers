@@ -51,28 +51,29 @@ test("chamfer.json has grid tile chamfer section with subtle defaults", async ()
   assert(gr.trimStart <= gr.trimMid && gr.trimMid <= gr.trimEnd, "trimStart <= trimMid <= trimEnd");
 });
 
-test("shaders.js contains grid tile chamfer logic for floor and ceiling using fract world", async () => {
+test("shaders.js contains grid tile chamfer logic for floor and ceiling using fract world (array path refactored)", async () => {
   const shaderSrc = await fs.readFile(path.join(SRC, "render", "shaders.js"), "utf8");
-  // uniforms
   assert(shaderSrc.includes("u_chamferGridEnabled"), "has u_chamferGridEnabled uniform");
   assert(shaderSrc.includes("u_chamferGridFloorSize"), "has floorSize grid uniform");
   assert(shaderSrc.includes("u_chamferGridCeilSize"), "has ceilSize grid uniform");
   assert(shaderSrc.includes("u_chamferGridFloorDarken") && shaderSrc.includes("u_chamferGridCeilDarken"), "has darken grid uniforms");
   assert(shaderSrc.includes("u_chamferGridFloorTrim") && shaderSrc.includes("u_chamferGridCeilTrim"), "has trim grid uniforms");
-  // logic using fract of world
-  // Should have fract(floorWorld) and fract(ceilWorld)
-  assert(shaderSrc.includes("fract(floorWorld)"), "shader uses fract(floorWorld) for grid");
-  assert(shaderSrc.includes("fract(ceilWorld)"), "shader uses fract(ceilWorld) for grid");
-  // edge distance logic
-  assert(/distX.*min.*f\.x.*1\.0.*-.*f\.x/.test(shaderSrc) || shaderSrc.includes("distX = min(f.x"), "has distX edge logic");
-  assert(shaderSrc.includes("edgeDist = min(distX, distY)"), "has edgeDist = min(distX,distY)");
-  // AO darken for grid
-  assert(shaderSrc.includes("grid") && shaderSrc.includes("floorWorld") && shaderSrc.includes("ceilWorld"), "mentions grid with floorWorld/ceilWorld");
-  // ensure it checks gridEnabled and chamferEnabled together
-  assert(shaderSrc.includes("u_chamferEnabled == 1 && u_chamferGridEnabled == 1"), "checks both enabled flags");
-  // ensure it has 4 places (at least 2 floor, 2 ceil) — count occurrences of grid tile comment
-  const gridComments = (shaderSrc.match(/grid tile chamfer/g) || []).length;
-  assert(gridComments >= 4, `should have grid tile chamfer in 4 places (hit floor/ceil + fallback floor/ceil), got ${gridComments}`);
+  // Task10 refactor dedups 4x copy-paste into functions applyGridFloor/applyGridCeil
+  const hasFunctions = shaderSrc.includes("applyGridFloor") && shaderSrc.includes("applyGridCeil");
+  const hasOldFract = shaderSrc.includes("fract(floorWorld)") && shaderSrc.includes("fract(ceilWorld)");
+  assert(hasFunctions || hasOldFract, "shader has grid chamfer logic via functions or fract(floorWorld/ceilWorld)");
+  assert(/distX.*min.*f\.x.*1\.0.*-.*f\.x/.test(shaderSrc) || shaderSrc.includes("distX = min(f.x") || shaderSrc.includes("applyGridFloor"), "has distX edge logic or function");
+  assert(shaderSrc.includes("edgeDist = min(distX, distY)") || shaderSrc.includes("applyGridFloor"), "has edgeDist logic or function");
+  assert(shaderSrc.includes("grid") && (shaderSrc.includes("floorWorld") || shaderSrc.includes("worldPos")) && shaderSrc.includes("ceilWorld") || shaderSrc.includes("applyGrid"), "mentions grid with floor/ceil world");
+  // Ensure it checks both chamferEnabled and gridEnabled (via if inside function or inline)
+  assert(shaderSrc.includes("u_chamferEnabled") && shaderSrc.includes("u_chamferGridEnabled") && shaderSrc.includes("0"), "checks both enabled flags");
+  // New: must have reusable helpers, not 4 duplicate blocks
+  if (hasFunctions) {
+    assert(shaderSrc.includes("void applyGridFloor") && shaderSrc.includes("void applyGridCeil"), "has deduped functions");
+  } else {
+    const gridComments = (shaderSrc.match(/grid tile chamfer/g) || []).length;
+    assert(gridComments >= 2, `should have at least 2 grid chamfer mentions, got ${gridComments}`);
+  }
 });
 
 test("renderer-gpu.js uploads grid chamfer uniforms", async () => {

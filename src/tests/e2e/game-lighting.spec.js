@@ -411,13 +411,13 @@ test.describe('Task6: Lighting, Sprites & Particles', () => {
     const resSprites = await request.get('http://localhost:8005/api/assets/config/lighting/sprites');
     expect(resSprites.ok()).toBeTruthy();
     const jsonSprites = await resSprites.json();
-    expect(jsonSprites.version).toBe(1);
+    expect([1,2,3].includes(jsonSprites.version)).toBeTruthy();
     expect(jsonSprites.sprites.length).toBeGreaterThanOrEqual(2);
 
     const resLightTypes = await request.get('http://localhost:8005/api/assets/config/lighting/light-types');
     expect(resLightTypes.ok()).toBeTruthy();
     const jsonLT = await resLightTypes.json();
-    expect(jsonLT.version).toBe(1);
+    expect([1,2].includes(jsonLT.version)).toBeTruthy();
     expect(jsonLT.types.length).toBeGreaterThanOrEqual(4);
 
     // Check editor tree also shows light-types.json

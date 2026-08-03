@@ -8,14 +8,17 @@ import { createShader, createProgram, createTexture } from "../../render/gl-util
 const shaderPath = path.join(process.cwd(), "render", "shaders.js");
 const rendererPath = path.join(process.cwd(), "render", "renderer-gpu.js");
 
-// core uniform list expected (original + 27 extended)
+// core uniform list expected — Task10 refactor: array path + 8 lights + modifiers
 const REQUIRED_UNIFORMS = [
   // core
   'u_resolution','u_playerPos','u_playerAngle','u_fov','u_playerHeight','u_mapTex','u_matMap','u_mapSize',
   'u_wallAlbedo','u_wallNormal','u_wallHeight','u_wallRoughMetal',
   'u_floorAlbedo','u_floorNormal','u_floorHeight','u_floorRoughMetal',
   'u_ceilAlbedo','u_ceilNormal','u_ceilHeight','u_ceilRoughMetal',
-  'u_texSize','u_atlasWalls','u_atlasFloors','u_atlasCeils',
+  // material count (array)
+  'u_wallCount','u_floorCount','u_ceilCount',
+  // modifier-ready
+  'u_modifierMap','u_noiseTex','u_modifiersEnabled',
   'u_lightPos','u_lightColor','u_lightIntensity','u_lightRadius',
   'u_ambientColor','u_ambientLevel','u_worldAmbientMul',
   'u_sunDir','u_sunDirZ','u_sunIntensity','u_sunColor',
@@ -29,6 +32,8 @@ const REQUIRED_UNIFORMS = [
   // chamfer
   'u_chamferEnabled','u_chamferFloorSize','u_chamferCeilSize','u_chamferWallSize','u_chamferCornerRadius','u_chamferDarken','u_chamferRoundCorners','u_chamferBlendFloor','u_chamferBlendWall','u_chamferRough','u_chamferFloor','u_chamferCeil','u_chamferWall',
   'u_chamferTrimFloor','u_chamferTrimCeil','u_chamferTrimWall','u_chamferTrimFloorAlt','u_chamferTrimCeilAlt','u_chamferCreviceEnd','u_chamferCreviceSmoothEnd','u_chamferTrimStart','u_chamferTrimMid','u_chamferTrimEnd',
+  // grid chamfer
+  'u_chamferGridEnabled','u_chamferGridFloorSize','u_chamferGridCeilSize',
   // corners true geometry
   'u_cornerEnabled','u_cornerRadius','u_cornerMode','u_cornerInner',
   'u_cornerBandNear','u_cornerBandFarExtra','u_cornerBandFarFactor','u_cornerSectorThresh','u_cornerNormalMix','u_cornerAlbedoBoost','u_cornerRoughMul','u_cornerAoMul',

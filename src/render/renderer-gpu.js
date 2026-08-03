@@ -1,19 +1,23 @@
-// WebGL2 first-person raycast renderer — Task 6: multi-lights + PBR sprites
-// Extends Task 3 by supporting MAX_LIGHTS array (player + torches/braziers) with organic flicker
-// and rendering environmental sprites as PBR billboards sharing same lighting/fog.
-// Inspiration from mygame's renderer-gpu.js which had LightManager + SpriteGpuRenderer.
+// WebGL2 raycast renderer — Task10 refactor: Material Array + Modifier-ready + 8 lights
+// - Materials baked into sampler2DArray (one layer per wall/floor/ceil type) — no atlas bleeding
+// - Generator assigns per-cell material IDs via u_mapTex (wall) and u_matMap (floor/ceil)
+// - Shader samples correct array layer: texture(u_wallAlbedo, vec3(uv, layer))
+// - Modifier plumbing: per-cell modifier map (grid-sized) + tiling noise texture + material-modifiers.json config stub
+// - Lighting forward, 8 dynamic lights with live shadows (DDA raymarch + bias), smart nearest selection
+// - Sprite PBR billboards same lights/fog
+// - Live-edit T1 instant uniforms + T2 material array rebuild + T3 regen banner
 
-import { createProgram, createTexture } from './gl-utils.js';
+import { createProgram, createTexture, createTexture2DArray, isTexture2DArraySupported } from './gl-utils.js';
 import { vsSource, fsSource, vsQuantize, fsQuantize, vsUI, fsUI, MAX_LIGHTS, vsSpriteSrc, fsSpritePBRSrc } from './shaders.js';
 import { uploadMapTexture, updateMapTexture } from './map-upload.js';
-import { generateMaterialAtlases } from '../world/materials.js';
+import { generateMaterialArrayData, generateMaterialAtlases } from '../world/materials.js';
 import { getAsset } from '../config/config.js';
 import { genPalette, buildRGBToPal } from './palette.js';
-import { LightManager, Light } from '../systems/lights.js';
+import { LightManager } from '../systems/lights.js';
 import { SpriteGpuRenderer } from './sprite-gpu.js';
-import { registerSprite } from './sprite-atlas.js';
-import { preloadSpritesGL, getSprite } from './sprite-atlas.js';
-import '../assets/sprites/registry.js'; // registers torch_wall, brazier_floor etc
+import '../assets/sprites/registry.js';
+import { generateNoiseTextureData } from '../world/noise.js';
+import { generateModifierMap } from '../world/modifiers.js';
 
 export function isWebGL2Supported() {
   try {
@@ -36,7 +40,11 @@ export class GPURenderer {
     this.vaoUI = null;
     this.mapTex = null;
     this.matMapTex = null;
+    this.modifierTex = null;
+    this.noiseTex = null;
     this.atlases = {};
+    this.materialInfo = null;
+    this.useArrayPath = true;
     this.uLoc = {};
     this.uQuant = {};
     this.uUI = {};
@@ -56,13 +64,13 @@ export class GPURenderer {
     this.pbrDebugMode = 0;
     this.chamferEnabled = 1;
     this.cornerEnabled = 1;
+    this.modifiersEnabled = 0;
     this._cfgCache = null;
-    // Task 6 additions
     this.lightManager = null;
     this.spriteRenderer = null;
     this._sprites = [];
     this._lightsCache = [];
-    this.maxLights = MAX_LIGHTS || 12;
+    this.maxLights = MAX_LIGHTS || 8;
   }
 
   async init(dungeon, config) {
@@ -107,41 +115,105 @@ export class GPURenderer {
     gl.vertexAttribPointer(locUIUV, 2, gl.FLOAT, false, 16, 8);
     gl.bindVertexArray(null);
 
-    // Materials
+    // Feature detection for array textures
+    this.useArrayPath = isTexture2DArraySupported(gl);
+    if (!this.useArrayPath) console.warn('[GPURenderer] TEXTURE_2D_ARRAY not supported, falling back to atlas');
+
+    // Load materials (all types, not just first)
     const walls = await getAsset('materials', 'walls');
     const floors = await getAsset('materials', 'floors');
     const ceils = await getAsset('materials', 'ceils');
-    const wallMats = (walls?.materials || []).slice(0, 1);
-    const floorMats = (floors?.materials || []).slice(0, 1);
-    const ceilMats = (ceils?.materials || []).slice(0, 1);
+    const wallMats = (walls?.materials || []).slice(0, 8); // cap to 8 layers for array perf
+    const floorMats = (floors?.materials || []).slice(0, 8);
+    const ceilMats = (ceils?.materials || []).slice(0, 8);
+    // Ensure at least 1
+    if (wallMats.length === 0) wallMats.push({ id:1, base:[138,58,44], roughness:0.85, metal:0, variationSeed:101 });
+    if (floorMats.length === 0) floorMats.push({ id:1, base:[90,88,80], roughness:0.88, metal:0, variationSeed:201 });
+    if (ceilMats.length === 0) ceilMats.push({ id:1, base:[80,78,70], roughness:0.9, metal:0, variationSeed:301 });
+
     const proc = config.materialsProc || config['materials-proc'] || config.materialProc || {};
     const procWalls = proc.walls || {};
     const procFloors = proc.floors || {};
     const procCeils = proc.ceils || {};
-    const atl = generateMaterialAtlases(wallMats, floorMats, ceilMats, {
-      walls: procWalls,
-      floors: procFloors,
-      ceils: procCeils,
-      ...proc
-    });
-    this.atlasInfo = atl;
-
     const renderingCfg = config.rendering || {};
     const legacyRenderer = config.renderer || {};
     const texFilterStr = renderingCfg.textureFilter || legacyRenderer.textureFilter || 'nearest';
     const tf = texFilterStr === 'linear' ? gl.LINEAR : gl.NEAREST;
-    const up = (arr, w, h) => createTexture(gl, w, h, arr, tf);
-    const tw = atl.wallAtlasW, th = 64, fw = atl.floorAtlasW, cw = atl.ceilAtlasW;
-    this.atlases.wa = up(atl.wallAlbedo, tw, th); this.atlases.wn = up(atl.wallNormal, tw, th);
-    this.atlases.wh = up(atl.wallHeight, tw, th); this.atlases.wrma = up(atl.wallRoughMetalAO, tw, th);
-    this.atlases.fa = up(atl.floorAlbedo, fw, th); this.atlases.fn = up(atl.floorNormal, fw, th);
-    this.atlases.fh = up(atl.floorHeight, fw, th); this.atlases.frma = up(atl.floorRoughMetalAO, fw, th);
-    this.atlases.ca = up(atl.ceilAlbedo, cw, th); this.atlases.cn = up(atl.ceilNormal, cw, th);
-    this.atlases.ch = up(atl.ceilHeight, cw, th); this.atlases.crma = up(atl.ceilRoughMetalAO, cw, th);
 
+    if (this.useArrayPath) {
+      const arr = generateMaterialArrayData(wallMats, floorMats, ceilMats, {
+        walls: procWalls, floors: procFloors, ceils: procCeils, ...proc, texSize: proc.texSize ?? 64
+      });
+      this.materialInfo = arr;
+      const ts = arr.texSize;
+      const upArr = (data, w, h, depth) => createTexture2DArray(gl, w, h, depth, data, tf);
+      // Walls
+      this.atlases.wa = upArr(arr.walls.albedo, ts, ts, arr.wallCount);
+      this.atlases.wn = upArr(arr.walls.normal, ts, ts, arr.wallCount);
+      this.atlases.wh = upArr(arr.walls.height, ts, ts, arr.wallCount);
+      this.atlases.wrma = upArr(arr.walls.roughMetalAO, ts, ts, arr.wallCount);
+      // Floors
+      this.atlases.fa = upArr(arr.floors.albedo, ts, ts, arr.floorCount);
+      this.atlases.fn = upArr(arr.floors.normal, ts, ts, arr.floorCount);
+      this.atlases.fh = upArr(arr.floors.height, ts, ts, arr.floorCount);
+      this.atlases.frma = upArr(arr.floors.roughMetalAO, ts, ts, arr.floorCount);
+      // Ceils
+      this.atlases.ca = upArr(arr.ceils.albedo, ts, ts, arr.ceilCount);
+      this.atlases.cn = upArr(arr.ceils.normal, ts, ts, arr.ceilCount);
+      this.atlases.ch = upArr(arr.ceils.height, ts, ts, arr.ceilCount);
+      this.atlases.crma = upArr(arr.ceils.roughMetalAO, ts, ts, arr.ceilCount);
+      // Keep legacy atlasInfo shape for shader backward compat uniform handling (not used)
+      this.atlasInfo = { texSize: ts, wallAtlasW: ts, floorAtlasW: ts, ceilAtlasW: ts, wallCount: arr.wallCount, floorCount: arr.floorCount, ceilCount: arr.ceilCount, arrayData: arr };
+    } else {
+      // Fallback old atlas path (legacy)
+      const atl = generateMaterialAtlases(wallMats.slice(0,1), floorMats.slice(0,1), ceilMats.slice(0,1), {
+        walls: procWalls, floors: procFloors, ceils: procCeils, ...proc
+      });
+      this.materialInfo = atl;
+      this.atlasInfo = atl;
+      const up = (arr, w, h) => createTexture(gl, w, h, arr, tf);
+      const tw = atl.wallAtlasW, th = 64, fw = atl.floorAtlasW, cw = atl.ceilAtlasW;
+      this.atlases.wa = up(atl.wallAlbedo, tw, th); this.atlases.wn = up(atl.wallNormal, tw, th);
+      this.atlases.wh = up(atl.wallHeight, tw, th); this.atlases.wrma = up(atl.wallRoughMetalAO, tw, th);
+      this.atlases.fa = up(atl.floorAlbedo, fw, th); this.atlases.fn = up(atl.floorNormal, fw, th);
+      this.atlases.fh = up(atl.floorHeight, fw, th); this.atlases.frma = up(atl.floorRoughMetalAO, fw, th);
+      this.atlases.ca = up(atl.ceilAlbedo, cw, th); this.atlases.cn = up(atl.ceilNormal, cw, th);
+      this.atlases.ch = up(atl.ceilHeight, cw, th); this.atlases.crma = up(atl.ceilRoughMetalAO, cw, th);
+    }
+
+    // Map textures
     const mapTexs = uploadMapTexture(gl, dungeon);
     this.mapTex = mapTexs.mapTex;
     this.matMapTex = mapTexs.matTex;
+
+    // Noise texture (tiling, baked once for organic modifier masks)
+    try {
+      const noiseCfg = config.materialModifiers?.noise || config['material-modifiers']?.noise || {};
+      const nSize = noiseCfg.size ?? 128;
+      const nSeed = noiseCfg.seed ?? (dungeon.seed || 1337);
+      const noiseData = generateNoiseTextureData(nSize, nSeed);
+      // create as regular 2D with REPEAT
+      this.noiseTex = gl.createTexture();
+      gl.bindTexture(gl.TEXTURE_2D, this.noiseTex);
+      gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, noiseData.size, noiseData.size, 0, gl.RGBA, gl.UNSIGNED_BYTE, noiseData.data);
+      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
+      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
+      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.REPEAT);
+      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.REPEAT);
+    } catch (e) { console.warn('[Renderer] noise tex failed', e); this.noiseTex = null; }
+
+    // Modifier map (per-cell field)
+    try {
+      const modMap = generateModifierMap(dungeon, config);
+      this.modifierTex = gl.createTexture();
+      gl.bindTexture(gl.TEXTURE_2D, this.modifierTex);
+      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.NEAREST);
+      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.NEAREST);
+      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+      gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, modMap.w, modMap.h, 0, gl.RGBA, gl.UNSIGNED_BYTE, modMap.data);
+      this._modifierMapInfo = modMap;
+    } catch (e) { console.warn('[Renderer] modifier tex failed', e); this.modifierTex = null; }
 
     this.paletteTex = gl.createTexture();
     this.lutTex = gl.createTexture();
@@ -168,7 +240,7 @@ export class GPURenderer {
     gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
     gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, 160, 160, 0, gl.RGBA, gl.UNSIGNED_BYTE, null);
 
-    // cache uniforms for raycast — extended with MAX_LIGHTS arrays
+    // cache uniforms for raycast — extended with MAX_LIGHTS arrays + new material/modifier uniforms
     const ul = this.uLoc, p = this.program;
     const names = [
       'u_resolution','u_playerPos','u_playerAngle','u_fov','u_playerHeight','u_mapTex','u_matMap','u_mapSize',
@@ -192,11 +264,13 @@ export class GPURenderer {
       'u_pbrEmissiveAlbedoMul','u_pbrEmissiveStrength','u_pbrF0','u_pbrAttenQuad','u_pbrGGXEps',
       'u_renderFloorMul','u_renderCeilMul','u_renderWallDarken','u_renderEyeFactor',
       'u_bobPixels',
-      'u_numLights'
+      'u_numLights',
+      // new for array path + modifiers
+      'u_wallCount','u_floorCount','u_ceilCount',
+      'u_modifierMap','u_noiseTex','u_modifiersEnabled',
     ];
     names.forEach(n => ul[n] = gl.getUniformLocation(p, n));
 
-    // MAX_LIGHTS array uniforms for raycast
     ul.u_lightPos = []; ul.u_lightColor = []; ul.u_lightIntensity = []; ul.u_lightRadius = [];
     ul.u_lightType = []; ul.u_lightDir = []; ul.u_lightConeInner = []; ul.u_lightConeOuter = [];
     ul.u_lightPulseSpeed = []; ul.u_lightPulseAmt = []; ul.u_lightNoShadow = [];
@@ -235,15 +309,19 @@ export class GPURenderer {
 
     gl.useProgram(this.program);
     gl.uniform1i(ul.u_mapTex, 0);
-    gl.uniform1i(ul.u_matMap, 13);
-    const texUnits = {u_wallAlbedo:1,u_wallNormal:2,u_wallHeight:3,u_wallRoughMetal:4,u_floorAlbedo:5,u_floorNormal:6,u_floorHeight:7,u_floorRoughMetal:8,u_ceilAlbedo:9,u_ceilNormal:10,u_ceilHeight:11,u_ceilRoughMetal:12};
-    Object.entries(texUnits).forEach(([name, unit]) => { if (ul[name]) gl.uniform1i(ul[name], unit); });
+    if (ul.u_matMap) gl.uniform1i(ul.u_matMap, 13);
+    const arrayUnits = {
+      u_wallAlbedo:1,u_wallNormal:2,u_wallHeight:3,u_wallRoughMetal:4,
+      u_floorAlbedo:5,u_floorNormal:6,u_floorHeight:7,u_floorRoughMetal:8,
+      u_ceilAlbedo:9,u_ceilNormal:10,u_ceilHeight:11,u_ceilRoughMetal:12,
+      u_noiseTex:14, u_modifierMap:15
+    };
+    Object.entries(arrayUnits).forEach(([name, unit]) => { if (ul[name]) gl.uniform1i(ul[name], unit); });
 
-    // Task 6: LightManager + SpriteRenderer init
+    // Lighting & sprites init
     try {
       this.lightManager = new LightManager(config.lighting || config.sprites || {});
       this.lightManager.setFromMap(dungeon);
-      // Preserve sprites
       this._sprites = dungeon.sprites || dungeon.items || [];
     } catch (e) {
       console.warn('[GPURenderer] LightManager init failed', e);
@@ -254,8 +332,7 @@ export class GPURenderer {
 
     try {
       this.spriteRenderer = new SpriteGpuRenderer(gl);
-      this.spriteRenderer.init({ vsSpriteSrc, fsSpritePBRSrc, MAX_LIGHTS });
-      // Preload sprites used in dungeon
+      this.spriteRenderer.init({ vsSpriteSrc, fsSpritePBRSrc, MAX_LIGHTS: this.maxLights });
       const ids = [...new Set(this._sprites.map(s => s.spriteId || s.type || 'torch_wall'))].filter(Boolean);
       await this.spriteRenderer.ensureSprites(gl, ids);
     } catch (e) {
@@ -275,8 +352,6 @@ export class GPURenderer {
     this.bandLevels = paletteCfg.bandLevels ?? rendering.bandLevels ?? legacy.bandLevels ?? 32;
   }
 
-
-  // --- Helpers for corner-aware occlusion (matches shader resolveWallHit) ---
   _isWallCell(dungeon, x, y) {
     if (x < 0 || y < 0 || x >= dungeon.w || y >= dungeon.h) return false;
     return dungeon.grid[y * dungeon.w + x] !== 0;
@@ -294,10 +369,6 @@ export class GPURenderer {
     return [t0, t1];
   }
 
-  // --- Task 6: CPU depth buffer for sprite occlusion — full-square conservative test ---
-  // Previous version matched shader's rounded-corner cutting which let rays slip through
-  // outer convex corners (pillar edges) creating thin slits where torch sprites behind
-  // walls became visible. For sprite occlusion we must treat walls as full solid cells.
   _computeDepthBuffer(dungeon, posX, posY, angle) {
     const w = this.canvas.width || 640;
     this._depthBuffer = this._depthBuffer && this._depthBuffer.length === w ? this._depthBuffer : new Float32Array(w);
@@ -355,19 +426,15 @@ export class GPURenderer {
       if (mapX === targetMapX && mapY === targetMapY) break;
       if (sideDistX < sideDistY) { sideDistX += deltaDistX; mapX += stepX; } else { sideDistY += deltaDistY; mapY += stepY; }
       if (mapX < 0 || mapY < 0 || mapX >= w || mapY >= h) return true;
-      if (mapX === targetMapX && mapY === targetMapY) break; // reached sprite tile, don't test its own floor tile
+      if (mapX === targetMapX && mapY === targetMapY) break;
       if (grid[mapY * w + mapX] === 0) continue;
-      // Ignore the wall the sprite is mounted on only when that wall is BEHIND the sprite
-      // relative to the camera (same room). If camera is beyond the wall, dot >0 and we must occlude.
       const wx = mapX + 0.5, wy = mapY + 0.5;
       if (Math.hypot(wx - x1, wy - y1) < 0.85) {
-        const swx = wx - x1, swy = wy - y1; // wall from sprite
-        const scx = x0 - x1, scy = y0 - y1; // camera from sprite
+        const swx = wx - x1, swy = wy - y1;
+        const scx = x0 - x1, scy = y0 - y1;
         const dot = swx * scx + swy * scy;
-        if (dot < 0) continue; // wall behind sprite, camera in front -> ignore mounting wall
-        // else camera is behind wall -> do NOT ignore, it blocks
+        if (dot < 0) continue;
       }
-      // Full square wall blocks — no corner cut skipping for sprite LOS
       return true;
     }
     return false;
@@ -381,23 +448,18 @@ export class GPURenderer {
     const invDet = 1.0 / (planeX * dirY - dirX * planeY);
     const tx = invDet * (dirY * dx - dirX * dy);
     const ty = invDet * (-planeY * dx + planeX * dy);
-    if (ty <= 0.12) return true; // behind camera, more lenient
+    if (ty <= 0.12) return true;
     const w = this.canvas.width || 640;
     const screenX = w * 0.5 * (1 + tx / ty);
     const mid = (screenX | 0);
     if (mid >= 0 && mid < depthBuffer.length) {
-      // increased margin from 0.18 to 0.55 to account for corner cut havin longer distance than CPU
-      // before fix this caused sprites visible head-on but culled perpendicularly
       if (ty > depthBuffer[mid] - 0.55) {
-        // double-check with LOS, don't immediately cull purely on depth — depth is conservative
-        // only cull if also LOS says occluded, otherwise allow
         if (this._isOccluded(dungeon, camX, camY, sprite.x, sprite.y)) return true;
       }
     }
     if (this._isOccluded(dungeon, camX, camY, sprite.x, sprite.y)) return true;
     return false;
   }
-
 
   _resolveToggles(cfg){
     const fogCfg = cfg.fog || {};
@@ -421,6 +483,8 @@ export class GPURenderer {
     const legacyCorner = cfg.pbr?.corner || cfg.pbr?.cornerGeometry || {};
     const cornerEnabled = cornersCfg.enabled ?? legacyCorner.enabled ?? cfg.rendering?.toggles?.cornerDefault ?? true;
     this.cornerEnabled = (cornerEnabled !== false) ? 1 : 0;
+    const modCfg = cfg.materialModifiers || cfg['material-modifiers'] || {};
+    this.modifiersEnabled = (modCfg.enabled === true) ? 1 : 0;
   }
 
   rebuildPalette() {
@@ -462,79 +526,38 @@ export class GPURenderer {
   toggleChamfer() { this.chamferEnabled ^= 1; return this.chamferEnabled; }
   toggleCorner() { this.cornerEnabled ^= 1; return this.cornerEnabled; }
   cyclePBRDebug() { this.pbrDebugMode = (this.pbrDebugMode + 1) % 9; return this.pbrDebugMode; }
+  toggleModifiers() { this.modifiersEnabled ^= 1; return this.modifiersEnabled; }
+  setModifiersEnabled(v){ this.modifiersEnabled = v?1:0; }
 
-  // ── Live-edit update hooks (Tier 1 & 2) ──
   updateConfig(partial) {
     if (!partial) return;
     if (!this._cfgCache) this._cfgCache = {};
     Object.assign(this._cfgCache, partial);
-    // Re-resolve toggles if relevant keys present
-    if (partial.fog || partial.chamfer || partial.corners || partial.pom || partial.palette) {
+    if (partial.fog || partial.chamfer || partial.corners || partial.pom || partial.palette || partial.materialModifiers) {
       try { this._resolveToggles(this._cfgCache); } catch {}
     }
     if (partial.palette) { try { this._applyPaletteFromConfig(this._cfgCache); this.rebuildPalette(); } catch {} }
   }
-  updateFog(fogCfg) {
-    if (!fogCfg) return;
-    if (!this._cfgCache) this._cfgCache = {};
-    this._cfgCache.fog = fogCfg;
-    this.fogEnabled = (fogCfg.enabled !== false) ? 1 : 0;
-  }
-  updateChamfer(chamferCfg) {
-    if (!chamferCfg) return;
-    if (!this._cfgCache) this._cfgCache = {};
-    this._cfgCache.chamfer = chamferCfg;
-    // toggles re-evaluated next frame via _resolveConfigValue, but also update enabled flag now
-    const enabled = chamferCfg.enabled ?? true;
-    this.chamferEnabled = (enabled !== false) ? 1 : 0;
-  }
-  updateCorners(cornersCfg) {
-    if (!cornersCfg) return;
-    if (!this._cfgCache) this._cfgCache = {};
-    this._cfgCache.corners = cornersCfg;
-    const enabled = cornersCfg.enabled ?? true;
-    this.cornerEnabled = (enabled !== false) ? 1 : 0;
-  }
-  updateShadows(shCfg) {
-    if (!shCfg) return;
-    if (!this._cfgCache) this._cfgCache = {};
-    this._cfgCache.shadows = shCfg;
-  }
-  updatePBR(pbrCfg) {
-    if (!pbrCfg) return;
-    if (!this._cfgCache) this._cfgCache = {};
-    this._cfgCache.pbr = pbrCfg;
-  }
-  updateAO(aoCfg) {
-    if (!aoCfg) return;
-    if (!this._cfgCache) this._cfgCache = {};
-    this._cfgCache.ao = aoCfg;
-  }
-  updateRaymarch(rmCfg) {
-    if (!rmCfg) return;
-    if (!this._cfgCache) this._cfgCache = {};
-    this._cfgCache.raymarch = rmCfg;
-  }
-  updateRendering(rCfg) {
-    if (!rCfg) return;
-    if (!this._cfgCache) this._cfgCache = {};
-    this._cfgCache.rendering = rCfg;
-  }
-  updatePOM(pomCfg) {
-    if (!pomCfg) return;
-    if (!this._cfgCache) this._cfgCache = {};
-    this._cfgCache.pom = pomCfg;
-  }
+  updateFog(fogCfg) { if (!fogCfg) return; if (!this._cfgCache) this._cfgCache = {}; this._cfgCache.fog = fogCfg; this.fogEnabled = (fogCfg.enabled !== false) ? 1 : 0; }
+  updateChamfer(chamferCfg) { if (!chamferCfg) return; if (!this._cfgCache) this._cfgCache = {}; this._cfgCache.chamfer = chamferCfg; const enabled = chamferCfg.enabled ?? true; this.chamferEnabled = (enabled !== false) ? 1 : 0; }
+  updateCorners(cornersCfg) { if (!cornersCfg) return; if (!this._cfgCache) this._cfgCache = {}; this._cfgCache.corners = cornersCfg; const enabled = cornersCfg.enabled ?? true; this.cornerEnabled = (enabled !== false) ? 1 : 0; }
+  updateShadows(shCfg) { if (!shCfg) return; if (!this._cfgCache) this._cfgCache = {}; this._cfgCache.shadows = shCfg; }
+  updatePBR(pbrCfg) { if (!pbrCfg) return; if (!this._cfgCache) this._cfgCache = {}; this._cfgCache.pbr = pbrCfg; }
+  updateAO(aoCfg) { if (!aoCfg) return; if (!this._cfgCache) this._cfgCache = {}; this._cfgCache.ao = aoCfg; }
+  updateRaymarch(rmCfg) { if (!rmCfg) return; if (!this._cfgCache) this._cfgCache = {}; this._cfgCache.raymarch = rmCfg; }
+  updateRendering(rCfg) { if (!rCfg) return; if (!this._cfgCache) this._cfgCache = {}; this._cfgCache.rendering = rCfg; }
+  updatePOM(pomCfg) { if (!pomCfg) return; if (!this._cfgCache) this._cfgCache = {}; this._cfgCache.pom = pomCfg; }
   updateLighting(lightingCfg) {
-    if (!lightingCfg) return;
-    if (!this._cfgCache) this._cfgCache = {};
-    this._cfgCache.lighting = lightingCfg;
-    if (this.lightManager && typeof this.lightManager.setConfig === 'function') {
-      try { this.lightManager.setConfig(lightingCfg); } catch {}
-    }
+    if (!lightingCfg) return; if (!this._cfgCache) this._cfgCache = {}; this._cfgCache.lighting = lightingCfg;
+    if (this.lightManager && typeof this.lightManager.setConfig === 'function') { try { this.lightManager.setConfig(lightingCfg); } catch {} }
+  }
+  updateMaterialModifiers(mmCfg){
+    if(!mmCfg) return; if(!this._cfgCache) this._cfgCache={}; this._cfgCache.materialModifiers = mmCfg; this._cfgCache['material-modifiers']=mmCfg;
+    this.modifiersEnabled = (mmCfg.enabled===true)?1:0;
   }
 
   reuploadAtlases(atl) {
+    // Legacy shim: atl may be old atlas or new arrayData
     if (!atl) return;
     const gl = this.gl;
     if (!gl) return;
@@ -543,68 +566,98 @@ export class GPURenderer {
       const legacyRenderer = this._cfgCache?.renderer || {};
       const texFilterStr = renderingCfg.textureFilter || legacyRenderer.textureFilter || 'nearest';
       const tf = texFilterStr === 'linear' ? gl.LINEAR : gl.NEAREST;
-      const up = (arr, w, h) => {
-        const tex = gl.createTexture();
-        gl.bindTexture(gl.TEXTURE_2D, tex);
-        gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, tf);
-        gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, tf);
-        gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
-        gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
-        // atl arrays are Uint8Array for albedo/normal etc but height is UInt8? In generateMaterialAtlases height is Uint8Array after pack, roughMetalAO is Uint8Array
-        // For albedo/normal we use RGBA, for height we use LUMINANCE? Existing code used createTexture helper that uploads as RGBA? Let's use same logic as init.
-        // Try to infer format by length: albedo arrays length = w*h*4
-        if (arr.length === w * h * 4) {
-          gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, w, h, 0, gl.RGBA, gl.UNSIGNED_BYTE, arr);
-        } else if (arr.length === w * h) {
-          // single channel height
-          gl.texImage2D(gl.TEXTURE_2D, 0, gl.R8, w, h, 0, gl.RED, gl.UNSIGNED_BYTE, arr);
-        } else {
-          gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, w, h, 0, gl.RGBA, gl.UNSIGNED_BYTE, arr);
-        }
-        return tex;
-      };
-      // Delete old textures?
-      const old = this.atlases;
-      const toDelete = [old.wa, old.wn, old.wh, old.wrma, old.fa, old.fn, old.fh, old.frma, old.ca, old.cn, old.ch, old.crma].filter(Boolean);
-      // Note: don't delete if WebGL context lost
-      try { toDelete.forEach(t => { try { gl.deleteTexture(t); } catch {} }); } catch {}
-
-      const tw = atl.wallAtlasW, fw = atl.floorAtlasW, cw = atl.ceilAtlasW;
-      const th = 64;
-      this.atlases.wa = up(atl.wallAlbedo, tw, th);
-      this.atlases.wn = up(atl.wallNormal, tw, th);
-      this.atlases.wh = up(atl.wallHeight, tw, th);
-      this.atlases.wrma = up(atl.wallRoughMetalAO, tw, th);
-      this.atlases.fa = up(atl.floorAlbedo, fw, th);
-      this.atlases.fn = up(atl.floorNormal, fw, th);
-      this.atlases.fh = up(atl.floorHeight, fw, th);
-      this.atlases.frma = up(atl.floorRoughMetalAO, fw, th);
-      this.atlases.ca = up(atl.ceilAlbedo, cw, th);
-      this.atlases.cn = up(atl.ceilNormal, cw, th);
-      this.atlases.ch = up(atl.ceilHeight, cw, th);
-      this.atlases.crma = up(atl.ceilRoughMetalAO, cw, th);
-      this.atlasInfo = atl;
-    } catch (e) {
-      console.warn('[Renderer] reuploadAtlases failed', e);
-    }
+      // Prefer array path if available
+      const arr = atl.arrayData || atl;
+      if (arr.walls && arr.walls.albedo && arr.wallCount) {
+        // Array path
+        const old = this.atlases;
+        const toDelete = [old.wa, old.wn, old.wh, old.wrma, old.fa, old.fn, old.fh, old.frma, old.ca, old.cn, old.ch, old.crma].filter(Boolean);
+        try { toDelete.forEach(t => { try { gl.deleteTexture(t); } catch {} }); } catch {}
+        const ts = arr.texSize || 64;
+        const upArr = (data, w, h, depth) => {
+          const { createTexture2DArray } = require ? (()=>null) : { createTexture2DArray: null };
+          // Use direct import via dynamic reference: we already imported createTexture2DArray at top
+          return createTexture2DArray(gl, w, h, depth, data, tf);
+        };
+        // We need to capture imported function via closure: reuse createTexture2DArray from module scope
+        // Since we cannot require, call directly
+        const make = (data, depth) => {
+          const tex = gl.createTexture();
+          gl.bindTexture(gl.TEXTURE_2D_ARRAY, tex);
+          const lp = ts*ts;
+          let internalFormat, format;
+          if (data.length === lp*depth) { internalFormat=gl.R8; format=gl.RED; }
+          else { internalFormat=gl.RGBA8; format=gl.RGBA; }
+          gl.texImage3D(gl.TEXTURE_2D_ARRAY, 0, internalFormat, ts, ts, depth, 0, format, gl.UNSIGNED_BYTE, data);
+          gl.texParameteri(gl.TEXTURE_2D_ARRAY, gl.TEXTURE_MIN_FILTER, tf);
+          gl.texParameteri(gl.TEXTURE_2D_ARRAY, gl.TEXTURE_MAG_FILTER, tf);
+          gl.texParameteri(gl.TEXTURE_2D_ARRAY, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+          gl.texParameteri(gl.TEXTURE_2D_ARRAY, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+          gl.texParameteri(gl.TEXTURE_2D_ARRAY, gl.TEXTURE_WRAP_R, gl.CLAMP_TO_EDGE);
+          return tex;
+        };
+        this.atlases.wa = make(arr.walls.albedo, arr.wallCount);
+        this.atlases.wn = make(arr.walls.normal, arr.wallCount);
+        this.atlases.wh = make(arr.walls.height, arr.wallCount);
+        this.atlases.wrma = make(arr.walls.roughMetalAO, arr.wallCount);
+        this.atlases.fa = make(arr.floors.albedo, arr.floorCount);
+        this.atlases.fn = make(arr.floors.normal, arr.floorCount);
+        this.atlases.fh = make(arr.floors.height, arr.floorCount);
+        this.atlases.frma = make(arr.floors.roughMetalAO, arr.floorCount);
+        this.atlases.ca = make(arr.ceils.albedo, arr.ceilCount);
+        this.atlases.cn = make(arr.ceils.normal, arr.ceilCount);
+        this.atlases.ch = make(arr.ceils.height, arr.ceilCount);
+        this.atlases.crma = make(arr.ceils.roughMetalAO, arr.ceilCount);
+        this.materialInfo = arr;
+        this.atlasInfo = { texSize: ts, wallAtlasW: ts, floorAtlasW: ts, ceilAtlasW: ts, wallCount: arr.wallCount, floorCount: arr.floorCount, ceilCount: arr.ceilCount, arrayData: arr };
+      } else {
+        // Legacy horizontal atlas
+        const up = (arrData, w, h) => {
+          const tex = gl.createTexture();
+          gl.bindTexture(gl.TEXTURE_2D, tex);
+          gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, tf);
+          gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, tf);
+          gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+          gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+          if (arrData.length === w * h * 4) gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, w, h, 0, gl.RGBA, gl.UNSIGNED_BYTE, arrData);
+          else if (arrData.length === w * h) gl.texImage2D(gl.TEXTURE_2D, 0, gl.R8, w, h, 0, gl.RED, gl.UNSIGNED_BYTE, arrData);
+          else gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, w, h, 0, gl.RGBA, gl.UNSIGNED_BYTE, arrData);
+          return tex;
+        };
+        const old = this.atlases;
+        const toDelete = [old.wa, old.wn, old.wh, old.wrma, old.fa, old.fn, old.fh, old.frma, old.ca, old.cn, old.ch, old.crma].filter(Boolean);
+        try { toDelete.forEach(t => { try { gl.deleteTexture(t); } catch {} }); } catch {}
+        const tw = atl.wallAtlasW, fw = atl.floorAtlasW, cw = atl.ceilAtlasW;
+        const th = 64;
+        this.atlases.wa = up(atl.wallAlbedo, tw, th); this.atlases.wn = up(atl.wallNormal, tw, th); this.atlases.wh = up(atl.wallHeight, tw, th); this.atlases.wrma = up(atl.wallRoughMetalAO, tw, th);
+        this.atlases.fa = up(atl.floorAlbedo, fw, th); this.atlases.fn = up(atl.floorNormal, fw, th); this.atlases.fh = up(atl.floorHeight, fw, th); this.atlases.frma = up(atl.floorRoughMetalAO, fw, th);
+        this.atlases.ca = up(atl.ceilAlbedo, cw, th); this.atlases.cn = up(atl.ceilNormal, cw, th); this.atlases.ch = up(atl.ceilHeight, cw, th); this.atlases.crma = up(atl.ceilRoughMetalAO, cw, th);
+        this.atlasInfo = atl;
+      }
+    } catch (e) { console.warn('[Renderer] reuploadAtlases failed', e); }
   }
 
   uploadMap(dungeon) {
     if (this.mapTex && this.matMapTex) updateMapTexture(this.gl, this.mapTex, this.matMapTex, dungeon);
     else { const t = uploadMapTexture(this.gl, dungeon); this.mapTex = t.mapTex; this.matMapTex = t.matTex; }
-    // Update lights/sprites for Task 6
     try {
-      if (this.lightManager) {
-        // Preserve maxLights from current config if possible
-        this.lightManager.setFromMap(dungeon);
-      }
+      if (this.lightManager) this.lightManager.setFromMap(dungeon);
       this._sprites = dungeon.sprites || dungeon.items || [];
       if (this.spriteRenderer) {
         const gl = this.gl;
         const ids = [...new Set(this._sprites.map(s => s.spriteId || s.type || 'torch_wall'))].filter(Boolean);
         this.spriteRenderer.ensureSprites(gl, ids).catch(()=>{});
       }
-    } catch (e) { console.warn('[uploadMap] sprite/light update failed', e); }
+      // Upload modifier map if changed
+      if (this.modifierTex) {
+        const gl = this.gl;
+        const modMap = dungeon.modifierMap || (()=>{ try{return generateModifierMap(dungeon, this._cfgCache||{});}catch{return null;}})();
+        if (modMap && modMap.data) {
+          gl.bindTexture(gl.TEXTURE_2D, this.modifierTex);
+          gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, modMap.w, modMap.h, 0, gl.RGBA, gl.UNSIGNED_BYTE, modMap.data);
+        }
+      }
+    } catch (e) { console.warn('[uploadMap] sprite/light/modifier update failed', e); }
   }
 
   renderMapUI(texData, uiCfg) {
@@ -680,7 +733,6 @@ export class GPURenderer {
     gl.bindVertexArray(this.vao);
     const ul = this.uLoc;
 
-    // View bob handling
     const rawPos = player.getPosition();
     let camX = rawPos.x;
     let camY = rawPos.y;
@@ -714,19 +766,33 @@ export class GPURenderer {
     gl.activeTexture(gl.TEXTURE0); gl.bindTexture(gl.TEXTURE_2D, this.mapTex);
     gl.uniform1i(ul.u_mapTex, 0);
     gl.activeTexture(gl.TEXTURE0 + 13); gl.bindTexture(gl.TEXTURE_2D, this.matMapTex);
-    gl.uniform1i(ul.u_matMap, 13);
+    if (ul.u_matMap) gl.uniform1i(ul.u_matMap, 13);
 
     const a = this.atlases;
-    const bind = (tex, unit, locName) => { gl.activeTexture(gl.TEXTURE0 + unit); gl.bindTexture(gl.TEXTURE_2D, tex); if (ul[locName]) gl.uniform1i(ul[locName], unit); };
-    bind(a.wa, 1, 'u_wallAlbedo'); bind(a.wn, 2, 'u_wallNormal'); bind(a.wh, 3, 'u_wallHeight'); bind(a.wrma, 4, 'u_wallRoughMetal');
-    bind(a.fa, 5, 'u_floorAlbedo'); bind(a.fn, 6, 'u_floorNormal'); bind(a.fh, 7, 'u_floorHeight'); bind(a.frma, 8, 'u_floorRoughMetal');
-    bind(a.ca, 9, 'u_ceilAlbedo'); bind(a.cn, 10, 'u_ceilNormal'); bind(a.ch, 11, 'u_ceilHeight'); bind(a.crma, 12, 'u_ceilRoughMetal');
+    const bindArray = (tex, unit, locName) => {
+      gl.activeTexture(gl.TEXTURE0 + unit);
+      if (this.useArrayPath) gl.bindTexture(gl.TEXTURE_2D_ARRAY, tex);
+      else gl.bindTexture(gl.TEXTURE_2D, tex);
+      if (ul[locName]) gl.uniform1i(ul[locName], unit);
+    };
+    bindArray(a.wa, 1, 'u_wallAlbedo'); bindArray(a.wn, 2, 'u_wallNormal'); bindArray(a.wh, 3, 'u_wallHeight'); bindArray(a.wrma, 4, 'u_wallRoughMetal');
+    bindArray(a.fa, 5, 'u_floorAlbedo'); bindArray(a.fn, 6, 'u_floorNormal'); bindArray(a.fh, 7, 'u_floorHeight'); bindArray(a.frma, 8, 'u_floorRoughMetal');
+    bindArray(a.ca, 9, 'u_ceilAlbedo'); bindArray(a.cn, 10, 'u_ceilNormal'); bindArray(a.ch, 11, 'u_ceilHeight'); bindArray(a.crma, 12, 'u_ceilRoughMetal');
 
-    const ai = this.atlasInfo;
-    gl.uniform1f(ul.u_texSize, ai.texSize);
-    gl.uniform1f(ul.u_atlasWalls, ai.wallAtlasW);
-    gl.uniform1f(ul.u_atlasFloors, ai.floorAtlasW);
-    gl.uniform1f(ul.u_atlasCeils, ai.ceilAtlasW);
+    // Noise + modifier
+    if (this.noiseTex) { gl.activeTexture(gl.TEXTURE0+14); gl.bindTexture(gl.TEXTURE_2D, this.noiseTex); if (ul.u_noiseTex) gl.uniform1i(ul.u_noiseTex, 14); }
+    if (this.modifierTex) { gl.activeTexture(gl.TEXTURE0+15); gl.bindTexture(gl.TEXTURE_2D, this.modifierTex); if (ul.u_modifierMap) gl.uniform1i(ul.u_modifierMap, 15); }
+    if (ul.u_modifiersEnabled) gl.uniform1i(ul.u_modifiersEnabled, this.modifiersEnabled?1:0);
+
+    const ai = this.atlasInfo || this.materialInfo || { texSize:64, wallCount:1, floorCount:1, ceilCount:1 };
+    const ts = ai.texSize || 64;
+    if (ul.u_texSize) gl.uniform1f(ul.u_texSize, ts);
+    if (ul.u_atlasWalls) gl.uniform1f(ul.u_atlasWalls, ai.wallAtlasW || ts);
+    if (ul.u_atlasFloors) gl.uniform1f(ul.u_atlasFloors, ai.floorAtlasW || ts);
+    if (ul.u_atlasCeils) gl.uniform1f(ul.u_atlasCeils, ai.ceilAtlasW || ts);
+    if (ul.u_wallCount) gl.uniform1f(ul.u_wallCount, ai.wallCount || ai.wallCount===0? ai.wallCount : 1);
+    if (ul.u_floorCount) gl.uniform1f(ul.u_floorCount, ai.floorCount || 1);
+    if (ul.u_ceilCount) gl.uniform1f(ul.u_ceilCount, ai.ceilCount || 1);
 
     // Lighting base
     const ambientLevel = this._resolveConfigValue(cfg, ['lighting.ambient.level','lights.ambient','renderer.ambient'], 0.36);
@@ -774,7 +840,6 @@ export class GPURenderer {
     if (ul.u_pomFadeStart) gl.uniform1f(ul.u_pomFadeStart, pomFadeStart);
     if (ul.u_pomFadeEnd) gl.uniform1f(ul.u_pomFadeEnd, pomFadeEnd);
 
-    // Debug toggles
     if (ul.u_gridDebug) gl.uniform1i(ul.u_gridDebug, this.gridDebug ? 1 : 0);
     if (ul.u_lightingEnabled) gl.uniform1i(ul.u_lightingEnabled, this.lightingEnabled ? 1 : 0);
     if (ul.u_pbrEnabled) gl.uniform1i(ul.u_pbrEnabled, this.pbrEnabled ? 1 : 0);
@@ -868,10 +933,9 @@ export class GPURenderer {
     if (ul.u_chamferTrimMid) gl.uniform1f(ul.u_chamferTrimMid, trimMid);
     if (ul.u_chamferTrimEnd) gl.uniform1f(ul.u_chamferTrimEnd, trimEnd);
 
-    // --- Task 8: grid tile chamfer (floor/ceiling 1m grout) — subtle, live-editable ---
     const gridCfg = chCfg.grid || {};
     const cfgGridEnabled = gridCfg.enabled ?? true;
-    const gridEnabledUpload = cfgGridEnabled && chamEnabled ? 1 : 0; // respect global chamfer enable
+    const gridEnabledUpload = cfgGridEnabled && chamEnabled ? 1 : 0;
     if (ul.u_chamferGridEnabled) gl.uniform1i(ul.u_chamferGridEnabled, gridEnabledUpload);
     const gFloorSize = this._resolveConfigValue(cfg, ['chamfer.grid.floorSize','chamfer.grid.floorSize'], 0.07);
     const gCeilSize = this._resolveConfigValue(cfg, ['chamfer.grid.ceilSize'], 0.06);
@@ -933,12 +997,11 @@ export class GPURenderer {
     if (ul.u_cornerRoughMul) gl.uniform1f(ul.u_cornerRoughMul, roughMulC);
     if (ul.u_cornerAoMul) gl.uniform1f(ul.u_cornerAoMul, aoMulC);
 
-    // ---- Task 6: multi-light upload (player + environment) - smart 12 closest with room awareness ----
+    // Multi-light upload — forward 8 lights, smart scoring
     const playerLight = player.getLightSource();
     let envLights = [];
     try {
       if (this.lightManager) {
-        // Get all env lights, then score by distance + visibility + front facing + room role boost
         const all = this.lightManager.lights || [];
         const camPos = { x: camX, y: camY };
         const dirX = Math.cos(renderAngle), dirY = Math.sin(renderAngle);
@@ -946,28 +1009,19 @@ export class GPURenderer {
           const dx = L.pos[0] - camX, dy = L.pos[1] - camY;
           const d2 = dx*dx + dy*dy;
           const dist = Math.sqrt(d2);
-          // Front check: dot forward with to light (positive = in front)
           const frontDot = dx * dirX + dy * dirY;
           let score = dist;
-          // Penalize behind camera (since you don't need to light behind you as strongly)
-          if (frontDot < 0) score += 4.5; // behind penalty
-          // Occlusion check: if wall between camera and light, add penalty but don't discard (soft)
+          if (frontDot < 0) score += 4.5;
           let occluded = false;
           try { occluded = this._isOccluded(dungeon, camX, camY, L.pos[0], L.pos[1]); } catch {}
-          if (occluded) {
-            // If occluded and far beyond wall, likely from other room - heavy penalty
-            score += 6.0 + dist * 0.15;
-          }
-          // Room boost: if light is in same room as player, slight boost (reduce score)
+          if (occluded) score += 6.0 + dist * 0.15;
           try {
             const playerRoom = dungeon.rooms ? dungeon.rooms.find(r => camX >= r.x && camX < r.x + r.w && camY >= r.y && camY < r.y + r.h) : null;
             const lightRoomIdx = L.roomIndex ?? -1;
             if (playerRoom && dungeon.rooms && dungeon.rooms[lightRoomIdx] === playerRoom) score -= 1.2;
           } catch {}
-          // Type boost: braziers/treasure lights more important in current room? Keep simple
           return { L, score, dist, frontDot, occluded };
         });
-        // Sort by score, then take closest maxLights-1
         scored.sort((a,b) => a.score - b.score);
         envLights = scored.slice(0, Math.max(0, this.maxLights - 1)).map(s => s.L);
       } else if (dungeon.lights) {
@@ -975,42 +1029,26 @@ export class GPURenderer {
           const pos = l.pos || [l.x||0, l.y||0, l.z||0.5];
           return { pos, color: l.color, intensity: l.intensity, radius: l.radius, flickerSpeed: l.flickerSpeed, flickerAmount: l.flickerAmount, phase: l.phase, type: l.type||'flicker', dir: l.dir||[0,0,-1], coneInner: l.coneInner||0.85, coneOuter: l.coneOuter||0.65, pulseSpeed: l.pulseSpeed||0, pulseAmount: l.pulseAmount||0, noShadow: !!l.noShadow, roomIndex: l.roomIndex };
         });
-        // still sort by distance smart?
         const dirX = Math.cos(renderAngle), dirY = Math.sin(renderAngle);
         envLights = envLights.map(L=>{ const dx=L.pos[0]-camX, dy=L.pos[1]-camY; const dist=Math.hypot(dx,dy); const front=dx*dirX+dy*dirY; const occ=this._isOccluded? (this._isOccluded(dungeon,camX,camY,L.pos[0],L.pos[1])?6:0):0; const behind=front<0?4.5:0; return {L, score:dist+occ+behind}; }).sort((a,b)=>a.score-b.score).slice(0, Math.max(0,this.maxLights-1)).map(o=>o.L);
       }
     } catch (e) { console.warn('[lights smart select] failed', e); }
 
-    // Compute flickered intensities via LightManager logic or organic factor inline
     const time = timeSec;
     const lightList = [];
-    // Player light first (so it always exists)
     lightList.push({
       pos: [playerLight.x, playerLight.y, playerLight.z],
       color: playerLight.color,
       intensity: playerLight.intensity,
       radius: playerLight.radius,
-      type: 'point',
-      typeId: 0,
-      dir: [0,0,-1],
-      coneInner: 0.85,
-      coneOuter: 0.65,
-      pulseSpeed: 0,
-      pulseAmount: 0,
-      noShadow: true,
-      flickerSpeed: 0,
-      flickerAmount: 0,
-      phase: 0,
+      type: 'point', typeId: 0, dir: [0,0,-1], coneInner:0.85, coneOuter:0.65, pulseSpeed:0, pulseAmount:0, noShadow:true, flickerSpeed:0, flickerAmount:0, phase:0,
     });
-
     for (let i = 0; i < envLights.length && lightList.length < this.maxLights; i++) {
       const L = envLights[i];
-      // Compute organic flicker factor if Light has method, else use cheap sin approximation
       let intensity = L.intensity;
       try {
         if (L.getFlickeredIntensity) intensity = L.getFlickeredIntensity(time);
         else {
-          // inline organic cheap: use same as light-types for consistency
           const fs = L.flickerSpeed || 0, fa = L.flickerAmount || 0, ph = L.phase || 0;
           if (fs || fa) {
             const baseT = time * fs + ph;
@@ -1030,25 +1068,14 @@ export class GPURenderer {
         }
       } catch {}
       lightList.push({
-        pos: L.pos,
-        color: L.color,
-        intensity,
-        radius: L.radius,
-        type: L.type || 'point',
+        pos: L.pos, color: L.color, intensity, radius: L.radius, type: L.type || 'point',
         typeId: (L.typeId !== undefined) ? L.typeId : ({point:0,spot:1,flicker:2,pulse:3,emissive:4,ambient:5,steady:6}[L.type]||0),
-        dir: L.dir || [0,0,-1],
-        coneInner: L.coneInner ?? 0.85,
-        coneOuter: L.coneOuter ?? 0.65,
-        pulseSpeed: L.pulseSpeed ?? 0,
-        pulseAmount: L.pulseAmount ?? L.pulseAmt ?? 0,
-        noShadow: !!L.noShadow,
-        flickerSpeed: L.flickerSpeed || 0,
-        flickerAmount: L.flickerAmount || 0,
-        phase: L.phase || 0,
+        dir: L.dir || [0,0,-1], coneInner: L.coneInner ?? 0.85, coneOuter: L.coneOuter ?? 0.65,
+        pulseSpeed: L.pulseSpeed ?? 0, pulseAmount: L.pulseAmount ?? L.pulseAmt ?? 0,
+        noShadow: !!L.noShadow, flickerSpeed: L.flickerSpeed || 0, flickerAmount: L.flickerAmount || 0, phase: L.phase || 0,
       });
     }
 
-    // Upload to shader
     const numLights = Math.min(lightList.length, this.maxLights);
     if (ul.u_numLights) gl.uniform1i(ul.u_numLights, numLights);
     for (let i = 0; i < this.maxLights; i++) {
@@ -1077,8 +1104,6 @@ export class GPURenderer {
         if (ul.u_lightNoShadow[i]) gl.uniform1i(ul.u_lightNoShadow[i], 0);
       }
     }
-
-    // store for sprite rendering same flickered list
     this._lightsCache = lightList;
 
     gl.uniform1i(ul.u_authentic, this.authentic ? 1 : 0);
@@ -1088,71 +1113,40 @@ export class GPURenderer {
     gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
     gl.bindVertexArray(null);
 
-    // ---- Task 6: render sprites with proper wall/floor/ceil occlusion ----
-    // Sprites from other rooms must not show through walls. Use CPU depth buffer
-    // DDA (matches shader) + line-of-sight check. Also cull far sprites.
-    // Light occlusion already handled via traceRay shadows in shader.
-    // Smart handling >12 lights: LightManager.getNearest chooses 12 closest including player as slot 0.
     if (this.spriteRenderer && this._sprites && this._sprites.length > 0) {
       try {
         const eyeZ = baseHeight;
-        // cache FOV for depth buffer compute
         this._fovCache = fov;
         const camera = {
-          x: camX,
-          y: camY,
-          angle: renderAngle,
-          eyeZ,
-          bobPixels,
+          x: camX, y: camY, angle: renderAngle, eyeZ, bobPixels,
           planeLen: Math.tan(fov*0.5),
           resolution: [this.canvas.width, this.canvas.height],
         };
-
-        // Compute depth buffer this frame for occlusion (cheap CPU DDA per column)
         const depthBuffer = this._computeDepthBuffer(dungeon, camX, camY, renderAngle);
-
-        // Build sprite render list with 3 culls: distance, depth buffer, LOS
         const spritesForRender = [];
         for (const orig of this._sprites) {
           const dx = orig.x - camX, dy = orig.y - camY;
           const d2 = dx*dx + dy*dy;
-          if (d2 >= 22*22) continue; // far cull
-          // Rough behind check via inverse determinant
-          // compute ty quickly: dot dir with to sprite
-          // reuse helper: if sprite occluded by walls, skip
+          if (d2 >= 22*22) continue;
           if (this._isSpriteOccluded(dungeon, camX, camY, orig, depthBuffer, renderAngle)) continue;
-
           spritesForRender.push({
-            x: orig.x,
-            y: orig.y,
-            z: orig.z,
+            x: orig.x, y: orig.y, z: orig.z,
             spriteId: orig.spriteId || orig.type || 'torch_wall',
             type: orig.spriteId || orig.type,
-            frame: orig.frame || 0,
-            scale: orig.scale || 1,
-            alpha: orig.alpha ?? 1,
-            visible: orig.visible !== false,
-            material: orig.material || null,
+            frame: orig.frame || 0, scale: orig.scale || 1, alpha: orig.alpha ?? 1,
+            visible: orig.visible !== false, material: orig.material || null,
           });
         }
-
-        // Render into sceneFBO still bound
         gl.bindFramebuffer(gl.FRAMEBUFFER, this.sceneFBO);
         this.spriteRenderer.render(spritesForRender, camera, this._lightsCache, timeSec, {
           sunDir: { x: sunDir[0]/sunLen, y: sunDir[1]/sunLen, z: sunDir[2]/sunLen },
-          sunIntensity,
-          sunColor,
-          ambient: ambientLevel,
-          fogBase: fogCfg.base ?? 0.06,
-          fogSq: fogCfg.squared ?? 0.005,
+          sunIntensity, sunColor, ambient: ambientLevel,
+          fogBase: fogCfg.base ?? 0.06, fogSq: fogCfg.squared ?? 0.005,
         });
         gl.bindVertexArray(null);
-      } catch (e) {
-        console.warn('[render sprites] failed', e);
-      }
+      } catch (e) { console.warn('[render sprites] failed', e); }
     }
 
-    // Pass 2: quantize to screen
     gl.bindFramebuffer(gl.FRAMEBUFFER, null);
     gl.viewport(0, 0, this.canvas.width, this.canvas.height);
     gl.useProgram(this.quantProgram);
@@ -1180,7 +1174,6 @@ export class GPURenderer {
     if (this.spriteRenderer) this.spriteRenderer.resize();
   }
   isReady() { return this.ready; }
-
   renderMapOnly(dungeon, player) {
     if (!this.ready) return;
     const gl = this.gl;

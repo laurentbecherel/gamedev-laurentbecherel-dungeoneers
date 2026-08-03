@@ -321,24 +321,38 @@ test('Map overlay parchment colors #e8dcc4 / #ddd0b8 and Pixelify Sans font', as
   expect(typeof hasFontLink).toBe('boolean');
 });
 
-test('Generator single-material lock: all pools ID 1, grid uniq IDs [0,1]', async ({ page, request }) => {
+test('Generator material array pipeline: per-room wall/floor/ceil variation via array layers', async ({ page, request }) => {
   const rr = await request.get('/api/assets/config/gameplay/generator');
   expect(rr.ok()).toBeTruthy();
-  const themes = await rr.json();
-  expect(themes.boundaryWallId).toBe(1);
-  expect(themes.roomAttempts).toBe(200);
+  const genCfg = await rr.json();
+  expect(genCfg.boundaryWallId).toBe(1);
+  expect(genCfg.roomAttempts).toBe(200);
   await page.goto('/game.html');
   await page.waitForTimeout(1200);
   const dungeonInfo = await page.evaluate(() => {
     const game = window.game || window._game || null;
     if (!game || !game.dungeon) return null;
     const uniq = [...new Set(game.dungeon.grid)];
-    return { uniq, rooms: game.dungeon.rooms.length, w: game.dungeon.w, h: game.dungeon.h };
+    const floorUniq = [...new Set(game.dungeon.floorMat || [])];
+    const ceilUniq = [...new Set(game.dungeon.ceilMat || [])];
+    const roomsMat = (game.dungeon.rooms || []).map(r=>({wallMat:r.wallMat, floorMat:r.floorMat, ceilMat:r.ceilMat, role:r.role}));
+    const rendererInfo = { useArrayPath: window._gameRenderer?.useArrayPath ?? null, wallCount: window._gameRenderer?.materialInfo?.wallCount ?? null, maxLights: window._gameRenderer?.maxLights ?? null };
+    return { uniq, floorUniq, ceilUniq, roomsMat, rendererInfo, hasModifierTex: !!window._gameRenderer?.modifierTex, hasNoiseTex: !!window._gameRenderer?.noiseTex };
   });
   if (dungeonInfo) {
+    // Floor 0 must exist, wall IDs at least 1, now array pipeline allows 1 and 2
     expect(dungeonInfo.uniq.includes(0)).toBeTruthy();
     expect(dungeonInfo.uniq.includes(1)).toBeTruthy();
-    expect(dungeonInfo.uniq.includes(2)).toBeFalsy();
+    // New: array path may include 2 (rough stone) per room — allowed
+    expect(dungeonInfo.uniq.length).toBeGreaterThanOrEqual(2);
+    expect(dungeonInfo.uniq.length).toBeLessThanOrEqual(9);
+    // Floor/ceil mats should have variation 1 and 2 (stone slab vs cobble, ceiling vs beams)
+    expect(dungeonInfo.floorUniq.length).toBeGreaterThanOrEqual(1);
+    // Renderer should use array path and 8 lights
+    expect(dungeonInfo.rendererInfo.useArrayPath).toBeTruthy();
+    expect(dungeonInfo.rendererInfo.maxLights).toBeGreaterThanOrEqual(8);
+    expect(dungeonInfo.hasNoiseTex).toBeTruthy();
+    expect(dungeonInfo.hasModifierTex).toBeTruthy();
   }
 });
 

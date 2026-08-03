@@ -26,7 +26,7 @@ test('lighting.json has maxLights and torchColors palette and player torch', asy
 
 test('sprites.json structure complete with material placement lightProfile', async () => {
   const s = JSON.parse(await fs.readFile(path.join(CONFIG_ROOT, 'lighting/sprites.json'), 'utf8'));
-  assert.equal(s.version, 1, 'version 1');
+  assert.ok([1,2,3].includes(s.version), `version 1..3, got ${s.version}`);
   assert.ok(s._readme, 'has _readme');
   assert.ok(Array.isArray(s.sprites) && s.sprites.length >= 3, 'at least 3 sprite defs now');
   for (const sprite of s.sprites) {

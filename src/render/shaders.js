@@ -1,9 +1,12 @@
-// GLSL shader sources for WebGL2 raycaster — Task 6 Complete: multi-lights + PBR sprites
-// All visual domains exposed via uniforms from dedicated JSONs
-// Extends Task 3 with MAX_LIGHTS array and sprite billboard PBR shaders.
-// Inspiration from mygame's shaders.js which had MAX_LIGHTS 12 and sprite GPU path.
+// GLSL shader sources — Task10 refactor: Material Array Pipeline
+// - Materials baked into sampler2DArray, one layer per wall/floor/ceil type (no bleeding, trivial to add type)
+// - Per-cell material IDs via u_mapTex.R (wall) and u_matMap.RG (floor/ceil) → array layer = id-1
+// - Modifier-ready plumbing: u_modifierMap (grid-sized per-cell field), u_noiseTex (tiling organic mask), u_modifiersEnabled stub
+// - Forward lighting, 8 dynamic lights (was 12) with live shadows (DDA + bias)
+// - Deduped chamfer / grid-chamfer into reusable functions (was 4x copy-paste)
+// - Modular sections but still single program for WebGL2
 
-export const MAX_LIGHTS = 12;
+export const MAX_LIGHTS = 8;
 export const MAX_CHARS = 8;
 
 export const vsSource = `#version 300 es
@@ -15,14 +18,19 @@ void main() {
 }
 `;
 
+// ----------------------------------------------------------------------------
+// Fragment shader — organized sections for maintainability
+// ----------------------------------------------------------------------------
 export const fsSource = `#version 300 es
 precision highp float;
 precision highp int;
 precision highp sampler2D;
+precision highp sampler2DArray;
 
 in vec2 v_uv;
 out vec4 outColor;
 
+// ---- core ----
 uniform vec2  u_resolution;
 uniform vec2  u_playerPos;
 uniform float u_playerAngle;
@@ -30,31 +38,45 @@ uniform float u_fov;
 uniform float u_playerHeight;
 uniform float u_bobPixels;
 
-uniform sampler2D u_mapTex;
-uniform sampler2D u_matMap;
+uniform sampler2D u_mapTex;    // R = wall mat ID (0 floor)
+uniform sampler2D u_matMap;    // R = floor mat ID, G = ceil mat ID
 uniform vec2  u_mapSize;
 
-uniform sampler2D u_wallAlbedo, u_wallNormal, u_wallHeight, u_wallRoughMetal;
-uniform sampler2D u_floorAlbedo, u_floorNormal, u_floorHeight, u_floorRoughMetal;
-uniform sampler2D u_ceilAlbedo,  u_ceilNormal,  u_ceilHeight,  u_ceilRoughMetal;
+// ---- material arrays (array path) ----
+// Each is sampler2DArray: layer = materialId - 1
+uniform sampler2DArray u_wallAlbedo, u_wallNormal, u_wallHeight, u_wallRoughMetal;
+uniform sampler2DArray u_floorAlbedo, u_floorNormal, u_floorHeight, u_floorRoughMetal;
+uniform sampler2DArray u_ceilAlbedo,  u_ceilNormal,  u_ceilHeight,  u_ceilRoughMetal;
+// Legacy atlas uniforms kept for fallback compat (unused in array path, but queried)
 uniform float u_texSize;
 uniform float u_atlasWalls, u_atlasFloors, u_atlasCeils;
 
+// ---- material count (clamp layer) ----
+uniform float u_wallCount;
+uniform float u_floorCount;
+uniform float u_ceilCount;
+
+// ---- modifier-ready ----
+uniform sampler2D u_modifierMap; // grid W x H, RGBA = modifier intensities 0..1
+uniform sampler2D u_noiseTex;    // tiling 128x128 FBM noise RGBA
+uniform int u_modifiersEnabled;  // 0 = off (default), 1 = on (stub)
+
+// ---- lighting (forward 8) ----
 uniform int   u_numLights;
-uniform vec3  u_lightPos[12];
-uniform vec3  u_lightColor[12];
-uniform float u_lightIntensity[12];
-uniform float u_lightRadius[12];
-uniform int   u_lightType[12];
-uniform vec3  u_lightDir[12];
-uniform float u_lightConeInner[12];
-uniform float u_lightConeOuter[12];
-uniform float u_lightPulseSpeed[12];
-uniform float u_lightPulseAmt[12];
-uniform int   u_lightNoShadow[12];
-uniform float u_lightFlickerSpeed[12];
-uniform float u_lightFlickerAmount[12];
-uniform float u_lightPhase[12];
+uniform vec3  u_lightPos[8];
+uniform vec3  u_lightColor[8];
+uniform float u_lightIntensity[8];
+uniform float u_lightRadius[8];
+uniform int   u_lightType[8];
+uniform vec3  u_lightDir[8];
+uniform float u_lightConeInner[8];
+uniform float u_lightConeOuter[8];
+uniform float u_lightPulseSpeed[8];
+uniform float u_lightPulseAmt[8];
+uniform int   u_lightNoShadow[8];
+uniform float u_lightFlickerSpeed[8];
+uniform float u_lightFlickerAmount[8];
+uniform float u_lightPhase[8];
 uniform vec3  u_ambientColor;
 uniform float u_ambientLevel;
 uniform float u_worldAmbientMul;
@@ -67,22 +89,21 @@ uniform float u_fogSquared;
 uniform vec3  u_fogColor;
 uniform int   u_fogEnabled;
 
-// POM core
+// ---- POM ----
 uniform float u_pomWall;
 uniform float u_pomFloor;
 uniform float u_pomCeil;
 uniform int   u_pomSteps;
-// POM extended (pom.json)
 uniform float u_pomMaxOffset;
 uniform float u_pomMinVz;
 uniform float u_pomMinEffVz;
 uniform float u_pomFadeStart;
 uniform float u_pomFadeEnd;
 
+// ---- toggles / debug ----
 uniform int   u_authentic;
 uniform int   u_bandLevels;
 uniform float u_time;
-
 uniform int   u_gridDebug;
 uniform int   u_lightingEnabled;
 uniform int   u_pbrEnabled;
@@ -93,7 +114,7 @@ uniform float u_aoSun;
 uniform float u_aoPoint;
 uniform float u_aoAmbient;
 
-// Chamfer
+// ---- Chamfer baseboard / cove ----
 uniform int   u_chamferEnabled;
 uniform float u_chamferFloorSize;
 uniform float u_chamferCeilSize;
@@ -107,7 +128,6 @@ uniform float u_chamferRough;
 uniform float u_chamferFloor;
 uniform float u_chamferCeil;
 uniform float u_chamferWall;
-// Chamfer extended trim (chamfer.json)
 uniform float u_chamferTrimFloor;
 uniform float u_chamferTrimCeil;
 uniform float u_chamferTrimWall;
@@ -119,7 +139,7 @@ uniform float u_chamferTrimStart;
 uniform float u_chamferTrimMid;
 uniform float u_chamferTrimEnd;
 
-// Grid tile chamfer (chamfer.json grid + gridRanges) — Task 8: subtle 1m grout
+// ---- Grid tile chamfer (faint 1m grout) ----
 uniform int   u_chamferGridEnabled;
 uniform float u_chamferGridFloorSize;
 uniform float u_chamferGridCeilSize;
@@ -137,12 +157,11 @@ uniform float u_chamferGridTrimStart;
 uniform float u_chamferGridTrimMid;
 uniform float u_chamferGridTrimEnd;
 
-// True geometry rounded corners (corners.json)
+// ---- Rounded corners ----
 uniform int   u_cornerEnabled;
 uniform float u_cornerRadius;
-uniform int   u_cornerMode; // 0=bevel flat, 1=round outer, 2=round all
+uniform int   u_cornerMode;
 uniform int   u_cornerInner;
-// Corners extended
 uniform float u_cornerBandNear;
 uniform float u_cornerBandFarExtra;
 uniform float u_cornerBandFarFactor;
@@ -152,7 +171,7 @@ uniform float u_cornerAlbedoBoost;
 uniform float u_cornerRoughMul;
 uniform float u_cornerAoMul;
 
-// Shadows (shadows.json)
+// ---- Shadows ----
 uniform float u_shadowBiasN;
 uniform float u_shadowBiasDir;
 uniform float u_shadowSunFactor;
@@ -161,14 +180,14 @@ uniform float u_shadowSunMax;
 uniform float u_shadowPointEps;
 uniform float u_shadowNormalThresh;
 
-// PBR extended (pbr.json)
+// ---- PBR extended ----
 uniform float u_pbrEmissiveAlbedoMul;
 uniform float u_pbrEmissiveStrength;
 uniform float u_pbrF0;
 uniform float u_pbrAttenQuad;
 uniform float u_pbrGGXEps;
 
-// Rendering surface (rendering.json)
+// ---- Rendering surface ----
 uniform float u_renderFloorMul;
 uniform float u_renderCeilMul;
 uniform float u_renderWallDarken;
@@ -176,6 +195,7 @@ uniform float u_renderEyeFactor;
 
 const float PI = 3.14159265;
 
+// ----- common helpers -----
 bool isWallCell(ivec2 c) {
   if (c.x < 0 || c.y < 0 || c.x >= int(u_mapSize.x) || c.y >= int(u_mapSize.y)) return false;
   vec4 m = texelFetch(u_mapTex, c, 0);
@@ -185,58 +205,34 @@ bool isWallCell(ivec2 c) {
 float nearestWallDistAndNormal(vec2 world, out vec3 outNorm) {
   ivec2 cell = ivec2(floor(world));
   vec2 f = fract(world);
-
-  // Orthogonal
   float dE = 1.0 - f.x; vec3 nE = vec3(-1.0, 0.0, 0.0); bool eWall = isWallCell(cell + ivec2(1,0));
   float dW = f.x;       vec3 nW = vec3(1.0, 0.0, 0.0);  bool wWall = isWallCell(cell + ivec2(-1,0));
   float dN = 1.0 - f.y; vec3 nN = vec3(0.0, -1.0, 0.0); bool nWall = isWallCell(cell + ivec2(0,1));
   float dS = f.y;       vec3 nS = vec3(0.0, 1.0, 0.0);  bool sWall = isWallCell(cell + ivec2(0,-1));
-
-  // Diagonal – distance to SW/SE/... corner of diagonal wall cell
   bool neWall = isWallCell(cell + ivec2(1,1));
   bool nwWall = isWallCell(cell + ivec2(-1,1));
   bool seWall = isWallCell(cell + ivec2(1,-1));
   bool swWall = isWallCell(cell + ivec2(-1,-1));
-
   vec2 toNE = vec2(1.0 - f.x, 1.0 - f.y); float dNE = length(toNE);
   vec2 toNW = vec2(-f.x, 1.0 - f.y);      float dNW = length(toNW);
   vec2 toSE = vec2(1.0 - f.x, -f.y);      float dSE = length(toSE);
   vec2 toSW = vec2(-f.x, -f.y);           float dSW = length(toSW);
-
   vec3 nNE = (dNE > 0.0001) ? vec3(normalize(-toNE), 0.0) : vec3(-0.707, -0.707, 0.0);
   vec3 nNW = (dNW > 0.0001) ? vec3(normalize(-toNW), 0.0) : vec3(0.707, -0.707, 0.0);
   vec3 nSE = (dSE > 0.0001) ? vec3(normalize(-toSE), 0.0) : vec3(-0.707, 0.707, 0.0);
   vec3 nSW = (dSW > 0.0001) ? vec3(normalize(-toSW), 0.0) : vec3(0.707, 0.707, 0.0);
-
-  float best = 100.0;
-  vec3 bestN = vec3(0.0);
-
+  float best = 100.0; vec3 bestN = vec3(0.0);
   if (eWall && dE < best) { best = dE; bestN = nE; }
   if (wWall && dW < best) { best = dW; bestN = nW; }
   if (nWall && dN < best) { best = dN; bestN = nN; }
   if (sWall && dS < best) { best = dS; bestN = nS; }
-
-  // Outer convex corners: diagonal walls. Previously these were ignored, which
-  // broke the floor/ceiling chamfer at corners (screenshot gap). Now they are
-  // considered always – orthogonal is still closer when present, but diagonal
-  // provides the missing distance when both orthogonals are empty.
   if (neWall && dNE < best) { best = dNE; bestN = nNE; }
   if (nwWall && dNW < best) { best = dNW; bestN = nNW; }
   if (seWall && dSE < best) { best = dSE; bestN = nSE; }
   if (swWall && dSW < best) { best = dSW; bestN = nSW; }
-
-  // Blending at inner concave corners and at wall end caps:
-  // Collect every wall (orth + diag) whose distance is within eps of best
-  // and accumulate normals. This yields a diagonal bevel for east+north,
-  // and also wraps around a wall end where east + NE are both near.
-  // For a 1-grid corridor we can have both corners of the same tile needing
-  // chamfer (e.g. NW diag + SE diag). Per-fragment we pick the nearest, so
-  // different fragments of the same tile correctly show different corners –
-  // the tile as a whole shows both.
   {
     const float eps = 0.10;
-    vec3 accum = vec3(0.0);
-    int cnt = 0;
+    vec3 accum = vec3(0.0); int cnt = 0;
     if (eWall && abs(dE - best) <= eps) { accum += nE; cnt++; }
     if (wWall && abs(dW - best) <= eps) { accum += nW; cnt++; }
     if (nWall && abs(dN - best) <= eps) { accum += nN; cnt++; }
@@ -245,19 +241,11 @@ float nearestWallDistAndNormal(vec2 world, out vec3 outNorm) {
     if (nwWall && abs(dNW - best) <= eps) { accum += nNW; cnt++; }
     if (seWall && abs(dSE - best) <= eps) { accum += nSE; cnt++; }
     if (swWall && abs(dSW - best) <= eps) { accum += nSW; cnt++; }
-
     if (cnt > 1) {
       float len = length(accum);
-      // If opposite walls cancel (len ~0), e.g. 1-tile wide corridor with
-      // east+west both within eps at centre, keep bestN single to avoid
-      // zero and still get chamfer from the closer edge as fragment moves.
-      if (len > 0.35) {
-        bestN = normalize(accum);
-      }
-      // else keep single bestN
+      if (len > 0.35) bestN = normalize(accum);
     }
   }
-
   outNorm = bestN;
   return best;
 }
@@ -281,19 +269,9 @@ bool rayCircleHit(vec2 O, vec2 Dir, vec2 C, float r, out float t0, out float t1)
   return true;
 }
 
-// Resolve whether ray hits solid material in wall cell W, accounting for
-// rounded corners. Corners are part of the hit test (not a post-hoc patch), so:
-//   - convex corners cut the square back to a quarter-cylinder of radius r;
-//     a ray that passes through the cut returns false so the caller keeps
-//     marching (nothing is rendered there instead of the old flat wedge).
-//   - concave corners add a fillet that bulges toward the room, in front of
-//     the flat face; it only ever adds a nearer surface, never reveals behind.
-// The arc is tangent to the flat face exactly r from the corner, so the
-// arc<->flat join is continuous. Classification is world-space (view independent).
 bool resolveWallHit(ivec2 W, int side, ivec2 stepDir, vec2 ray, float cornerR,
                     int cornerEnabled, int cornerInner,
                     out float outT, out vec2 outHp, out vec2 outN, out bool outRounded) {
-  // Flat entry face.
   float perp;
   if (side == 0) perp = (float(W.x) - u_playerPos.x + (1.0 - float(stepDir.x)) * 0.5) / ray.x;
   else           perp = (float(W.y) - u_playerPos.y + (1.0 - float(stepDir.y)) * 0.5) / ray.y;
@@ -302,7 +280,6 @@ bool resolveWallHit(ivec2 W, int side, ivec2 stepDir, vec2 ray, float cornerR,
   outN = (side == 0) ? vec2(float(-stepDir.x), 0.0) : vec2(0.0, float(-stepDir.y));
   outRounded = false;
   if (cornerEnabled != 1 || cornerR <= 0.01) return true;
-
   for (int k = 0; k < 2; k++) {
     int off = (k == 0) ? -1 : 1;
     vec2 P, interiorDir, roomDir;
@@ -330,9 +307,7 @@ bool resolveWallHit(ivec2 W, int side, ivec2 stepDir, vec2 ray, float cornerR,
     bool outer = isOuterConvex(W, E, W2, D);
     bool inner = (cornerInner == 1) && isInnerConcave(W, E, W2, D);
     if (!outer && !inner) continue;
-
     if (outer) {
-      // Flat face is cut away within r of this corner.
       if (abs(coordAlong - cornerCoord) >= cornerR) continue;
       vec2 C = P + interiorDir * cornerR;
       float t0, t1;
@@ -347,10 +322,8 @@ bool resolveWallHit(ivec2 W, int side, ivec2 stepDir, vec2 ray, float cornerR,
           return true;
         }
       }
-      // In the cut region and the arc was missed: ray passes through -> no hit.
       return false;
     } else {
-      // Concave fillet: nearer surface bulging into the room; add only.
       vec2 C = P + roomDir * cornerR;
       float t0, t1;
       if (rayCircleHit(u_playerPos, ray, C, cornerR, t0, t1)) {
@@ -369,11 +342,81 @@ bool resolveWallHit(ivec2 W, int side, ivec2 stepDir, vec2 ray, float cornerR,
   return true;
 }
 
-vec2 atlasUV(float matId, vec2 uv, float atlasW, float texS) {
-  float tileU = (matId - 1.0 + uv.x) / (atlasW / texS);
-  return vec2(tileU, uv.y);
-}
+// ----- material helpers (array path) -----
 vec3 decodeNormal(vec3 enc) { return normalize(enc * 2.0 - 1.0); }
+
+float clampLayer(float id, float count) {
+  float maxL = max(count - 1.0, 0.0);
+  float l = id - 1.0;
+  if (l < 0.0) l = 0.0;
+  if (l > maxL) l = maxL;
+  return l;
+}
+
+// Wall sampling
+vec3 sampleWallAlbedo(float layer, vec2 uv) { return texture(u_wallAlbedo, vec3(uv, layer)).rgb; }
+vec3 sampleWallNormalRaw(float layer, vec2 uv) { return texture(u_wallNormal, vec3(uv, layer)).rgb; }
+float sampleWallHeight(float layer, vec2 uv) { return texture(u_wallHeight, vec3(uv, layer)).r; }
+vec4 sampleWallRMA(float layer, vec2 uv) { return texture(u_wallRoughMetal, vec3(uv, layer)); }
+
+// Floor
+vec3 sampleFloorAlbedo(float layer, vec2 uv) { return texture(u_floorAlbedo, vec3(uv, layer)).rgb; }
+vec3 sampleFloorNormalRaw(float layer, vec2 uv) { return texture(u_floorNormal, vec3(uv, layer)).rgb; }
+float sampleFloorHeight(float layer, vec2 uv) { return texture(u_floorHeight, vec3(uv, layer)).r; }
+vec4 sampleFloorRMA(float layer, vec2 uv) { return texture(u_floorRoughMetal, vec3(uv, layer)); }
+
+// Ceil
+vec3 sampleCeilAlbedo(float layer, vec2 uv) { return texture(u_ceilAlbedo, vec3(uv, layer)).rgb; }
+vec3 sampleCeilNormalRaw(float layer, vec2 uv) { return texture(u_ceilNormal, vec3(uv, layer)).rgb; }
+float sampleCeilHeight(float layer, vec2 uv) { return texture(u_ceilHeight, vec3(uv, layer)).r; }
+vec4 sampleCeilRMA(float layer, vec2 uv) { return texture(u_ceilRoughMetal, vec3(uv, layer)); }
+
+float fetchFloorMatId(ivec2 cell) {
+  if (cell.x < 0 || cell.y < 0 || cell.x >= int(u_mapSize.x) || cell.y >= int(u_mapSize.y)) return 1.0;
+  vec4 m = texelFetch(u_matMap, cell, 0);
+  float id = m.r * 255.0;
+  if (id < 0.5) return 1.0;
+  return id;
+}
+float fetchCeilMatId(ivec2 cell) {
+  if (cell.x < 0 || cell.y < 0 || cell.x >= int(u_mapSize.x) || cell.y >= int(u_mapSize.y)) return 1.0;
+  vec4 m = texelFetch(u_matMap, cell, 0);
+  float id = m.g * 255.0;
+  if (id < 0.5) return 1.0;
+  return id;
+}
+
+// ---- POM for array ----
+vec2 pomOffsetArray(sampler2DArray heightMap, vec2 uv, float layer, vec3 viewTS, float strength, int steps) {
+  if (strength <= 0.00001) return vec2(0.0);
+  float minVz = u_pomMinVz > 0.0 ? u_pomMinVz : 0.08;
+  float minEff = u_pomMinEffVz > 0.0 ? u_pomMinEffVz : 0.18;
+  float fadeStart = u_pomFadeStart > 0.0 ? u_pomFadeStart : 0.08;
+  float fadeEnd = u_pomFadeEnd > 0.0 ? u_pomFadeEnd : 0.22;
+  float maxOff = u_pomMaxOffset > 0.0 ? u_pomMaxOffset : 0.10;
+  float vzAbs = abs(viewTS.z);
+  if (vzAbs < minVz) return vec2(0.0);
+  float layerDepth = 1.0 / float(steps);
+  float effVz = max(vzAbs, minEff);
+  vec2 fullOffset = viewTS.xy * strength / effVz;
+  float fade = 1.0;
+  if (vzAbs < fadeEnd) fade = (vzAbs - fadeStart) / max(0.001, (fadeEnd - fadeStart));
+  float lenOff = length(fullOffset);
+  if (lenOff > maxOff) fullOffset *= maxOff / lenOff;
+  fullOffset *= clamp(fade, 0.0, 1.0);
+  vec2 delta = fullOffset / float(steps);
+  vec2 curUV = uv - fullOffset * 0.5;
+  float curDepth = 0.0;
+  float height = texture(heightMap, vec3(curUV, layer)).r;
+  for (int i = 0; i < 32; i++) {
+    if (i >= steps) break;
+    if (curDepth >= height) break;
+    curUV += delta;
+    height = texture(heightMap, vec3(curUV, layer)).r;
+    curDepth += layerDepth;
+  }
+  return curUV - uv;
+}
 
 bool traceRay(vec2 origin, vec2 dir, float maxDist) {
   ivec2 mapPos = ivec2(floor(origin));
@@ -394,6 +437,7 @@ bool traceRay(vec2 origin, vec2 dir, float maxDist) {
   }
   return false;
 }
+
 float DistributionGGX(vec3 N, vec3 H, float roughness){
   float a = roughness*roughness; float a2=a*a;
   float NdotH = max(dot(N,H),0.0); float NdotH2=NdotH*NdotH;
@@ -409,36 +453,6 @@ float GeometrySmith(vec3 N, vec3 V, vec3 L, float roughness){
 }
 vec3 fresnelSchlick(float cosTheta, vec3 F0){ return F0 + (1.0-F0)*pow(clamp(1.0-cosTheta,0.0,1.0),5.0); }
 
-vec2 pomOffset(sampler2D heightMap, vec2 uv, vec3 viewTS, float strength, int steps) {
-  if (strength <= 0.00001) return vec2(0.0);
-  float minVz = u_pomMinVz > 0.0 ? u_pomMinVz : 0.08;
-  float minEff = u_pomMinEffVz > 0.0 ? u_pomMinEffVz : 0.18;
-  float fadeStart = u_pomFadeStart > 0.0 ? u_pomFadeStart : 0.08;
-  float fadeEnd = u_pomFadeEnd > 0.0 ? u_pomFadeEnd : 0.22;
-  float maxOff = u_pomMaxOffset > 0.0 ? u_pomMaxOffset : 0.10;
-  float vzAbs = abs(viewTS.z);
-  if (vzAbs < minVz) return vec2(0.0);
-  float layerDepth = 1.0 / float(steps);
-  float effVz = max(vzAbs, minEff);
-  vec2 fullOffset = viewTS.xy * strength / effVz;
-  float fade = 1.0;
-  if (vzAbs < fadeEnd) fade = (vzAbs - fadeStart) / max(0.001, (fadeEnd - fadeStart));
-  float lenOff = length(fullOffset);
-  if (lenOff > maxOff) fullOffset *= maxOff / lenOff;
-  fullOffset *= clamp(fade, 0.0, 1.0);
-  vec2 delta = fullOffset / float(steps);
-  vec2 curUV = uv - fullOffset * 0.5;
-  float curDepth = 0.0;
-  float height = texture(heightMap, curUV).r;
-  for (int i = 0; i < 32; i++) {
-    if (i >= steps) break;
-    if (curDepth >= height) break;
-    curUV += delta;
-    height = texture(heightMap, curUV).r;
-    curDepth += layerDepth;
-  }
-  return curUV - uv;
-}
 vec3 debugShowPBR(int mode, vec3 albedoRaw, vec3 normalRaw, vec3 worldN, float heightVal, vec4 rma, vec3 emissive) {
   if (mode == 1) return albedoRaw;
   if (mode == 2) return normalRaw;
@@ -450,6 +464,8 @@ vec3 debugShowPBR(int mode, vec3 albedoRaw, vec3 normalRaw, vec3 worldN, float h
   if (mode == 8) return emissive;
   return albedoRaw;
 }
+
+// ----- PBR shading (forward 8 lights, shadows) -----
 vec3 pbrShade(vec3 albedo, vec3 N, float rough, float metal, float ao, vec3 emissive, vec3 worldPos, vec3 viewDir) {
   if (u_lightingEnabled == 0) { return albedo + emissive; }
   float aoSunEff = mix(1.0, ao, clamp(u_aoSun, 0.0, 1.0));
@@ -465,7 +481,6 @@ vec3 pbrShade(vec3 albedo, vec3 N, float rough, float metal, float ao, vec3 emis
     if (abs(ng.x) > abs(ng.y)) traceN = vec3(sign(ng.x), 0.0, 0.0);
     else traceN = vec3(0.0, sign(ng.y), 0.0);
   }
-
   float biasN = u_shadowBiasN > 0.0 ? u_shadowBiasN : 0.10;
   float biasDir = u_shadowBiasDir > 0.0 ? u_shadowBiasDir : 0.06;
   float sunShadFactor = u_shadowSunFactor > 0.0 ? u_shadowSunFactor : 0.25;
@@ -473,7 +488,6 @@ vec3 pbrShade(vec3 albedo, vec3 N, float rough, float metal, float ao, vec3 emis
   float sunMax = u_shadowSunMax > 0.0 ? u_shadowSunMax : 20.0;
   float pointEps = u_shadowPointEps >= 0.0 ? u_shadowPointEps : 0.1;
 
-  // ——— PBR OFF: diffuse-only Lambert, but still multi-light + sun + shadows ———
   if (u_pbrEnabled == 0) {
     vec3 sunDir = normalize(vec3(u_sunDir.xy, u_sunDirZ));
     vec3 Lsun = -sunDir;
@@ -486,7 +500,7 @@ vec3 pbrShade(vec3 albedo, vec3 N, float rough, float metal, float ao, vec3 emis
     float NdotLsun = max(dot(N, Lsun), 0.0);
     vec3 sunContrib = albedo * u_sunColor * u_sunIntensity * NdotLsun * sunShadow * aoSunEff;
     vec3 pointContrib = vec3(0.0);
-    for (int i=0;i<12;i++){
+    for (int i=0;i<8;i++){
       if (i>=u_numLights) break;
       if (u_lightIntensity[i]<=0.001) continue;
       vec3 lPos = u_lightPos[i];
@@ -510,7 +524,6 @@ vec3 pbrShade(vec3 albedo, vec3 N, float rough, float metal, float ao, vec3 emis
         atten*=spot;
         if (spot<=0.01) continue;
       }
-      // cheap flicker/pulse still applied as attenuation modulation (intensity already flickered on CPU)
       if (lt==2){
         float fs = u_lightFlickerSpeed[i]>0.1?u_lightFlickerSpeed[i]:6.0;
         float fa = u_lightFlickerAmount[i]>0.001?u_lightFlickerAmount[i]:0.12;
@@ -528,12 +541,9 @@ vec3 pbrShade(vec3 albedo, vec3 N, float rough, float metal, float ao, vec3 emis
     return ambient + sunContrib + pointContrib + emissive;
   }
 
-  // ——— PBR ON: full GGX ———
   float f0d = u_pbrF0 > 0.0 ? u_pbrF0 : 0.04;
   vec3 F0 = mix(vec3(f0d), albedo, metal);
   vec3 Lo = vec3(0.0);
-
-  // Sun PBR
   vec3 sunDir = normalize(vec3(u_sunDir.xy, u_sunDirZ));
   vec3 Lsun = -sunDir;
   float sunShadow = 1.0;
@@ -552,11 +562,9 @@ vec3 pbrShade(vec3 albedo, vec3 N, float rough, float metal, float ao, vec3 emis
     vec3 specular = numerator / denom;
     vec3 kS = F; vec3 kD = vec3(1.0) - kS; kD *= 1.0 - metal;
     float NdotL = max(dot(N, Lsun), 0.0);
-    Lo += (kD * albedo / 3.14159265 + specular) * u_sunColor * u_sunIntensity * NdotL * sunShadow * aoSunEff;
+    Lo += (kD * albedo / PI + specular) * u_sunColor * u_sunIntensity * NdotL * sunShadow * aoSunEff;
   }
-
-  // Many point lights PBR
-  for (int i = 0; i < 12; i++) {
+  for (int i = 0; i < 8; i++) {
     if (i >= u_numLights) break;
     vec3 lPos = u_lightPos[i];
     if (u_lightIntensity[i] <= 0.001) continue;
@@ -569,14 +577,12 @@ vec3 pbrShade(vec3 albedo, vec3 N, float rough, float metal, float ao, vec3 emis
     float atten = clamp(1.0 - dist / radius, 0.0, 1.0);
     atten *= atten;
     atten = atten / (1.0 + (dist/radius)*(dist/radius) * max(u_pbrAttenQuad, 0.0));
-
     float shadow = 1.0;
     if (u_lightNoShadow[i] == 0) {
       vec2 shDir = normalize(Lvec.xy);
       vec2 shOrigin = worldPos.xy + traceN.xy * biasN + shDir * biasDir;
       if (length(shDir) > 0.01 && traceRay(shOrigin, shDir, dist - pointEps)) shadow = pointShadFactor;
     }
-
     int lType = u_lightType[i];
     if (lType == 1) {
       vec3 spotDir = normalize(u_lightDir[i]);
@@ -587,7 +593,6 @@ vec3 pbrShade(vec3 albedo, vec3 N, float rough, float metal, float ao, vec3 emis
       atten *= spotAtt;
       if (spotAtt <= 0.01) continue;
     }
-
     if (lType == 2) {
       float fSpeed = u_lightFlickerSpeed[i] > 0.1 ? u_lightFlickerSpeed[i] : 6.0;
       float fAmt = u_lightFlickerAmount[i] > 0.001 ? u_lightFlickerAmount[i] : 0.12;
@@ -601,7 +606,6 @@ vec3 pbrShade(vec3 albedo, vec3 N, float rough, float metal, float ao, vec3 emis
         atten *= pulse;
       }
     }
-
     vec3 H = normalize(viewDir + Lvec);
     float NDF = DistributionGGX(N, H, rough);
     float G = GeometrySmith(N, viewDir, Lvec, rough);
@@ -611,17 +615,229 @@ vec3 pbrShade(vec3 albedo, vec3 N, float rough, float metal, float ao, vec3 emis
     vec3 specular = numerator2 / denom2;
     vec3 kS = F; vec3 kD = vec3(1.0) - kS; kD *= 1.0 - metal;
     float NdotL = max(dot(N, Lvec), 0.0);
-    Lo += (kD * albedo / 3.14159265 + specular) * u_lightColor[i] * u_lightIntensity[i] * atten * NdotL * shadow * aoPointEff;
+    Lo += (kD * albedo / PI + specular) * u_lightColor[i] * u_lightIntensity[i] * atten * NdotL * shadow * aoPointEff;
   }
-
   vec3 ambient = u_ambientColor * albedo * u_ambientLevel * u_worldAmbientMul * aoAmbEff;
   vec3 color = ambient + Lo + emissive;
   return color;
 }
 
+// ----- chamfer helpers (deduped) -----
+void applyFloorBaseboard(in vec2 worldPos, inout vec3 N, inout float ao, inout vec3 albedo, inout vec4 rma) {
+  if (u_chamferEnabled == 0) return;
+  vec3 wN; float wd = nearestWallDistAndNormal(worldPos, wN);
+  float fS = max(u_chamferFloorSize, 0.001);
+  if (wd >= fS || length(wN) <= 0.1) return;
+  float t = wd / fS;
+  float bevel = 1.0 - smoothstep(0.0, 1.0, t);
+  float creviceEnd = u_chamferCreviceEnd > 0.0 ? u_chamferCreviceEnd : 0.12;
+  float creviceSmooth = u_chamferCreviceSmoothEnd > 0.0 ? u_chamferCreviceSmoothEnd : 0.30;
+  float tStart = u_chamferTrimStart >= 0.0 ? u_chamferTrimStart : 0.08;
+  float tMid = u_chamferTrimMid > 0.0 ? u_chamferTrimMid : 0.35;
+  float tEnd = u_chamferTrimEnd > 0.0 ? u_chamferTrimEnd : 1.0;
+  float trimFloorAlt = u_chamferTrimFloorAlt > 0.0 ? u_chamferTrimFloorAlt : 0.18;
+  vec3 cham = normalize(wN + vec3(0.0,0.0,1.0));
+  vec3 roundCham = normalize(mix(cham, vec3(0.0,0.0,1.0), smoothstep(0.0,1.0,t)));
+  vec3 targetN = (u_chamferRoundCorners==1) ? roundCham : cham;
+  N = normalize(mix(N, targetN, bevel * clamp(u_chamferBlendFloor,0.0,1.0)));
+  ao *= mix(u_chamferDarken, 1.0, smoothstep(0.0, creviceSmooth, t));
+  float trimBand = smoothstep(tStart, tMid, t) * (1.0 - smoothstep(tMid, tEnd, t));
+  albedo += vec3(trimBand * trimFloorAlt);
+  rma.r = mix(rma.r * (1.0 - u_chamferRough*0.5), rma.r, t);
+}
+
+void applyCeilBaseboard(in vec2 worldPos, inout vec3 N, inout float ao, inout vec3 albedo, inout vec4 rma) {
+  if (u_chamferEnabled == 0) return;
+  vec3 wN; float wd = nearestWallDistAndNormal(worldPos, wN);
+  float cS = max(u_chamferCeilSize, 0.001);
+  if (wd >= cS || length(wN) <= 0.1) return;
+  float t = wd / cS;
+  float bevel = 1.0 - smoothstep(0.0,1.0,t);
+  float creviceEnd = u_chamferCreviceEnd > 0.0 ? u_chamferCreviceEnd : 0.12;
+  float creviceSmooth = u_chamferCreviceSmoothEnd > 0.0 ? u_chamferCreviceSmoothEnd : 0.30;
+  float tStart = u_chamferTrimStart >= 0.0 ? u_chamferTrimStart : 0.08;
+  float tMid = u_chamferTrimMid > 0.0 ? u_chamferTrimMid : 0.35;
+  float tEnd = u_chamferTrimEnd > 0.0 ? u_chamferTrimEnd : 1.0;
+  float trimCeilAlt = u_chamferTrimCeilAlt > 0.0 ? u_chamferTrimCeilAlt : 0.14;
+  vec3 cham = normalize(wN + vec3(0.0,0.0,-1.0));
+  N = normalize(mix(N, cham, bevel * clamp(u_chamferBlendFloor,0.0,1.0)));
+  ao *= mix(u_chamferDarken, 1.0, smoothstep(0.0, creviceSmooth, t));
+  float trimBand = smoothstep(tStart, tMid, t) * (1.0 - smoothstep(tMid, tEnd, t));
+  albedo += vec3(trimBand * trimCeilAlt);
+  rma.r = mix(rma.r * (1.0 - u_chamferRough*0.3), rma.r, t);
+}
+
+void applyWallFloorTrim(in float wallV, in vec3 Ngeom, inout vec3 Nw, inout vec3 albedoRaw, inout vec4 rmaW) {
+  if (u_chamferEnabled == 0) return;
+  float fS = max(u_chamferFloorSize, 0.04);
+  float creviceEnd = u_chamferCreviceEnd > 0.0 ? u_chamferCreviceEnd : 0.12;
+  float tStart = u_chamferTrimStart >= 0.0 ? u_chamferTrimStart : 0.08;
+  float trimFloor = u_chamferTrimFloor > 0.0 ? u_chamferTrimFloor : 0.22;
+  if (wallV >= fS) return;
+  float t = wallV / fS;
+  float bevel = 1.0 - smoothstep(0.0, 1.0, t);
+  vec3 up = vec3(0.0, 0.0, 1.0);
+  vec3 chamGeom = normalize(Ngeom + up);
+  vec3 chamRound = normalize(mix(up, chamGeom, smoothstep(0.0, 1.0, t)));
+  vec3 targetN = (u_chamferRoundCorners==1) ? chamRound : chamGeom;
+  Nw = normalize(mix(Nw, targetN, bevel * clamp(u_chamferBlendFloor,0.0,1.0)));
+  float aoT = smoothstep(0.0, creviceEnd, t);
+  rmaW.a *= mix(u_chamferDarken, 1.0, aoT);
+  float trim = smoothstep(tStart, 0.32, t) * (1.0 - smoothstep(0.32, 1.0, t));
+  albedoRaw += vec3(trim * trimFloor);
+  rmaW.r *= mix(0.58, 1.0, t);
+}
+
+void applyWallCeilTrim(in float wallV, in vec3 Ngeom, inout vec3 Nw, inout vec3 albedoRaw, inout vec4 rmaW) {
+  if (u_chamferEnabled == 0) return;
+  float cS = max(u_chamferCeilSize, 0.04);
+  float creviceEnd = u_chamferCreviceEnd > 0.0 ? u_chamferCreviceEnd : 0.12;
+  float tStart = u_chamferTrimStart >= 0.0 ? u_chamferTrimStart : 0.08;
+  float trimCeil = u_chamferTrimCeil > 0.0 ? u_chamferTrimCeil : 0.18;
+  if ((1.0 - wallV) >= cS) return;
+  float t = (1.0 - wallV) / cS;
+  float bevel = 1.0 - smoothstep(0.0, 1.0, t);
+  vec3 down = vec3(0.0, 0.0, -1.0);
+  vec3 chamGeom = normalize(Ngeom + down);
+  vec3 targetN = (u_chamferRoundCorners==1) ? normalize(mix(down, chamGeom, smoothstep(0.0,1.0,t))) : chamGeom;
+  Nw = normalize(mix(Nw, targetN, bevel * clamp(u_chamferBlendFloor,0.0,1.0)));
+  float aoT = smoothstep(0.0, creviceEnd, t);
+  rmaW.a *= mix(u_chamferDarken, 1.0, aoT);
+  float trim = smoothstep(tStart, 0.32, t) * (1.0 - smoothstep(0.32, 1.0, t));
+  albedoRaw += vec3(trim * trimCeil);
+  rmaW.r *= mix(0.62, 1.0, t);
+}
+
+void applyWallVerticalEdge(in float wallU, in int side, in vec3 Ngeom, inout vec3 Nw, inout vec3 albedoRaw, inout vec4 rmaW) {
+  if (u_chamferEnabled == 0) return;
+  float vS = max(u_chamferWallSize, 0.04);
+  float e = min(wallU, 1.0 - wallU);
+  if (e >= vS) return;
+  float t = e / vS;
+  float bevel = 1.0 - smoothstep(0.0, 1.0, t);
+  vec3 n2;
+  if (side == 0) n2 = (wallU < 0.5) ? vec3(0.0, -1.0, 0.0) : vec3(0.0, 1.0, 0.0);
+  else n2 = (wallU < 0.5) ? vec3(-1.0, 0.0, 0.0) : vec3(1.0, 0.0, 0.0);
+  vec3 diag = normalize(Ngeom + n2);
+  Nw = normalize(mix(Nw, diag, bevel * clamp(u_chamferBlendWall,0.0,1.0)));
+  rmaW.a *= mix(u_chamferDarken*0.88 + 0.12, 1.0, smoothstep(0.0, 0.45, t));
+  rmaW.r *= mix(0.65, 1.0, smoothstep(0.0, 1.0, t));
+  float trimWall = u_chamferTrimWall > 0.0 ? u_chamferTrimWall : 0.16;
+  float trim = smoothstep(0.0, 0.25, t) * (1.0 - smoothstep(0.25, 1.0, t));
+  albedoRaw += vec3(trim * trimWall);
+}
+
+void applyGridFloor(in vec2 worldPos, inout vec3 N, inout float ao, inout vec3 albedo, inout vec4 rma) {
+  if (u_chamferEnabled == 0 || u_chamferGridEnabled == 0) return;
+  vec2 f = fract(worldPos);
+  float distX = min(f.x, 1.0 - f.x);
+  float distY = min(f.y, 1.0 - f.y);
+  float edgeDist = min(distX, distY);
+  float gSize = max(u_chamferGridFloorSize, 0.001);
+  if (edgeDist >= gSize) return;
+  float t = edgeDist / gSize;
+  float bevel = 1.0 - smoothstep(0.0, 1.0, t);
+  float gridCreviceSmooth = u_chamferGridCreviceSmoothEnd > 0.0 ? u_chamferGridCreviceSmoothEnd : 0.30;
+  float gridTStart = u_chamferGridTrimStart >= 0.0 ? u_chamferGridTrimStart : 0.10;
+  float gridTMid = u_chamferGridTrimMid > 0.0 ? u_chamferGridTrimMid : 0.35;
+  float gridTEnd = u_chamferGridTrimEnd > 0.0 ? u_chamferGridTrimEnd : 1.0;
+  float gDarken = u_chamferGridFloorDarken > 0.0 ? u_chamferGridFloorDarken : 0.88;
+  float gBlend = u_chamferGridFloorBlend > 0.0 ? u_chamferGridFloorBlend : 0.85;
+  float gRough = u_chamferGridFloorRough > 0.0 ? u_chamferGridFloorRough : 0.35;
+  float gTrim = u_chamferGridFloorTrim >= 0.0 ? u_chamferGridFloorTrim : 0.06;
+  ao *= mix(gDarken, 1.0, smoothstep(0.0, gridCreviceSmooth, t));
+  vec2 edgeN = vec2(0.0);
+  if (distX < distY) edgeN.x = (f.x < 0.5 ? -1.0 : 1.0);
+  else edgeN.y = (f.y < 0.5 ? -1.0 : 1.0);
+  vec3 chamN = normalize(vec3(edgeN * 0.6, 1.0));
+  N = normalize(mix(N, chamN, bevel * clamp(gBlend, 0.0, 1.0)));
+  float trimBand = smoothstep(gridTStart, gridTMid, t) * (1.0 - smoothstep(gridTMid, gridTEnd, t));
+  albedo += vec3(trimBand * gTrim);
+  rma.r = mix(rma.r * (1.0 - gRough * 0.5), rma.r, t);
+  if (distX < gSize && distY < gSize) ao *= 0.97;
+}
+
+void applyGridCeil(in vec2 worldPos, inout vec3 N, inout float ao, inout vec3 albedo, inout vec4 rma) {
+  if (u_chamferEnabled == 0 || u_chamferGridEnabled == 0) return;
+  vec2 f = fract(worldPos);
+  float distX = min(f.x, 1.0 - f.x);
+  float distY = min(f.y, 1.0 - f.y);
+  float edgeDist = min(distX, distY);
+  float gSize = max(u_chamferGridCeilSize, 0.001);
+  if (edgeDist >= gSize) return;
+  float t = edgeDist / gSize;
+  float bevel = 1.0 - smoothstep(0.0, 1.0, t);
+  float gridCreviceSmooth = u_chamferGridCreviceSmoothEnd > 0.0 ? u_chamferGridCreviceSmoothEnd : 0.30;
+  float gridTStart = u_chamferGridTrimStart >= 0.0 ? u_chamferGridTrimStart : 0.10;
+  float gridTMid = u_chamferGridTrimMid > 0.0 ? u_chamferGridTrimMid : 0.35;
+  float gridTEnd = u_chamferGridTrimEnd > 0.0 ? u_chamferGridTrimEnd : 1.0;
+  float gDarken = u_chamferGridCeilDarken > 0.0 ? u_chamferGridCeilDarken : 0.90;
+  float gBlend = u_chamferGridCeilBlend > 0.0 ? u_chamferGridCeilBlend : 0.80;
+  float gRough = u_chamferGridCeilRough > 0.0 ? u_chamferGridCeilRough : 0.30;
+  float gTrim = u_chamferGridCeilTrim >= 0.0 ? u_chamferGridCeilTrim : 0.04;
+  ao *= mix(gDarken, 1.0, smoothstep(0.0, gridCreviceSmooth, t));
+  vec2 edgeN = vec2(0.0);
+  if (distX < distY) edgeN.x = (f.x < 0.5 ? -1.0 : 1.0);
+  else edgeN.y = (f.y < 0.5 ? -1.0 : 1.0);
+  vec3 chamN = normalize(vec3(edgeN * 0.6, -1.0));
+  N = normalize(mix(N, chamN, bevel * clamp(gBlend, 0.0, 1.0)));
+  float trimBand = smoothstep(gridTStart, gridTMid, t) * (1.0 - smoothstep(gridTMid, gridTEnd, t));
+  albedo += vec3(trimBand * gTrim);
+  rma.r = mix(rma.r * (1.0 - gRough * 0.3), rma.r, t);
+  if (distX < gSize && distY < gSize) ao *= 0.97;
+}
+
+// ----- modifier stub -----
+void applyModifiers(inout vec3 albedo, inout vec3 N, inout float rough, inout float metal, inout float ao, in vec3 worldPos) {
+  if (u_modifiersEnabled == 0) return;
+  // Per-cell modifier field
+  ivec2 cell = ivec2(floor(worldPos.xy));
+  if (cell.x < 0 || cell.y < 0 || cell.x >= int(u_mapSize.x) || cell.y >= int(u_mapSize.y)) return;
+  vec4 modField = vec4(0.0);
+  // texelFetch modifier map (grid-sized)
+  // Note: u_modifierMap may be missing texture -> returns 0; safe.
+  modField = texelFetch(u_modifierMap, cell, 0);
+  // Early out if all zero
+  if (dot(modField, vec4(1.0)) < 0.01) return;
+  // Tiling noise
+  vec4 noise = texture(u_noiseTex, worldPos.xy * 0.25);
+  // Example future logic: moss = R * noise.r threshold, etc.
+  // For this refactor branch we only apply faint debug tint when modifiersEnabled to prove plumbing,
+  // but keep it subtle so default remains clean. Future Task9 will replace with full PBR alterations.
+  float mossMask = modField.r * smoothstep(0.4, 0.7, noise.r) * 0.15;
+  float waterMask = modField.g * smoothstep(0.35, 0.65, noise.g) * 0.10;
+  float pbMask = modField.b * smoothstep(0.45, 0.75, noise.b) * 0.12;
+  float dustMask = modField.a * smoothstep(0.3, 0.6, noise.a) * 0.10;
+
+  // Moss: green-yellow albedo shift + roughen
+  if (mossMask > 0.001) {
+    vec3 mossCol = vec3(0.18, 0.42, 0.15);
+    albedo = mix(albedo, mossCol * (0.8 + 0.4*noise.g), mossMask);
+    rough = clamp(rough + 0.35 * mossMask, 0.0, 1.0);
+    // slight normal lump (fake: tilt towards up)
+    N = normalize(mix(N, vec3(noise.r*0.5-0.25, noise.g*0.5-0.25, 1.0), mossMask*0.5));
+  }
+  // Water/wetness: darken + glossy
+  if (waterMask > 0.001) {
+    albedo *= (1.0 - waterMask * 0.25);
+    rough = mix(rough, 0.15, waterMask);
+  }
+  // Puddle/blood: darkened
+  if (pbMask > 0.001) {
+    albedo = mix(albedo, vec3(0.2, 0.12, 0.15), pbMask * 0.6);
+    rough = mix(rough, 0.18, pbMask * 0.5);
+    ao *= (1.0 - pbMask * 0.2);
+  }
+  // Dust: desat + roughen + lighten
+  if (dustMask > 0.001) {
+    float l = dot(albedo, vec3(0.299,0.587,0.114));
+    albedo = mix(albedo, vec3(l)*vec3(0.95,0.92,0.85), dustMask*0.4);
+    rough = clamp(rough + 0.25 * dustMask, 0.0, 1.0);
+    N = normalize(mix(N, vec3(0.0,0.0,1.0), dustMask*0.3));
+  }
+}
 
 void main() {
-  // Task 4: vertical bob as screen-space pixel offset like mygame — u_bobPixels = viewBobOffset * h * 0.8
   vec2 fragCoord = vec2(v_uv.x * u_resolution.x, (1.0 - v_uv.y) * u_resolution.y + u_bobPixels);
   float cameraX = 2.0 * fragCoord.x / u_resolution.x - 1.0;
   float planeLen = tan(u_fov * 0.5);
@@ -651,9 +867,6 @@ void main() {
     vec4 cell = texelFetch(u_mapTex, ivec2(mapPos), 0);
     cellType = cell.r * 255.0;
     if (cellType > 0.5) {
-      // Corner-aware hit test: rounded corners participate in the hit so a ray
-      // that passes through a cut convex corner keeps marching instead of
-      // rendering a stray flat wedge.
       float cT; vec2 cHp; vec2 cN; bool cRound;
       if (resolveWallHit(ivec2(mapPos), side, stepDir, ray, cornerRadius,
                          u_cornerEnabled, u_cornerInner, cT, cHp, cN, cRound)) {
@@ -664,46 +877,30 @@ void main() {
         hasCornerRound = cRound;
         break;
       }
-      // else: corner rounded away here — continue the DDA.
     }
   }
 
   vec3 finalColor = u_fogColor;
 
-  // uniforms with fallback
   float emissiveAlbedoMul = u_pbrEmissiveAlbedoMul > 0.0 ? u_pbrEmissiveAlbedoMul : 0.8;
   float emissiveStrength = u_pbrEmissiveStrength > 0.0 ? u_pbrEmissiveStrength : 2.5;
   float floorMul = u_renderFloorMul > 0.0 ? u_renderFloorMul : 0.7;
   float ceilMul = u_renderCeilMul > 0.0 ? u_renderCeilMul : 0.8;
   float wallDarken = u_renderWallDarken > 0.0 ? u_renderWallDarken : 0.85;
   float eyeFactor = u_renderEyeFactor >= 0.0 ? u_renderEyeFactor : 0.15;
-  float trimFloor = u_chamferTrimFloor > 0.0 ? u_chamferTrimFloor : 0.22;
-  float trimCeil = u_chamferTrimCeil > 0.0 ? u_chamferTrimCeil : 0.18;
-  float trimWall = u_chamferTrimWall > 0.0 ? u_chamferTrimWall : 0.16;
-  float trimFloorAlt = u_chamferTrimFloorAlt > 0.0 ? u_chamferTrimFloorAlt : 0.18;
-  float trimCeilAlt = u_chamferTrimCeilAlt > 0.0 ? u_chamferTrimCeilAlt : 0.14;
-  float creviceEnd = u_chamferCreviceEnd > 0.0 ? u_chamferCreviceEnd : 0.12;
-  float creviceSmooth = u_chamferCreviceSmoothEnd > 0.0 ? u_chamferCreviceSmoothEnd : 0.30;
-  float tStart = u_chamferTrimStart >= 0.0 ? u_chamferTrimStart : 0.08;
-  float tMid = u_chamferTrimMid > 0.0 ? u_chamferTrimMid : 0.35;
-  float tEnd = u_chamferTrimEnd > 0.0 ? u_chamferTrimEnd : 1.0;
   float nMix = u_cornerNormalMix > 0.0 ? u_cornerNormalMix : 0.92;
   float albBoost = u_cornerAlbedoBoost >= 0.0 ? u_cornerAlbedoBoost : 0.05;
   float roughMul = u_cornerRoughMul > 0.0 ? u_cornerRoughMul : 0.82;
   float aoMul = u_cornerAoMul > 0.0 ? u_cornerAoMul : 0.96;
 
-  // Grid tile chamfer fallbacks — Task 8 subtle 1m grout, separate from wall-to-floor cove
-  float gridCreviceEnd = u_chamferGridCreviceEnd > 0.0 ? u_chamferGridCreviceEnd : 0.10;
-  float gridCreviceSmooth = u_chamferGridCreviceSmoothEnd > 0.0 ? u_chamferGridCreviceSmoothEnd : 0.30;
-  float gridTStart = u_chamferGridTrimStart >= 0.0 ? u_chamferGridTrimStart : 0.10;
-  float gridTMid = u_chamferGridTrimMid > 0.0 ? u_chamferGridTrimMid : 0.35;
-  float gridTEnd = u_chamferGridTrimEnd > 0.0 ? u_chamferGridTrimEnd : 1.0;
+  // Counts
+  float wc = u_wallCount > 0.0 ? u_wallCount : 1.0;
+  float fc = u_floorCount > 0.0 ? u_floorCount : 1.0;
+  float cc = u_ceilCount > 0.0 ? u_ceilCount : 1.0;
 
   if (hit == 1) {
-
     float floorH = 0.0;
     float ceilH = 1.0;
-
     float wallU;
     if (side == 0) wallU = hitPos.y - floor(hitPos.y);
     else wallU = hitPos.x - floor(hitPos.x);
@@ -718,9 +915,6 @@ void main() {
 
     if (wallV_raw < 0.0 || wallV_raw > 1.0) {
       float horizon = 0.5;
-      // Task 4 fix: floor/ceiling must follow bob — use fragCoord with bobPixels like prototype
-      // Prototype uses y = fragCoord (with bob) and floorScreen = y - halfH, ceilScreen = halfH - y
-      // So vNorm with bob = fragCoord.y / u_resolution.y
       float vNorm = fragCoord.y / u_resolution.y;
       if (vNorm > horizon) {
         float floorH_atRay = 0.0;
@@ -728,20 +922,23 @@ void main() {
         dist = max(dist, 0.001);
         vec2 floorWorld = u_playerPos + ray * dist;
         vec2 floorUV = fract(floorWorld);
-        vec2 fuvAtlas = atlasUV(1.0, floorUV, u_atlasFloors, u_texSize);
+        float matId = fetchFloorMatId(ivec2(floor(floorWorld)));
+        float layer = clampLayer(matId, fc);
+        vec2 fuv = floorUV;
         if (u_pomEnabled == 1) {
           vec3 viewDirTS = normalize(vec3(-ray, 0.8));
-          vec2 fpo = pomOffset(u_floorHeight, fuvAtlas, viewDirTS, u_pomFloor, u_pomSteps);
-          fuvAtlas += fpo;
+          vec2 fpo = pomOffsetArray(u_floorHeight, fuv, layer, viewDirTS, u_pomFloor, u_pomSteps);
+          fuv += fpo;
         }
-        vec3 albedoRaw = texture(u_floorAlbedo, fuvAtlas).rgb;
-        vec3 normalRaw = texture(u_floorNormal, fuvAtlas).rgb;
+        vec3 albedoRaw = sampleFloorAlbedo(layer, fuv);
+        vec3 normalRaw = sampleFloorNormalRaw(layer, fuv);
         vec3 normalTS = decodeNormal(normalRaw);
         vec3 Nw = normalize(vec3(normalTS.xy, normalTS.z));
-        float heightVal = texture(u_floorHeight, fuvAtlas).r;
-        vec4 rma = texture(u_floorRoughMetal, fuvAtlas);
+        float heightVal = sampleFloorHeight(layer, fuv);
+        vec4 rma = sampleFloorRMA(layer, fuv);
         float ao = rma.a;
         vec3 emissive = albedoRaw * emissiveAlbedoMul * rma.b * emissiveStrength;
+
         if (u_pbrDebugMode != 0 && u_gridDebug == 0) {
           finalColor = debugShowPBR(u_pbrDebugMode, albedoRaw, normalRaw, Nw, heightVal, rma, emissive);
         } else {
@@ -749,48 +946,9 @@ void main() {
           vec3 N = (u_gridDebug == 1) ? vec3(0,0,1) : Nw;
           if (u_gridDebug == 1) { rma = vec4(0.9,0,0,1); ao = 1.0; emissive = vec3(0); }
           else {
-            if (u_chamferEnabled == 1) {
-              vec3 wN; float wd = nearestWallDistAndNormal(floorWorld, wN);
-              float fS = max(u_chamferFloorSize, 0.001);
-              if (wd < fS && length(wN) > 0.1) {
-                float t = wd / fS;
-                float bevel = 1.0 - smoothstep(0.0, 1.0, t);
-                vec3 cham = normalize(wN + vec3(0.0,0.0,1.0));
-                vec3 roundCham = normalize(mix(cham, vec3(0.0,0.0,1.0), smoothstep(0.0,1.0,t)));
-                vec3 targetN = (u_chamferRoundCorners==1) ? roundCham : cham;
-                N = normalize(mix(N, targetN, bevel * clamp(u_chamferBlendFloor,0.0,1.0)));
-                ao *= mix(u_chamferDarken, 1.0, smoothstep(0.0, creviceSmooth, t));
-                float trimBand = smoothstep(tStart, tMid, t) * (1.0 - smoothstep(tMid, tEnd, t));
-                albedo += vec3(trimBand * trimFloorAlt);
-                rma.r = mix(rma.r * (1.0 - u_chamferRough*0.5), rma.r, t);
-              }
-            }
-            // --- Task 8: grid tile chamfer for floor (1m dungeon tile grooves, subtle) ---
-            if (u_chamferEnabled == 1 && u_chamferGridEnabled == 1) {
-              vec2 f = fract(floorWorld);
-              float distX = min(f.x, 1.0 - f.x);
-              float distY = min(f.y, 1.0 - f.y);
-              float edgeDist = min(distX, distY);
-              float gSize = max(u_chamferGridFloorSize, 0.001);
-              if (edgeDist < gSize) {
-                float t = edgeDist / gSize;
-                float bevel = 1.0 - smoothstep(0.0, 1.0, t);
-                float gDarken = u_chamferGridFloorDarken > 0.0 ? u_chamferGridFloorDarken : 0.88;
-                float gBlend = u_chamferGridFloorBlend > 0.0 ? u_chamferGridFloorBlend : 0.85;
-                float gRough = u_chamferGridFloorRough > 0.0 ? u_chamferGridFloorRough : 0.35;
-                float gTrim = u_chamferGridFloorTrim >= 0.0 ? u_chamferGridFloorTrim : 0.06;
-                ao *= mix(gDarken, 1.0, smoothstep(0.0, gridCreviceSmooth, t));
-                vec2 edgeN = vec2(0.0);
-                if (distX < distY) edgeN.x = (f.x < 0.5 ? -1.0 : 1.0);
-                else              edgeN.y = (f.y < 0.5 ? -1.0 : 1.0);
-                vec3 chamN = normalize(vec3(edgeN * 0.6, 1.0));
-                N = normalize(mix(N, chamN, bevel * clamp(gBlend, 0.0, 1.0)));
-                float trimBand = smoothstep(gridTStart, gridTMid, t) * (1.0 - smoothstep(gridTMid, gridTEnd, t));
-                albedo += vec3(trimBand * gTrim);
-                rma.r = mix(rma.r * (1.0 - gRough * 0.5), rma.r, t);
-                if (distX < gSize && distY < gSize) ao *= 0.97;
-              }
-            }
+            applyFloorBaseboard(floorWorld, N, ao, albedo, rma);
+            applyGridFloor(floorWorld, N, ao, albedo, rma);
+            applyModifiers(albedo, N, rma.r, rma.g, ao, vec3(floorWorld, floorH_atRay));
           }
           vec3 worldPos = vec3(floorWorld, floorH_atRay);
           vec3 viewDir = normalize(vec3(u_playerPos, eyeZ) - worldPos);
@@ -803,18 +961,20 @@ void main() {
         dist = max(dist, 0.001);
         vec2 ceilWorld = u_playerPos + ray * dist;
         vec2 ceilUV = fract(ceilWorld);
-        vec2 cuvAtlas = atlasUV(1.0, ceilUV, u_atlasCeils, u_texSize);
+        float matId = fetchCeilMatId(ivec2(floor(ceilWorld)));
+        float layer = clampLayer(matId, cc);
+        vec2 cuv = ceilUV;
         if (u_pomEnabled == 1) {
           vec3 viewDirTS_ceil = normalize(vec3(-ray, 0.5));
-          vec2 cpo = pomOffset(u_ceilHeight, cuvAtlas, viewDirTS_ceil, u_pomCeil, u_pomSteps);
-          cuvAtlas += cpo;
+          vec2 cpo = pomOffsetArray(u_ceilHeight, cuv, layer, viewDirTS_ceil, u_pomCeil, u_pomSteps);
+          cuv += cpo;
         }
-        vec3 albedoRaw = texture(u_ceilAlbedo, cuvAtlas).rgb;
-        vec3 normalRaw = texture(u_ceilNormal, cuvAtlas).rgb;
+        vec3 albedoRaw = sampleCeilAlbedo(layer, cuv);
+        vec3 normalRaw = sampleCeilNormalRaw(layer, cuv);
         vec3 normalTS = decodeNormal(normalRaw);
         vec3 Nw = normalize(vec3(normalTS.x, -normalTS.y, -normalTS.z));
-        float heightVal = texture(u_ceilHeight, cuvAtlas).r;
-        vec4 rma = texture(u_ceilRoughMetal, cuvAtlas);
+        float heightVal = sampleCeilHeight(layer, cuv);
+        vec4 rma = sampleCeilRMA(layer, cuv);
         float ao = rma.a;
         vec3 emissive = albedoRaw * emissiveAlbedoMul * rma.b * emissiveStrength;
         if (u_pbrDebugMode != 0 && u_gridDebug == 0) {
@@ -824,47 +984,9 @@ void main() {
           vec3 N = (u_gridDebug == 1) ? vec3(0,0,-1) : Nw;
           if (u_gridDebug == 1) { rma = vec4(0.9,0,0,1); ao = 1.0; emissive = vec3(0); }
           else {
-            if (u_chamferEnabled == 1) {
-              vec3 wN; float wd = nearestWallDistAndNormal(ceilWorld, wN);
-              float cS = max(u_chamferCeilSize, 0.001);
-              if (wd < cS && length(wN) > 0.1) {
-                float t = wd / cS;
-                float bevel = 1.0 - smoothstep(0.0,1.0,t);
-                vec3 cham = normalize(wN + vec3(0.0,0.0,-1.0));
-                vec3 targetN = (u_chamferRoundCorners==1) ? normalize(mix(vec3(0.0,0.0,-1.0), cham, t)) : cham;
-                N = normalize(mix(N, targetN, bevel * clamp(u_chamferBlendFloor,0.0,1.0)));
-                ao *= mix(u_chamferDarken, 1.0, smoothstep(0.0, creviceSmooth, t));
-                float trimBand = smoothstep(tStart, tMid, t) * (1.0 - smoothstep(tMid, tEnd, t));
-                albedo += vec3(trimBand * trimCeilAlt);
-                rma.r = mix(rma.r * (1.0 - u_chamferRough*0.35), rma.r, t);
-              }
-            }
-            // --- Task 8: grid tile chamfer for ceiling ---
-            if (u_chamferEnabled == 1 && u_chamferGridEnabled == 1) {
-              vec2 f = fract(ceilWorld);
-              float distX = min(f.x, 1.0 - f.x);
-              float distY = min(f.y, 1.0 - f.y);
-              float edgeDist = min(distX, distY);
-              float gSize = max(u_chamferGridCeilSize, 0.001);
-              if (edgeDist < gSize) {
-                float t = edgeDist / gSize;
-                float bevel = 1.0 - smoothstep(0.0, 1.0, t);
-                float gDarken = u_chamferGridCeilDarken > 0.0 ? u_chamferGridCeilDarken : 0.90;
-                float gBlend = u_chamferGridCeilBlend > 0.0 ? u_chamferGridCeilBlend : 0.80;
-                float gRough = u_chamferGridCeilRough > 0.0 ? u_chamferGridCeilRough : 0.30;
-                float gTrim = u_chamferGridCeilTrim >= 0.0 ? u_chamferGridCeilTrim : 0.04;
-                ao *= mix(gDarken, 1.0, smoothstep(0.0, gridCreviceSmooth, t));
-                vec2 edgeN = vec2(0.0);
-                if (distX < distY) edgeN.x = (f.x < 0.5 ? -1.0 : 1.0);
-                else              edgeN.y = (f.y < 0.5 ? -1.0 : 1.0);
-                vec3 chamN = normalize(vec3(edgeN * 0.6, -1.0));
-                N = normalize(mix(N, chamN, bevel * clamp(gBlend, 0.0, 1.0)));
-                float trimBand = smoothstep(gridTStart, gridTMid, t) * (1.0 - smoothstep(gridTMid, gridTEnd, t));
-                albedo += vec3(trimBand * gTrim);
-                rma.r = mix(rma.r * (1.0 - gRough * 0.3), rma.r, t);
-                if (distX < gSize && distY < gSize) ao *= 0.97;
-              }
-            }
+            applyCeilBaseboard(ceilWorld, N, ao, albedo, rma);
+            applyGridCeil(ceilWorld, N, ao, albedo, rma);
+            applyModifiers(albedo, N, rma.r, rma.g, ao, vec3(ceilWorld, ceilH_atRay));
           }
           vec3 worldPos = vec3(ceilWorld, ceilH_atRay);
           vec3 viewDir = normalize(vec3(u_playerPos, eyeZ) - worldPos);
@@ -875,17 +997,12 @@ void main() {
     } else {
       float wallV = clamp(wallV_raw, 0.0, 1.0);
       float matId = max(1.0, cellType);
+      float layer = clampLayer(matId, wc);
       vec2 uv = vec2(wallU, wallV);
-      vec2 uvAtlas = atlasUV(matId, uv, u_atlasWalls, u_texSize);
 
-      // --- Flat basis ---
       vec3 NgeomFlat = vec3(0.0);
       vec3 tangentFlat = vec3(0.0);
       vec3 bitangent = vec3(0.0, 0.0, 1.0);
-      // Tangent must point along INCREASING wallU in world space. wallU is flipped
-      // (see wallU computation) when (side==0 && ray.x>0) or (side==1 && ray.y<0), so
-      // the tangent sign has to match — otherwise the normal map's X (horizontal relief)
-      // is applied backwards and a light on the right lights the LEFT edge of each tile.
       if (side == 0) {
         NgeomFlat = vec3(float(-stepDir.x), 0.0, 0.0);
         tangentFlat = vec3(0.0, ray.x > 0.0 ? -1.0 : 1.0, 0.0);
@@ -893,13 +1010,6 @@ void main() {
         NgeomFlat = vec3(0.0, float(-stepDir.y), 0.0);
         tangentFlat = vec3(ray.y < 0.0 ? -1.0 : 1.0, 0.0, 0.0);
       }
-
-      // --- Rounded corners: compute proper geometric normal FIRST ---
-      // The old code built Nw with flat TBN then did mix(Nw, cn, nMix) which killed
-      // normal-map detail and produced wrong WORLD normals. Instead we mix the
-      // geometric normals, rebuild a valid orthonormal TBN, and then apply the
-      // normal map on top of the rounded basis. This preserves PBR detail and
-      // gives correct world normals for lighting + debug.
       vec3 Ngeom = NgeomFlat;
       vec3 tangent = tangentFlat;
       vec3 cornerGeom = vec3(0.0);
@@ -909,9 +1019,7 @@ void main() {
           vec3 n2 = (side == 0) ? vec3(0.0, (wallU < 0.5 ? -1.0 : 1.0), 0.0) : vec3((wallU < 0.5 ? -1.0 : 1.0), 0.0, 0.0);
           cornerGeom = normalize(NgeomFlat + n2);
         }
-        // Mix geometric normals per u_cornerNormalMix (default 0.92) — not final world normal
         Ngeom = normalize(mix(NgeomFlat, cornerGeom, clamp(nMix, 0.0, 1.0)));
-        // Orthogonalize flat tangent to new Ngeom to keep texture direction stable
         float dotTN = dot(tangentFlat, Ngeom);
         vec3 tOrtho = tangentFlat - dotTN * Ngeom;
         if (dot(tOrtho, tOrtho) < 0.000001) {
@@ -925,79 +1033,30 @@ void main() {
       vec3 viewDir = normalize(vec3(u_playerPos, u_playerHeight) - worldPos);
       vec3 viewTS = vec3(dot(viewDir, tangent), dot(viewDir, bitangent), dot(viewDir, Ngeom));
 
-      vec2 uvPOM = uvAtlas;
+      vec2 uvPOM = uv;
       if (u_pomEnabled == 1) {
-        vec2 po = pomOffset(u_wallHeight, uvAtlas, viewTS, u_pomWall, u_pomSteps);
-        uvPOM = uvAtlas + po;
+        vec2 po = pomOffsetArray(u_wallHeight, uv, layer, viewTS, u_pomWall, u_pomSteps);
+        uvPOM = uv + po;
       }
-      vec3 albedoRaw = texture(u_wallAlbedo, uvPOM).rgb;
-      vec3 normalRaw = texture(u_wallNormal, uvPOM).rgb;
+      vec3 albedoRaw = sampleWallAlbedo(layer, uvPOM);
+      vec3 normalRaw = sampleWallNormalRaw(layer, uvPOM);
       vec3 normalTSw = decodeNormal(normalRaw);
-      float heightVal = texture(u_wallHeight, uvPOM).r;
-      vec4 rmaW = texture(u_wallRoughMetal, uvPOM);
+      float heightVal = sampleWallHeight(layer, uvPOM);
+      vec4 rmaW = sampleWallRMA(layer, uvPOM);
       vec3 emissiveW = albedoRaw * emissiveAlbedoMul * rmaW.b * emissiveStrength;
-      // Proper PBR: normal map applied on top of rounded TBN, preserving detail
       vec3 Nw = normalize(tangent * normalTSw.x + bitangent * normalTSw.y + Ngeom * normalTSw.z);
 
       if (hasCornerRound && u_pbrDebugMode == 0 && u_gridDebug == 0) {
-        // Keep material tweaks but do NOT overwrite Nw — detail is already in Nw via TBN
         albedoRaw += vec3(albBoost);
         rmaW.r *= roughMul;
         rmaW.a *= aoMul;
       }
 
-      if (u_chamferEnabled == 1 && u_pbrDebugMode == 0 && u_gridDebug == 0) {
-        {
-          float fS = max(u_chamferFloorSize, 0.04);
-          float cS = max(u_chamferCeilSize, 0.04);
-          if (wallV < fS) {
-            float t = wallV / fS;
-            float bevel = 1.0 - smoothstep(0.0, 1.0, t);
-            vec3 up = vec3(0.0, 0.0, 1.0);
-            vec3 chamGeom = normalize(Ngeom + up);
-            vec3 chamRound = normalize(mix(up, chamGeom, smoothstep(0.0, 1.0, t)));
-            vec3 targetN = (u_chamferRoundCorners==1) ? chamRound : chamGeom;
-            Nw = normalize(mix(Nw, targetN, bevel * clamp(u_chamferBlendFloor,0.0,1.0)));
-            float aoT = smoothstep(0.0, creviceEnd, t);
-            rmaW.a *= mix(u_chamferDarken, 1.0, aoT);
-            float trim = smoothstep(tStart, 0.32, t) * (1.0 - smoothstep(0.32, 1.0, t));
-            albedoRaw += vec3(trim * trimFloor);
-            rmaW.r *= mix(0.58, 1.0, t);
-          }
-          if ((1.0 - wallV) < cS) {
-            float t = (1.0 - wallV) / cS;
-            float bevel = 1.0 - smoothstep(0.0, 1.0, t);
-            vec3 down = vec3(0.0, 0.0, -1.0);
-            vec3 chamGeom = normalize(Ngeom + down);
-            vec3 targetN = (u_chamferRoundCorners==1) ? normalize(mix(down, chamGeom, smoothstep(0.0,1.0,t))) : chamGeom;
-            Nw = normalize(mix(Nw, targetN, bevel * clamp(u_chamferBlendFloor,0.0,1.0)));
-            float aoT = smoothstep(0.0, creviceEnd, t);
-            rmaW.a *= mix(u_chamferDarken, 1.0, aoT);
-            float trim = smoothstep(tStart, 0.32, t) * (1.0 - smoothstep(0.32, 1.0, t));
-            albedoRaw += vec3(trim * trimCeil);
-            rmaW.r *= mix(0.62, 1.0, t);
-          }
-        }
-        if (!hasCornerRound) {
-          float vS = max(u_chamferWallSize, 0.04);
-          float e = min(wallU, 1.0 - wallU);
-          if (e < vS) {
-            float t = e / vS;
-            float bevel = 1.0 - smoothstep(0.0, 1.0, t);
-            vec3 n2;
-            if (side == 0) {
-              n2 = (wallU < 0.5) ? vec3(0.0, -1.0, 0.0) : vec3(0.0, 1.0, 0.0);
-            } else {
-              n2 = (wallU < 0.5) ? vec3(-1.0, 0.0, 0.0) : vec3(1.0, 0.0, 0.0);
-            }
-            vec3 diag = normalize(Ngeom + n2);
-            Nw = normalize(mix(Nw, diag, bevel * clamp(u_chamferBlendWall,0.0,1.0)));
-            rmaW.a *= mix(u_chamferDarken*0.88 + 0.12, 1.0, smoothstep(0.0, 0.45, t));
-            rmaW.r *= mix(0.65, 1.0, smoothstep(0.0, 1.0, t));
-            float trim = smoothstep(0.0, 0.25, t) * (1.0 - smoothstep(0.25, 1.0, t));
-            albedoRaw += vec3(trim * trimWall);
-          }
-        }
+      if (u_pbrDebugMode == 0 && u_gridDebug == 0) {
+        applyWallFloorTrim(wallV, Ngeom, Nw, albedoRaw, rmaW);
+        applyWallCeilTrim(wallV, Ngeom, Nw, albedoRaw, rmaW);
+        if (!hasCornerRound) applyWallVerticalEdge(wallU, side, Ngeom, Nw, albedoRaw, rmaW);
+        applyModifiers(albedoRaw, Nw, rmaW.r, rmaW.g, rmaW.a, worldPos);
       }
 
       if (u_pbrDebugMode != 0 && u_gridDebug == 0) {
@@ -1037,18 +1096,20 @@ void main() {
         }
       }
       vec2 floorUV = fract(floorWorld);
-      vec2 fuvAtlas = atlasUV(1.0, floorUV, u_atlasFloors, u_texSize);
+      float matId = fetchFloorMatId(ivec2(floor(floorWorld)));
+      float layer = clampLayer(matId, fc);
+      vec2 fuv = floorUV;
       if (u_pomEnabled == 1) {
         vec3 viewDirTS2 = normalize(vec3(-ray, 0.8));
-        vec2 fpo = pomOffset(u_floorHeight, fuvAtlas, viewDirTS2, u_pomFloor, u_pomSteps);
-        fuvAtlas += fpo;
+        vec2 fpo = pomOffsetArray(u_floorHeight, fuv, layer, viewDirTS2, u_pomFloor, u_pomSteps);
+        fuv += fpo;
       }
-      vec3 albedoRaw = texture(u_floorAlbedo, fuvAtlas).rgb;
-      vec3 normalRaw = texture(u_floorNormal, fuvAtlas).rgb;
+      vec3 albedoRaw = sampleFloorAlbedo(layer, fuv);
+      vec3 normalRaw = sampleFloorNormalRaw(layer, fuv);
       vec3 normalTS = decodeNormal(normalRaw);
       vec3 Nw = normalize(vec3(normalTS.xy, normalTS.z));
-      float heightVal = texture(u_floorHeight, fuvAtlas).r;
-      vec4 rma = texture(u_floorRoughMetal, fuvAtlas);
+      float heightVal = sampleFloorHeight(layer, fuv);
+      vec4 rma = sampleFloorRMA(layer, fuv);
       float ao = rma.a;
       vec3 emissive = albedoRaw * emissiveAlbedoMul * rma.b * emissiveStrength;
       if (u_pbrDebugMode != 0 && u_gridDebug == 0) {
@@ -1058,46 +1119,9 @@ void main() {
         vec3 N = (u_gridDebug == 1) ? vec3(0,0,1) : Nw;
         if (u_gridDebug == 1) { rma = vec4(0.9,0,0,1); ao = 1.0; emissive = vec3(0); }
         else {
-          if (u_chamferEnabled == 1) {
-            vec3 wN; float wd = nearestWallDistAndNormal(floorWorld, wN);
-            float fS = max(u_chamferFloorSize, 0.001);
-            if (wd < fS && length(wN) > 0.1) {
-              float t = wd / fS;
-              float bevel = 1.0 - smoothstep(0.0, 1.0, t);
-              vec3 cham = normalize(wN + vec3(0.0,0.0,1.0));
-              N = normalize(mix(N, cham, bevel * clamp(u_chamferBlendFloor,0.0,1.0)));
-              ao *= mix(u_chamferDarken, 1.0, smoothstep(0.0, creviceSmooth, t));
-              float trimBand = smoothstep(tStart, tMid, t) * (1.0 - smoothstep(tMid, tEnd, t));
-              albedo += vec3(trimBand * trimFloorAlt);
-              rma.r = mix(rma.r * (1.0 - u_chamferRough*0.5), rma.r, t);
-            }
-          }
-          // Task 8: grid tile chamfer for floor — fallback path
-          if (u_chamferEnabled == 1 && u_chamferGridEnabled == 1) {
-            vec2 f = fract(floorWorld);
-            float distX = min(f.x, 1.0 - f.x);
-            float distY = min(f.y, 1.0 - f.y);
-            float edgeDist = min(distX, distY);
-            float gSize = max(u_chamferGridFloorSize, 0.001);
-            if (edgeDist < gSize) {
-              float t = edgeDist / gSize;
-              float bevel = 1.0 - smoothstep(0.0, 1.0, t);
-              float gDarken = u_chamferGridFloorDarken > 0.0 ? u_chamferGridFloorDarken : 0.88;
-              float gBlend = u_chamferGridFloorBlend > 0.0 ? u_chamferGridFloorBlend : 0.85;
-              float gRough = u_chamferGridFloorRough > 0.0 ? u_chamferGridFloorRough : 0.35;
-              float gTrim = u_chamferGridFloorTrim >= 0.0 ? u_chamferGridFloorTrim : 0.06;
-              ao *= mix(gDarken, 1.0, smoothstep(0.0, gridCreviceSmooth, t));
-              vec2 edgeN = vec2(0.0);
-              if (distX < distY) edgeN.x = (f.x < 0.5 ? -1.0 : 1.0);
-              else              edgeN.y = (f.y < 0.5 ? -1.0 : 1.0);
-              vec3 chamN = normalize(vec3(edgeN * 0.6, 1.0));
-              N = normalize(mix(N, chamN, bevel * clamp(gBlend, 0.0, 1.0)));
-              float trimBand = smoothstep(gridTStart, gridTMid, t) * (1.0 - smoothstep(gridTMid, gridTEnd, t));
-              albedo += vec3(trimBand * gTrim);
-              rma.r = mix(rma.r * (1.0 - gRough * 0.5), rma.r, t);
-              if (distX < gSize && distY < gSize) ao *= 0.97;
-            }
-          }
+          applyFloorBaseboard(floorWorld, N, ao, albedo, rma);
+          applyGridFloor(floorWorld, N, ao, albedo, rma);
+          applyModifiers(albedo, N, rma.r, rma.g, ao, vec3(floorWorld, floorH));
         }
         vec3 worldPos = vec3(floorWorld, floorH);
         vec3 viewDir = normalize(vec3(u_playerPos, eyeZ2) - worldPos);
@@ -1120,18 +1144,20 @@ void main() {
         }
       }
       vec2 ceilUV = fract(ceilWorld);
-      vec2 cuvAtlas = atlasUV(1.0, ceilUV, u_atlasCeils, u_texSize);
+      float matId = fetchCeilMatId(ivec2(floor(ceilWorld)));
+      float layer = clampLayer(matId, cc);
+      vec2 cuv = ceilUV;
       if (u_pomEnabled == 1) {
         vec3 viewDirTS_ceil2 = normalize(vec3(-ray, 0.5));
-        vec2 cpo2 = pomOffset(u_ceilHeight, cuvAtlas, viewDirTS_ceil2, u_pomCeil, u_pomSteps);
-        cuvAtlas += cpo2;
+        vec2 cpo2 = pomOffsetArray(u_ceilHeight, cuv, layer, viewDirTS_ceil2, u_pomCeil, u_pomSteps);
+        cuv += cpo2;
       }
-      vec3 albedoRaw = texture(u_ceilAlbedo, cuvAtlas).rgb;
-      vec3 normalRaw = texture(u_ceilNormal, cuvAtlas).rgb;
+      vec3 albedoRaw = sampleCeilAlbedo(layer, cuv);
+      vec3 normalRaw = sampleCeilNormalRaw(layer, cuv);
       vec3 normalTS = decodeNormal(normalRaw);
       vec3 Nw = normalize(vec3(normalTS.x, -normalTS.y, -normalTS.z));
-      float heightVal = texture(u_ceilHeight, cuvAtlas).r;
-      vec4 rma = texture(u_ceilRoughMetal, cuvAtlas);
+      float heightVal = sampleCeilHeight(layer, cuv);
+      vec4 rma = sampleCeilRMA(layer, cuv);
       float ao = rma.a;
       vec3 emissive = albedoRaw * emissiveAlbedoMul * rma.b * emissiveStrength;
       if (u_pbrDebugMode != 0 && u_gridDebug == 0) {
@@ -1141,46 +1167,9 @@ void main() {
         vec3 N = (u_gridDebug == 1) ? vec3(0,0,-1) : Nw;
         if (u_gridDebug == 1) { rma = vec4(0.9,0,0,1); ao = 1.0; emissive = vec3(0); }
         else {
-          if (u_chamferEnabled == 1) {
-            vec3 wN; float wd = nearestWallDistAndNormal(ceilWorld, wN);
-            float cS = max(u_chamferCeilSize, 0.001);
-            if (wd < cS && length(wN) > 0.1) {
-              float t = wd / cS;
-              float bevel = 1.0 - smoothstep(0.0, 1.0, t);
-              vec3 cham = normalize(wN + vec3(0.0,0.0,-1.0));
-              N = normalize(mix(N, cham, bevel * clamp(u_chamferBlendFloor,0.0,1.0)));
-              ao *= mix(u_chamferDarken, 1.0, smoothstep(0.0, creviceSmooth, t));
-              float trimBand = smoothstep(tStart, tMid, t) * (1.0 - smoothstep(tMid, tEnd, t));
-              albedo += vec3(trimBand * trimCeilAlt);
-              rma.r = mix(rma.r * (1.0 - u_chamferRough*0.3), rma.r, t);
-            }
-          }
-          // Task 8: grid tile chamfer for ceiling — fallback path
-          if (u_chamferEnabled == 1 && u_chamferGridEnabled == 1) {
-            vec2 f = fract(ceilWorld);
-            float distX = min(f.x, 1.0 - f.x);
-            float distY = min(f.y, 1.0 - f.y);
-            float edgeDist = min(distX, distY);
-            float gSize = max(u_chamferGridCeilSize, 0.001);
-            if (edgeDist < gSize) {
-              float t = edgeDist / gSize;
-              float bevel = 1.0 - smoothstep(0.0, 1.0, t);
-              float gDarken = u_chamferGridCeilDarken > 0.0 ? u_chamferGridCeilDarken : 0.90;
-              float gBlend = u_chamferGridCeilBlend > 0.0 ? u_chamferGridCeilBlend : 0.80;
-              float gRough = u_chamferGridCeilRough > 0.0 ? u_chamferGridCeilRough : 0.30;
-              float gTrim = u_chamferGridCeilTrim >= 0.0 ? u_chamferGridCeilTrim : 0.04;
-              ao *= mix(gDarken, 1.0, smoothstep(0.0, gridCreviceSmooth, t));
-              vec2 edgeN = vec2(0.0);
-              if (distX < distY) edgeN.x = (f.x < 0.5 ? -1.0 : 1.0);
-              else              edgeN.y = (f.y < 0.5 ? -1.0 : 1.0);
-              vec3 chamN = normalize(vec3(edgeN * 0.6, -1.0));
-              N = normalize(mix(N, chamN, bevel * clamp(gBlend, 0.0, 1.0)));
-              float trimBand = smoothstep(gridTStart, gridTMid, t) * (1.0 - smoothstep(gridTMid, gridTEnd, t));
-              albedo += vec3(trimBand * gTrim);
-              rma.r = mix(rma.r * (1.0 - gRough * 0.3), rma.r, t);
-              if (distX < gSize && distY < gSize) ao *= 0.97;
-            }
-          }
+          applyCeilBaseboard(ceilWorld, N, ao, albedo, rma);
+          applyGridCeil(ceilWorld, N, ao, albedo, rma);
+          applyModifiers(albedo, N, rma.r, rma.g, ao, vec3(ceilWorld, ceilH));
         }
         vec3 worldPos = vec3(ceilWorld, ceilH);
         vec3 viewDir = normalize(vec3(u_playerPos, eyeZ2) - worldPos);
@@ -1196,7 +1185,6 @@ void main() {
       finalColor *= fog;
       finalColor += u_fogColor * (1.0 - fog);
     }
-    // HDR fix: bright should go to warm white, not pink/magenta from channel-wise clamp
     {
       float maxC = max(max(finalColor.r, finalColor.g), finalColor.b);
       if (maxC > 1.0) {
@@ -1259,15 +1247,9 @@ out vec4 outColor;
 void main(){ vec4 c = texture(u_mapUI, v_uv); outColor = vec4(c.rgb, c.a * u_opacity); }
 `;
 
-// --- Sprite GPU billboard shaders — Task 6 ---
-// Adapted from mygame's vsSpriteSrc / fsSpritePBRSrc which rendered PBR lit characters
-// sharing sun+torch uniforms. Here reused for environmental sprites (torch wall sconce, brazier).
-
+// --- Sprite billboard shaders — Task10: MAX 8 lights ---
 export const vsSpriteSrc = `#version 300 es
 precision highp float;
-// Sprite billboard vertex shader — instanced quads facing camera.
-// Projection matches raycast camera.
-
 in vec2 a_corner;
 in vec3 a_center;
 in vec2 a_size;
@@ -1275,14 +1257,12 @@ in vec4 a_uvRect;
 in float a_alpha;
 in float a_normalStrength;
 in float a_rimStrength;
-
 uniform vec2 u_resolution;
 uniform vec2 u_pos;
 uniform float u_angle;
 uniform float u_planeLen;
 uniform float u_bobPixels;
 uniform float u_eyeZ;
-
 out vec2 v_uv;
 out vec3 v_worldPos;
 out vec3 v_viewDir;
@@ -1292,7 +1272,6 @@ out float v_alpha;
 out float v_normalStrength;
 out float v_rimStrength;
 out float v_dist;
-
 void main(){
   vec2 dir = vec2(cos(u_angle), sin(u_angle));
   vec2 plane = vec2(-dir.y, dir.x) * u_planeLen;
@@ -1336,7 +1315,6 @@ void main(){
 export const fsSpritePBRSrc = `#version 300 es
 precision highp float;
 precision highp int;
-
 in vec2 v_uv;
 in vec3 v_worldPos;
 in vec3 v_viewDir;
@@ -1346,34 +1324,29 @@ in float v_alpha;
 in float v_normalStrength;
 in float v_rimStrength;
 in float v_dist;
-
 out vec4 outColor;
-
 uniform sampler2D u_albedo;
 uniform sampler2D u_normal;
 uniform sampler2D u_orm;
-
 uniform int u_numLights;
-uniform vec3 u_lightPos[12];
-uniform vec3 u_lightColor[12];
-uniform float u_lightIntensity[12];
-uniform float u_lightRadius[12];
-uniform int u_lightType[12];
-uniform vec3 u_lightDir[12];
-uniform float u_lightConeInner[12];
-uniform float u_lightConeOuter[12];
-uniform float u_lightPulseSpeed[12];
-uniform float u_lightPulseAmt[12];
-uniform int u_lightNoShadow[12];
+uniform vec3 u_lightPos[8];
+uniform vec3 u_lightColor[8];
+uniform float u_lightIntensity[8];
+uniform float u_lightRadius[8];
+uniform int u_lightType[8];
+uniform vec3 u_lightDir[8];
+uniform float u_lightConeInner[8];
+uniform float u_lightConeOuter[8];
+uniform float u_lightPulseSpeed[8];
+uniform float u_lightPulseAmt[8];
+uniform int u_lightNoShadow[8];
 uniform float u_time;
-
 uniform vec3 u_sunDir;
 uniform float u_sunIntensity;
 uniform vec3 u_sunColor;
 uniform float u_ambient;
 uniform float u_fogBase;
 uniform float u_fogSq;
-
 vec3 decodeNormal(vec3 enc){ return normalize(enc * 2.0 - 1.0); }
 float attenuate(float dist, float radius){
   if (dist > radius) return 0.0;
@@ -1421,7 +1394,7 @@ void main(){
       Lo += vec3(rim, rim * 0.6, rim * 0.3);
     }
   }
-  for (int i=0;i<12;i++){
+  for (int i=0;i<8;i++){
     if (i>=u_numLights) break;
     vec3 lp = u_lightPos[i];
     vec3 toL = lp - v_worldPos;
@@ -1444,11 +1417,6 @@ void main(){
       float ps = u_lightPulseSpeed[i]; float pa = u_lightPulseAmt[i];
       if (ps < 0.1) ps = 2.2; if (pa < 0.01) pa = 0.4;
       att *= (1.0 + pa * sin(u_time * ps + float(i)));
-    } else if (lt == 6) {
-    } else if (lt == 4 || lt == 5) {
-    } else {
-      float flick = 0.85 + 0.15 * sin(u_time * 6.0 + float(i) * 1.7) + 0.08 * sin(u_time * 9.0 + float(i) * 2.3);
-      att *= flick;
     }
     if (att <= 0.01) continue;
     vec3 L = toL / max(dist, 0.001);
@@ -1479,73 +1447,20 @@ void main(){
     float rim = rimBase * fresnel * (behind * 0.9 + behindSide) * v_rimStrength * att * (0.7 + metal * 0.8) * 0.35;
     if (rim > 0.001) Lo += vec3(rim, rim * 0.6, rim * 0.3) * u_lightColor[i];
   }
+  vec3 color = Lo;
   float fog = 1.0 / (1.0 + v_dist * u_fogBase + v_dist * v_dist * u_fogSq);
-  fog = clamp(fog, 0.06, 1.0);
-  float fogDark = 0.68 + fog * 0.32;
-  Lo *= fogDark;
-  // HDR fix for sprites too: preserve hue, avoid pink from channel clip, bloom to warm white
+  fog = clamp(fog, 0.05, 1.0);
+  color *= fog;
   {
-    float maxC = max(max(Lo.r, Lo.g), Lo.b);
+    float maxC = max(max(color.r, color.g), color.b);
     if (maxC > 1.0) {
       float over = clamp((maxC - 1.0) * 0.32, 0.0, 0.7);
-      vec3 scaled = Lo / maxC;
+      vec3 scaled = color / maxC;
       vec3 warmWhite = vec3(1.0, 0.94, 0.82);
-      Lo = mix(scaled, warmWhite, over);
+      color = mix(scaled, warmWhite, over);
     }
-    Lo = clamp(Lo, 0.0, 1.0);
+    color = clamp(color, 0.0, 1.0);
   }
-  float alphaFade = 1.0;
-  if (v_dist > 14.0) alphaFade = max(0.12, 1.0 - (v_dist - 14.0) * 0.09);
-  float alphaOut = albedoS.a * v_alpha * alphaFade;
-  outColor = vec4(Lo, alphaOut);
-}
-`;
-
-// Particle shaders — simple additive for flame/sparking, Task 6
-export const vsParticleSrc = `#version 300 es
-in vec2 a_pos;
-in vec3 a_center;
-in float a_size;
-in vec4 a_color;
-uniform vec2 u_resolution;
-uniform vec2 u_pos;
-uniform float u_angle;
-uniform float u_planeLen;
-uniform float u_bobPixels;
-uniform float u_eyeZ;
-out vec4 v_color;
-out float v_dist;
-void main(){
-  vec2 dir = vec2(cos(u_angle), sin(u_angle));
-  vec2 plane = vec2(-dir.y, dir.x) * u_planeLen;
-  vec2 toC = a_center.xy - u_pos;
-  float invDet = 1.0 / (plane.x * dir.y - dir.x * plane.y);
-  float tx = invDet * (dir.y * toC.x - dir.x * toC.y);
-  float ty = invDet * (-plane.y * toC.x + plane.x * toC.y);
-  if (ty <= 0.15) { gl_Position = vec4(2.0,2.0,0.0,1.0); return; }
-  float sx = 0.5 * (1.0 + tx / ty);
-  float lineH = u_resolution.y / ty;
-  float yWorld = u_resolution.y * 0.5 + lineH * (u_eyeZ - a_center.z) - u_bobPixels;
-  float xScreen = sx * u_resolution.x + a_pos.x * a_size * lineH * 0.5;
-  float yScreen = yWorld + a_pos.y * a_size * lineH * 0.5;
-  float clipX = (xScreen / u_resolution.x) * 2.0 - 1.0;
-  float clipY = 1.0 - (yScreen / u_resolution.y) * 2.0;
-  gl_Position = vec4(clipX, clipY, 0.0, 1.0);
-  v_color = a_color;
-  v_dist = ty;
-}
-`;
-
-export const fsParticleSrc = `#version 300 es
-precision mediump float;
-in vec4 v_color;
-in float v_dist;
-out vec4 outColor;
-uniform float u_fogBase;
-uniform float u_fogSq;
-void main(){
-  float fog = 1.0 / (1.0 + v_dist * u_fogBase + v_dist * v_dist * u_fogSq);
-  fog = clamp(fog, 0.06, 1.0);
-  outColor = vec4(v_color.rgb * fog, v_color.a);
+  outColor = vec4(color, albedoS.a * v_alpha);
 }
 `;

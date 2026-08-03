@@ -16,7 +16,9 @@ export const CONFIG_PATHS = {
   'ao':             ['config/rendering/ao', 'config/ao', 'config/main'],
   'raymarch':       ['config/rendering/raymarch', 'config/raymarch', 'config/main'],
   'materials-proc': ['config/rendering/materials-proc', 'config/materials-proc', 'config/main'],
-  // lighting — Task 6 extended
+  'material-modifiers': ['config/rendering/material-modifiers', 'config/material-modifiers', 'config/main'],
+  'material-modifiers.json': ['config/rendering/material-modifiers', 'config/main'],
+  // lighting — Task 6 extended, Task10: 8 lights
   'lighting':       ['config/lighting/lighting', 'config/lighting', 'config/main'],
   'shadows':        ['config/lighting/shadows', 'config/shadows', 'config/main'],
   'fog':            ['config/lighting/fog', 'config/fog', 'config/lighting/fog', 'config/main'],
@@ -138,9 +140,11 @@ export async function getFogConfig(){ return _fetchConfig('fog'); }
 export async function getSpritesConfig(){ return _fetchConfig('sprites'); }
 export async function getLightTypesConfig(){ return _fetchConfig('light-types'); }
 export async function getParticlesConfig(){ return _fetchConfig('particles'); }
+export async function getMaterialModifiersConfig(){ return _fetchConfig('material-modifiers'); }
 export async function saveSpritesConfig(cfg){ return _saveConfig('sprites', cfg); }
 export async function saveLightTypesConfig(cfg){ return _saveConfig('light-types', cfg); }
 export async function saveParticlesConfig(cfg){ return _saveConfig('particles', cfg); }
+export async function saveMaterialModifiersConfig(cfg){ return _saveConfig('material-modifiers', cfg); }
 export function getFogConfigSync(){
   const c = _caches['fog'];
   if(!c) throw new Error('Fog config not loaded yet');
@@ -154,7 +158,7 @@ export async function saveFogConfig(cfg){
 
 // Batch load all rendering configs at once for Game init
 export async function getAllRenderConfigs(){
-  const names = ['rendering','palette','pom','pbr','ao','lighting','shadows','chamfer','corners','raymarch','fog','generator','map','materials-proc','player','debug','discovery','sprites','light-types','particles'];
+  const names = ['rendering','palette','pom','pbr','ao','lighting','shadows','chamfer','corners','raymarch','fog','generator','map','materials-proc','material-modifiers','player','debug','discovery','sprites','light-types','particles'];
   const promises = names.map(n => _fetchConfig(n).catch(()=>null));
   const results = await Promise.all(promises);
   const out = {};

@@ -1,14 +1,10 @@
-// SpriteGpuRenderer — WebGL2 PBR billboard sprite renderer — Task 6
-// Renders torches, braziers, crystals as camera-facing quads with PBR lighting
-// (albedo + normal + ORM sampled in shader). Shares light uniforms with raycast
-// shader for visual consistency, but sprites are rendered after raycast pass as
-// transparent overlay (blended back-to-front). Inspiration from mygame prototype.
-
+// SpriteGpuRenderer — WebGL2 PBR billboard sprite renderer — Task10: 8 lights (was 12)
+// Forward lighting, PBR same lights/fog, back-to-front blend
 import { createProgram } from './gl-utils.js';
 import { getSprite, getSpriteTextures, loadSpriteGL } from './sprite-atlas.js';
 
-// We share MAX_LIGHTS naming with shaders.js
-export const MAX_LIGHTS_SPRITE = 12;
+// Shared with shaders.js MAX_LIGHTS — now 8 for perf + guarantee
+export const MAX_LIGHTS_SPRITE = 8;
 
 let vsSpriteSrc = null;
 let fsSpritePBRSrc = null;

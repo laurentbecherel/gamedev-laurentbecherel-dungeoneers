@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { generateMaterialAtlases, atlasUvX } from "../../world/materials.js";
+import { generateMaterialAtlases, generateMaterialArrayData, atlasUvX } from "../../world/materials.js";
 
 const wallMats = [{ id: 1, name: "dungeon_brick", type: "brick", base: [138, 58, 44], roughness: 0.85, metal: 0, variationSeed: 101, emissiveColor: [0, 0, 0], emissiveStrength: 0 }];
 const floorMats = [{ id: 1, name: "stone_slab", type: "slab", base: [90, 88, 80], roughness: 0.88, metal: 0, variationSeed: 201, emissiveColor: [0, 0, 0], emissiveStrength: 0 }];
@@ -20,19 +20,34 @@ test("atlas generation produces correctly sized arrays", () => {
   assert.equal(atl.wallNormal.length, sz * 4);
   assert.equal(atl.wallHeight.length, sz);
   assert.equal(atl.wallRoughMetalAO.length, sz * 4);
-  // floor/ceil same
   assert.equal(atl.floorAlbedo.length, sz * 4);
   assert.equal(atl.ceilAlbedo.length, sz * 4);
 });
 
-test("single-material lock: slice tricks keep atlas 64 wide despite multi input", () => {
+test("Task10: material array pipeline supports N materials, no bleeding, array path", () => {
   const multi = [
     { id: 1, base: [138, 58, 44], roughness: 0.85, variationSeed: 1 },
     { id: 2, base: [90, 88, 80], roughness: 0.88, variationSeed: 2 },
   ];
+  const arr = generateMaterialArrayData(multi, multi, multi, { ...proc, texSize: 64 });
+  assert.equal(arr.wallCount, 2, "array pipeline supports 2 wall types");
+  assert.equal(arr.floorCount, 2);
+  assert.equal(arr.ceilCount, 2);
+  assert.equal(arr.texSize, 64);
+  // array data sizes: texSize*texSize*count*4
+  const layerPix = 64*64;
+  assert.equal(arr.walls.albedo.length, layerPix*2*4);
+  assert.equal(arr.walls.height.length, layerPix*2);
+  // legacy atlas wrapper also now supports N (not forced 1) for fallback
   const atl = generateMaterialAtlases(multi, multi, multi, proc);
-  // Task 3 must clamp to 1
-  assert.equal(atl.wallCount, 1, "wallCount clamped to 1 per Task3 spec");
+  assert.equal(atl.wallCount, 2, "legacy wrapper now also reports 2 for array compatibility");
+  assert.equal(atl.wallAtlasW, 128, "atlas fallback would be 128 wide for 2 mats");
+});
+
+test("single-material lock: legacy Task3 single mat still works as 1-layer array", () => {
+  const single = [{ id: 1, base: [138, 58, 44], roughness: 0.85, variationSeed: 1 }];
+  const atl = generateMaterialAtlases(single, single, single, proc);
+  assert.equal(atl.wallCount, 1);
   assert.equal(atl.floorCount, 1);
   assert.equal(atl.ceilCount, 1);
   assert.equal(atl.wallAtlasW, 64);

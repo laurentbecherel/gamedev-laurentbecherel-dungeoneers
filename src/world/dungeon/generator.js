@@ -3,6 +3,7 @@
 import { hash2i, pickWeighted, zoneForDepth, globalDepthForLevel, getTheme } from "./themes.js";
 import { GRID_FLOOR, BOUNDARY_WALL_ID, STAIRS_MATERIAL_ID, DECO_COLUMN, DECO_MOSS, DECO_VINES, DECO_ARCH, DECO_BROKEN, DECO_PUDDLE, DECO_ROOTS, DECO_BEAM } from "./atlas.js";
 import { generateDungeonItems } from "../items.js";
+import { generateModifierMap } from "../modifiers.js";
 
 function makeRng(seed) { let s = seed >>> 0 || 1; return () => { s = Math.imul(s, 1664525) + 1013904223 >>> 0; return s / 0x100000000; }; }
 
@@ -308,15 +309,32 @@ export async function generateDungeon(config, seedOverride = null) {
     const {zone} = zoneForDepth(globalT, "classic");
     r.depth = localT; r.globalDepth = globalT; r.zone = zone.name; r.zoneObj = zone;
     const role = roleMap.get(ri) || "corridor"; r.role = role;
-    // Attach stair wall metadata for entrance and exit rooms
     if (ri === entryRoomIdx && entryStairWall) r.stairWall = entryStairWall;
     if (ri === exitRoomIdx && exitStairWall) r.stairWall = exitStairWall;
     const hx = Math.floor(r.cx), hy = Math.floor(r.cy);
-    // Task 3: single material only — lock to ID 1 = dungeon_brick / stone_slab / stone_ceiling
-    // Even if zones list ID 2, we force 1 to keep atlas 64x64 and avoid CLAMP_TO_EDGE streaks.
-    const wallMat = 1;
-    const floorMat = 1;
-    const ceilMat = 1;
+    // Task10: material array pipeline — per-room variation. One layer per type, trivial to add new type.
+    // We have 2 materials per category in JSON (brick/rough_stone, stone_slab/cobblestone, stone_ceiling/wooden_beams)
+    // Assign based on role + seeded hash for determinism.
+    const roll = hash2i(hx*2+ri, hy*3+ri*2, seed);
+    let wallMat = 1, floorMat = 1, ceilMat = 1;
+    // Floor policy: corridors more cobble, treasure/secret more stone slab, entrance brick consistent
+    // Use role weighting: guardians rough stone walls + cobble floors for battle-worn feel
+    if (role === 'entrance') { wallMat = 1; floorMat = 1; ceilMat = 1; }
+    else if (role === 'guardian') { wallMat = 2; floorMat = 2; ceilMat = 1; }
+    else if (role === 'treasure' || role === 'secret') { wallMat = (roll < 0.6 ? 1 : 2); floorMat = 1; ceilMat = 2; }
+    else if (role === 'shrine') { wallMat = 2; floorMat = 1; ceilMat = 2; }
+    else if (role === 'hub') { wallMat = (roll < 0.4 ? 1 : 2); floorMat = (roll < 0.5 ? 1 : 2); ceilMat = (roll < 0.7 ? 1 : 2); }
+    else if (role === 'armory') { wallMat = 2; floorMat = 2; ceilMat = 1; }
+    else if (role === 'exit') { wallMat = (roll < 0.3 ? 1 : 2); floorMat = 2; ceilMat = 1; }
+    else { // hall / corridor generic — mix
+      wallMat = (roll < 0.55 ? 1 : 2);
+      floorMat = (hash2i(hx+11, hy+22, seed+5) < 0.45 ? 1 : 2);
+      ceilMat = (hash2i(hx+33, hy+44, seed+9) < 0.75 ? 1 : 2);
+    }
+    // Clamp to valid IDs (max mat count will be validated in renderer)
+    wallMat = Math.max(1, Math.min(8, wallMat|0));
+    floorMat = Math.max(1, Math.min(8, floorMat|0));
+    ceilMat = Math.max(1, Math.min(8, ceilMat|0));
     r.wallMat = wallMat; r.floorMat = floorMat; r.ceilMat = ceilMat;
     const archW = zone.architectureWeights || {dungeon:1};
     const archKeys = Object.keys(archW); const archTotal = archKeys.reduce((s,k)=>s+archW[k],0);
@@ -427,17 +445,17 @@ export async function generateDungeon(config, seedOverride = null) {
   if (entryNextIdx != null) relocateStairIfNeeded(entryRoomIdx, entryNextIdx, true);
   if (exitPrevIdx != null) relocateStairIfNeeded(exitRoomIdx, exitPrevIdx, false);
 
-  // --- Stage 7: Wall painting ---
+  // --- Stage 7: Wall painting (array path — no bleeding, so we can safely use per-room mats) ---
   rooms.forEach(r=>{
     for(let dx=-1; dx<=r.w; dx++) for(let dy=-1; dy<=r.h; dy++){
       if(dx>=0&&dx<r.w&&dy>=0&&dy<r.h) continue;
       const x=r.x+dx, y=r.y+dy; if(x<0||y<0||x>=w||y>=h)continue; const i=idx(x,y);
       if(grid[i]!==GRID_FLOOR) grid[i]=r.wallMat;
     }
-    // Paint stair wall segments - Task 3 single material: force 1 to avoid atlas overflow streaks
+    // Stairs use same room mat now (array path eliminates old CLAMP streak), keeps visual consistent
     if(r.stairWall){
       const sw = r.stairWall;
-      const stairMat = 1; // was STAIRS_MATERIAL_ID=2 which caused CLAMP_TO_EDGE streaks at exit
+      const stairMat = r.wallMat || 1;
       if (sw.edge === "north" || sw.edge === "south") {
         const y = sw.y1;
         for (let x = sw.x1; x <= sw.x2; x++) { if (x>0 && x<w-1 && y>0 && y<h-1) { const ii=idx(x,y); if(grid[ii]!==GRID_FLOOR) grid[ii]=stairMat; } }
@@ -447,9 +465,29 @@ export async function generateDungeon(config, seedOverride = null) {
       }
     }
   });
+  // Fill remaining walls with nearest room's wallMat
   for(let y=1;y<h-1;y++) for(let x=1;x<w-1;x++){ const i=idx(x,y); if(grid[i]===GRID_FLOOR) continue; if(grid[i]===boundaryWallId) continue;
+    if (grid[i]>=1) continue; // already assigned
     let best=1, bestD=999; for(const r of rooms){ const d=Math.abs(x-r.cx)+Math.abs(y-r.cy); if(d<bestD){bestD=d; best=r.wallMat;} } grid[i]=best;
   }
+  // Corridors floor/ceil mat painting: inherit from nearest room for visual continuity
+  for(let y=1;y<h-1;y++) for(let x=1;x<w-1;x++){
+    const i=idx(x,y);
+    if (grid[i]!==GRID_FLOOR) continue;
+    if (floorToRoom[i]!==-2) continue; // not corridor
+    // find nearest room
+    let bestF=1, bestC=1, bestD=999;
+    for(const r of rooms){ const d=Math.abs(x-r.cx)+Math.abs(y-r.cy); if(d<bestD){bestD=d; bestF=r.floorMat; bestC=r.ceilMat;} }
+    floorMat[i]=bestF; ceilMat[i]=bestC;
+  }
+  // Ensure per-room interior still has its mats (carving may have overwritten some by wall paint calc above? Re-assert)
+  rooms.forEach(r=>{
+    for(let dy=0; dy<r.h; dy++) for(let dx=0; dx<r.w; dx++){
+      const x=r.x+dx, y=r.y+dy; if(x<=0||y<=0||x>=w-1||y>=h-1) continue;
+      const i=idx(x,y);
+      if(grid[i]===GRID_FLOOR){ floorMat[i]=r.floorMat; ceilMat[i]=r.ceilMat; }
+    }
+  });
   for(let x=0;x<w;x++){ grid[idx(x,0)]=boundaryWallId; grid[idx(x,h-1)]=boundaryWallId; }
   for(let y=0;y<h;y++){ grid[idx(0,y)]=boundaryWallId; grid[idx(w-1,y)]=boundaryWallId; }
 
@@ -469,7 +507,7 @@ export async function generateDungeon(config, seedOverride = null) {
   for(let dy=-flattenRadius; dy<=flattenRadius; dy++) for(let dx=-flattenRadius; dx<=flattenRadius; dx++){
     const x=Math.floor(startX)+dx, y=Math.floor(startY)+dy; if(x<0||y<0||x>=w||y>=h)continue; const i=idx(x,y); if(grid[i]===GRID_FLOOR) floorHeight[i]=0;
   }
-  const dungeon = {w,h,grid,floorHeight,ceilHeight,deco,floorMat,ceilMat,startX,startY,seed,rooms,items:[],lights:[],sprites:[],meta:{}};
+  const dungeon = {w,h,grid,floorHeight,ceilHeight,deco,floorMat,ceilMat,startX,startY,seed,rooms,items:[],lights:[],sprites:[],meta:{},modifierMap:null};
   const genItemsCfg = {
     ...config,
     ...(config.generator||{}),
@@ -484,7 +522,14 @@ export async function generateDungeon(config, seedOverride = null) {
   const lights = res.lights || [];
   const sprites = res.sprites || items.map(it => ({...it, spriteId: it.spriteId || 'torch_wall'}));
   dungeon.items = items; dungeon.lights = lights; dungeon.sprites = sprites;
+  // Modifier map: per-cell field baked once, future Task9 full implementation
+  try {
+    const modMap = generateModifierMap(dungeon, config);
+    dungeon.modifierMap = modMap;
+    dungeon.modifierData = modMap.data;
+  } catch(e){ console.warn('[gen] modifier map failed', e); dungeon.modifierMap = null; }
   dungeon.meta = {themeId:"classic", themeName:"Classic Dungeon", levelIndex, levelCount, boundaryWallId,
-    zoneSummary: theme.zones.map(z=>z.name), edges: edges.length, rolesSummary: Object.fromEntries([...new Set(rooms.map(r=>r.role))].map(r=>[r, rooms.filter(rr=>rr.role===r).length]))};
+    zoneSummary: theme.zones.map(z=>z.name), edges: edges.length, rolesSummary: Object.fromEntries([...new Set(rooms.map(r=>r.role))].map(r=>[r, rooms.filter(rr=>rr.role===r).length])),
+    materialCounts:{ walls: Math.max(...rooms.map(r=>r.wallMat)), floors: Math.max(...rooms.map(r=>r.floorMat)), ceils: Math.max(...rooms.map(r=>r.ceilMat)) }};
   return dungeon;
 }

@@ -8,7 +8,7 @@ function clone(o) { try { return JSON.parse(JSON.stringify(o)); } catch { return
 
 // Tier classification per architecture plan
 const TIER_MAP = {
-  // T1 instant uniform (no atlas, no regen)
+  // T1 instant uniform (no atlas, no regen) — Task10: material-modifiers also T1 (modifier params UBO live-tunable)
   'fog': 'T1',
   'lighting': 'T1',
   'shadows': 'T1',
@@ -27,8 +27,9 @@ const TIER_MAP = {
   'sprites': 'T1',
   'light-types': 'T1',
   'particles': 'T1',
-  'main': 'T1', // mixed but default T1 unless generator keys
-  // T2 atlas rebuild
+  'material-modifiers': 'T1',
+  'main': 'T1',
+  // T2 array rebuild
   'materials-proc': 'T2',
   // T3 regen-required
   'generator': 'T3'
@@ -52,7 +53,9 @@ const PATH_TIER_OVERRIDES = {
   'config/lighting/sprites': 'T1',
   'config/lighting/light-types': 'T1',
   'config/geometry/chamfer': 'T1',
-  'config/geometry/corners': 'T1'
+  'config/geometry/corners': 'T1',
+  'config/rendering/material-modifiers': 'T1',
+  'config/material-modifiers': 'T1',
 };
 
 export function getTierForLogical(logicalOrPath) {

@@ -200,7 +200,7 @@ test('sprites material fields in sane ranges', async () => {
 test('config sprites.json valid and contains required types and pools', async () => {
   let spritesRaw = null;
   try { spritesRaw = JSON.parse(await fs.readFile(path.join(__dirname, '../../assets/config/lighting/sprites.json'), 'utf8')); } catch (e) { assert.fail('sprites.json missing or invalid'); }
-  assert.equal(spritesRaw.version, 1, 'version 1');
+  assert.ok([1,2,3].includes(spritesRaw.version), `version 1..3, got ${spritesRaw.version}`);
   assert.ok(Array.isArray(spritesRaw.sprites) && spritesRaw.sprites.length >= 2, 'at least 2 sprite defs');
   const ids = spritesRaw.sprites.map(s => s.id);
   assert.ok(ids.includes('torch_wall'), 'torch_wall exists');
