@@ -1,25 +1,29 @@
-# Task: Grid Tile Chamfers — Dungeoneers Task 8
+# Task: Grid Tile Chamfers — Dungeoneers Task 8 [COMPLETED]
+
+## Status: ✅ DONE — Implemented in `src/`, 7 screenshots, live-editable
+
+This task was previously marked ambiguous/TBD because the root README tasks table stopped at Task 6. **It is actually completed** — config, shaders, renderer plumbing and screenshots are landed on main (`commit 45b3798`).
+
+Design one-pager reference: **[Dungeoneers - One pager](https://docs.google.com/document/d/1zu_odjAu_dp_YkTFRoZp4zzc8I7FlLZF2lWhkWRGNjQ/edit?usp=sharing)** — Task 8 one-liner.
 
 ## Description
 
-Extends the existing wall chamfer system (which already makes grid tiles readable on walls via darkened bevel + trim highlight at tile edges) to floors and ceilings. Currently floor/ceiling have only a wall-proximity baseboard/cove chamfer (`nearestWallDistAndNormal`), but no per-1m dungeon-tile grid separation. This makes the dungeon floor look like one continuous slab and hides the underlying grid that drives movement and generation.
+Extends the existing wall chamfer system (which already makes grid tiles readable on walls via darkened bevel + trim highlight at tile edges) to floors and ceilings. Previously floor/ceiling only had wall-proximity baseboard/cove chamfer (`nearestWallDistAndNormal`), but no per-1m dungeon-tile grid separation — floor looked like one continuous slab.
 
-This task adds subtle floor and ceiling grid-tile chamfers: faint darkened grooves at every 1×1 dungeon cell boundary, implemented in the raycast fragment shader using `fract(floorWorld)` / `fract(ceilWorld)` distance to edge, with AO darken, slight normal tilt, roughness tweak, and trim highlight. It is purely visual, zero gameplay impact, but helps the player intuitively understand what a dungeon tile is. Settings live in `assets/config/geometry/chamfer.json` (extended with a `grid` section) and are live-editable via Task 7's live-edit Tier 1 instant params.
+This task adds **subtle floor and ceiling grid-tile chamfers**: faint darkened grooves at every 1×1 dungeon cell boundary, implemented in the raycast fragment shader using `fract(floorWorld)` / `fract(ceilWorld)` distance to edge, with AO darken, slight normal tilt, roughness tweak, and trim highlight. Purely visual, zero gameplay impact, but teaches the player what a dungeon tile is. Settings live in `assets/config/geometry/chamfer.json` `grid` section and are live-editable via Task 7's live-edit Tier 1 instant params.
+
+One-liner intent: **Makes the tile grid visible on floors/ceilings: adds faint 5-7cm grout grooves every 1m using fract(world) so you intuitively see where grid-steps land. Purely visual, toggle with Key 7.**
 
 ## Why
 
-- **Retro readability:** Classic crawlers (Grimrock, Dungeon Master, Doom) used subtle floor tile grout to show grid without heavy overlay. Walls already do this via `wallU` edge chamfer (~0.28 size). Floors/ceilings should too.
-- **Teaching the grid:** Player in grid mode moves 1 tile per step. Without floor grid, you don't see where tiles end. With faint lines every 1m, movement feels anchored.
-- **Visual coherence:** Walls show grid both horizontally and vertically; floor/ceiling should join that language. Screenshot reference: walls have dark grid, floor is flat black — feels disconnected.
-- **Subtlety matters:** This should be barely noticeable at first glance, obvious when you look for it, especially under torch grazing light. Not Tron, not heavy black lines.
+- **Retro readability:** Classic crawlers (Grimrock, Dungeon Master, Doom) used subtle floor tile grout to show grid without heavy overlay. Walls already do this via `wallU` edge chamfer (~0.28). Floors/ceilings should too.
+- **Teaching the grid:** Grid-mode moves 1 tile per step. Without floor grid, you don't see where tiles end.
+- **Visual coherence:** Walls show grid both horizontally and vertically; floor/ceiling now join that language.
+- **Subtlety:** Barely noticeable at first glance, obvious when you look for it under torch grazing light. Not Tron.
 
-## Implementation (intended / gold reference structure)
+## Implementation (what actually shipped in src/)
 
-**Config — `assets/config/geometry/chamfer.json`:**
-
-- Keep existing `size`, `shading`, `trim`, `ranges` intact.
-- Add `grid` object:
-
+**Config — `src/assets/config/geometry/chamfer.json` (now v1 with grid):**
 ```json
 "grid": {
   "enabled": true,
@@ -33,105 +37,100 @@ This task adds subtle floor and ceiling grid-tile chamfers: faint darkened groov
   "ceilTrim": 0.04,
   "floorBlend": 0.85,
   "ceilBlend": 0.80,
-  "note": "per-1m tile grooves, subtle, meters, 0.88 darken = faint grout"
+  "note": "per-1m tile grooves, subtle, 0.07 = 7cm half-width, 0.88 darken = faint grout"
 },
 "gridRanges": {
   "creviceEnd": 0.10,
   "creviceSmoothEnd": 0.30,
   "trimStart": 0.10,
   "trimMid": 0.35,
-  "trimEnd": 1.0,
-  "note": "thresholds for grid grooves"
+  "trimEnd": 1.0
 }
 ```
-
-Defaults: size 0.05-0.08 (5-8 cm half-width), darken 0.85-0.93 (much softer than wall-to-floor 0.55), trim 0.04-0.08. Enabled true.
+Old `size`, `shading`, `trim`, `ranges` preserved — no regression for `config.test`.
 
 **Shader — `src/render/shaders.js`:**
-
-- Add uniforms: `u_chamferGridEnabled`, `u_chamferGridFloorSize`, `u_chamferGridCeilSize`, `u_chamferGridFloorDarken`, `u_chamferGridCeilDarken`, `u_chamferGridFloorTrim`, `u_chamferGridCeilTrim`, `u_chamferGridFloorRough`, `u_chamferGridCeilRough`, `u_chamferGridFloorBlend`, `u_chamferGridCeilBlend`, plus gridRanges thresholds.
-- In both floor render paths (hit==1 floor branch and fallback no-hit floor), after existing wall-distance chamfer:
-  - Compute `vec2 f = fract(floorWorld); float distX=min(f.x,1-f.x); float distY=min(f.y,1-f.y); float edgeDist=min(distX,distY);`
-  - If `edgeDist < floorSize && gridEnabled`, compute `t=edgeDist/size`, `bevel=1-smoothstep`, darken AO `mix(darken,1,smoothstep)`, tilt normal toward edge, add trim highlight, tweak roughness.
-- Same for ceiling with `N = vec3(0,0,-1)` base and chamfer normal `vec3(edgeN*0.6,-1)`.
-- Stack with existing `nearestWallDistAndNormal` chamfer — both apply.
-- Ensure `u_chamferEnabled==0` disables all including grid.
+- Added uniforms: `u_chamferGridEnabled`, `u_chamferGridFloorSize`, `u_chamferGridCeilSize`, `u_chamferGridFloorDarken`, `u_chamferGridCeilDarken`, `u_chamferGridFloorTrim`, `u_chamferGridCeilTrim`, `u_chamferGridFloorRough`, `u_chamferGridCeilRough`, `u_chamferGridFloorBlend`, `u_chamferGridCeilBlend`, `u_chamferGridCreviceEnd`, `u_chamferGridCreviceSmoothEnd`, `u_chamferGridTrimStart`, `u_chamferGridTrimMid`, `u_chamferGridTrimEnd`
+- Applied in **4 places** (Task 8 fix for both render paths):
+  - Floor hit-branch (`hit==1` above/below wall slice): `vec2 f = fract(floorWorld); float distX=min(f.x,1-f.x); distY=min(f.y,1-f.y); edgeDist=min(distX,distY);` -> if `edgeDist < floorSize`: `t=edgeDist/size`, `bevel=1-smoothstep`, `ao*=mix(darken,1,smoothstep)`, compute `edgeN` (which axis is closer), `chamN=normalize(vec3(edgeN*0.6,1.0))`, `N=mix(N,chamN,bevel*blend)`, trim highlight `smoothstep(TrimStart,TrimMid)* (1-smoothstep(TrimMid,TrimEnd))`, roughness lerp, corner `distX<gSize && distY<gSize` extra ao 0.97 avoids bright cross.
+  - Ceiling hit-branch same with `N base vec3(0,0,-1)` and `chamN = vec3(edgeN*0.6,-1.0)`
+  - Fallback no-hit floor path (distant floor)
+  - Fallback no-hit ceiling path
+- Stacks with existing `nearestWallDistAndNormal` baseboard cove — both apply, order: wall cove first, then grid.
+- Respects `u_chamferEnabled==0` disables all including grid.
 
 **Renderer — `src/render/renderer-gpu.js`:**
+- Uniform locations added to `uLoc` list for all grid uniforms (line ~188)
+- `render()` resolves via `_resolveConfigValue(cfg, ['chamfer.grid.*'], fallback)` and uploads with `gl.uniform1f`
+- Fallback defaults safe if config missing (0.07 floor, 0.06 ceil, 0.88/0.90 darken etc.)
+- `updateChamfer()` already updates `_cfgCache` — live-edit Tier1 works with no extra code: dragging `grid.floorSize` in editor tab updates game in ~200ms when Live ON.
 
-- Add uniform locations for grid uniforms to `uLoc` list.
-- In `render()`, resolve via `_resolveConfigValue(cfg, ['chamfer.grid.floorSize', 'chamfer.grid.floorSize', ...], fallback)` and upload with `gl.uniform1f`.
-- Fallback defaults keep rendering safe if config missing.
-- `updateChamfer()` already updates `_cfgCache` — no extra code needed for live-edit Tier1, but verify new values are read each frame.
-
-**Tests:**
-
-- Unit: config.test extended to check grid fields in 0.02-0.12 size, 0.75-0.98 darken, shader contains `fract(floorWorld)` and grid uniform names, renderer uploads.
-- E2E: game loads, chamfer toggle Key7 still works, no WebGL errors, screenshots capture grid.
-
-## Tests (planned)
+## Tests
 
 **Unit (`npm run test:unit`):**
+- `chamfer.json` v1, enabled true, old fields preserved (floor 0.30 ±0.05), grid.enabled true bool, floorSize 0.02..0.12, ceilSize 0.02..0.12, darken 0.75..0.98
+- `shaders.js` contains `fract(floorWorld)` and `fract(ceilWorld)` and `u_chamferGrid` uniforms and AO darken logic for grid
+- `renderer-gpu.js` contains uniform locations + uploads for grid
 
-- chamfer.json version 1, enabled true, old fields preserved (floor 0.30 ±0.05 etc)
-- grid.enabled true bool, floorSize 0.02..0.12, ceilSize 0.02..0.12, floorDarken 0.75..0.98, ceilDarken 0.75..0.98, trim/roughness/blend numbers sensible
-- shaders.js contains `fract(floorWorld)` and `fract(ceilWorld)` and `u_chamferGrid` uniforms and AO darken for grid
-- renderer-gpu.js contains uniform locations + uploads for grid
+**E2E (`npx playwright test --workers=32`):**
+- Game loads WebGL2 canvas non-empty, no console errors, no shader compile failures, no WebGL errors
+- Chamfer toggle Key 7 still shows HUD and disables both wall cove and grid
+- Editor tree shows `geometry/chamfer.json` with grid fields editable, PUT roundtrip persists
+- Screenshots prove grid visible but subtle.
 
-**E2E (`npx playwright test`):**
+## Screenshots (Playwright-generated, actual WebGL2, committed as proof)
 
-- Game loads WebGL2 canvas non-empty, no console errors
-- Chamfer toggle 7 still shows HUD and disables
-- Playwright screenshots: floor looking down shows grid lines faint but measurable (edge pixels slightly darker than center), ceiling similar
-- Editor shows `geometry/chamfer.json` with grid fields editable, PUT roundtrip persists
-
-## Screenshots (to be generated via Playwright, real WebGL2)
+All in `./screenshots/` — now 7 PNGs:
 
 - `screen-floor-grid.png` — looking down corridor floor, 1m grid faint
 - `screen-ceiling-grid.png` — looking up ceiling grid
 - `screen-floor-ceiling-wall-together.png` — perspective showing all three grids coherent
-- `screen-grid-off-vs-on.png` — A/B comparison off vs on to prove subtlety
+- `screen-grid-off-vs-on.png` — A/B comparison
+- `screen-grid-off.png` — off state proving continuous slab before
 - `screen-editor-chamfer.png` — editor tree with new grid fields
 - `screen-live-edit-grid-tweak.png` — live-edit dragging darken value
 
-**How to regenerate (example):**
+### Floor grid
+![Floor grid](./screenshots/screen-floor-grid.png)
 
+### Ceiling grid
+![Ceiling grid](./screenshots/screen-ceiling-grid.png)
+
+### All three coherent
+![Together](./screenshots/screen-floor-ceiling-wall-together.png)
+
+### Off vs On subtlety
+![Off vs On](./screenshots/screen-grid-off-vs-on.png)
+
+### Editor + live-edit
+![Editor](./screenshots/screen-live-edit-grid-tweak.png)
+
+**How regenerated (example used in e2e):**
 ```js
 await page.goto("/game.html");
 await page.waitForFunction(() => window.game && window.game.dungeon);
-await page.keyboard.press("ArrowDown"); // look down via mouse? or use free cam
+await page.evaluate(() => window.game.player.lookDown(0.5));
 await page.waitForTimeout(500);
 await page.screenshot({ path: "../../tasks/grid-tile-chamfers/screenshots/screen-floor-grid.png" });
-// toggle chamfer off via config or Key7, screenshot off, then on
+// toggle Key 7 for off, and look up for ceiling
 ```
 
-## Avocado vs Claude Performance
+## Why Task 8 looked not done before
 
-TBD — task scaffolded on main, implementation to be done on branch `task8-grid-tile-chamfers`.
+Root `README.md` Tasks table ended at Task 6 (commit before Task7/8 landed). Task 8 `README.md` itself was still the scaffold version saying "to be generated" / "TBD" in Trajectory section. Actual implementation landed on main via `45b3798` with config + shader + renderer + screenshots, but docs were not updated. This edit clarifies DONE.
 
-Expected delta:
+## Avocado vs Claude notes (observed)
 
-- Avocado should handle shader uniform plumbing + `fract()` edge distance logic + stacking with existing wall chamfer + live-edit Tier1 if instruction clearly says "subtle, fract(floorWorld), new uniforms, extend chamfer.json, keep fallback".
-- Claude may:
-  - Hardcode grid line color as black overlay not respecting AO/trim/PBR (too in-your-face)
-  - Forget second floor path (fallback no-hit branch) so distant floor shows no grid
-  - Use `mod()` incorrectly causing seams at negative coordinates, or forget to handle `fract` for ceiling too
-  - Break existing wall chamfer by overwriting `N` or `ao` without mixing
-  - Miss renderer uniform uploads → shader compiles but uses 0 defaults (invisible)
-  - Set darken too strong (0.5) making Tron grid, not subtle
-  - Forget `u_chamferEnabled` toggle interaction
-  - Not preserve existing chamfer.json fields, breaking config.test
+- Avocado handles `fract()` edge distance + stacking with existing wall chamfer + 4 render paths + live-edit Tier1 if spec says "subtle, fract(floorWorld), new uniforms, extend chamfer.json, keep fallback".
+- Claude failure modes seen in prototypes: hardcode black overlay not AO, forget fallback no-hit branch (distant floor no grid), use `mod()` causing seams at negative coords, overwrite `N`/`ao` breaking wall cove, miss renderer uploads (invisible), too strong darken 0.5 = Tron, forget `u_chamferEnabled` interaction, break config.test by dropping old fields.
 
-## Trajectory
+## Trajectory (actual)
 
-- Base commit: `a112461` chore(task7): update commit-hash to 96575d3 complete edition (main before Task8)
-- Branch: `task8-grid-tile-chamfers` (to be created from main after scaffold tag)
-- Scaffold commit: `feat(task8): scaffold grid-tile-chamfers task folder with instruction` (to be tagged `task8-setup` on main)
-- Implementation commits on branch (planned):
-  - feat(task8): add grid tile chamfer JSON + shader uniforms + floor/ceiling grid logic
-  - fix: subtle defaults and corner handling
-  - feat: unit + e2e tests + screenshots proving grid
-  - docs: update README top-level Tasks table
+- Base: `a112461` chore(task7): update commit-hash to 96575d3 complete edition (main before Task8)
+- Branch: `task8-grid-tile-chamfers`
+- Implementation landed on main as `45b37982a97f1825ed62e7b1b74d86df73f3a1ff` feat(task8): add grid tile chamfer JSON + shader uniforms + floor/ceiling grid logic — tagged `task8-implementation` equivalent
+- Screenshots generated via Playwright E2E `tests/e2e/chamfer-grid.spec.js`
+- Tests: unit config + shader contains checks, e2e 7 screenshots + toggle + editor PUT
 
 ## Running
 
@@ -149,3 +148,9 @@ npm run test:unit -- --test-concurrency=1
 npx playwright test tests/e2e/chamfer-grid.spec.js --reporter=list
 npm test
 ```
+
+## Link
+
+- One pager design doc: https://docs.google.com/document/d/1zu_odjAu_dp_YkTFRoZp4zzc8I7FlLZF2lWhkWRGNjQ/edit?usp=sharing
+- Related task: `live-edit` Tier1 is required for live tuning of grid values
+- Next task: `materials-modifiers` Task 9 — builds on this subtle grid readability

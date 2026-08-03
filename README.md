@@ -4,6 +4,8 @@
 
 **Core loop:** Lobby (4p) → Job Board (pick 10-min delve) → Delve (trinity-based combat, retro crawler) → Loot & extraction → Upgrade roles → Repeat. Designed for drop-in/drop-out short sessions.
 
+**Design one-pager:** [Dungeoneers - One pager (Tasks 1-10 overview)](https://docs.google.com/document/d/1zu_odjAu_dp_YkTFRoZp4zzc8I7FlLZF2lWhkWRGNjQ/edit?usp=sharing) — contains the full intent one-liners for Tasks 1-9 and Phase roadmap.
+
 This repo follows the ADO **GameDev track** task structure: one repo per game
 (`gamedev-{game-name}`), a single shared gold source in `src/`, and one folder
 per task under `tasks/`.
@@ -148,6 +150,8 @@ npx playwright show-report   # View HTML test report after run
 
 ## Tasks
 
+Full design intent and one-liner summaries: **[Dungeoneers - One pager](https://docs.google.com/document/d/1zu_odjAu_dp_YkTFRoZp4zzc8I7FlLZF2lWhkWRGNjQ/edit?usp=sharing)**
+
 | Task | Description | Completed |
 | --- | --- | --- |
 | [foundation-engine](./tasks/foundation-engine/) | Landing page + game page + editor page + Node.js server with REST API + test suite (Playwright E2E) + data-driven JSON config with API persistence | 2026-07-27 |
@@ -156,3 +160,6 @@ npx playwright show-report   # View HTML test report after run
 | [player-controller-polish](./tasks/player-controller-polish/) | Dual-mode player controller: grid step (Grimrock ZQSD+AE) + free FPS WASD+mouse pointer-lock, figure-8 view bob with presets (subtle/default/heavy/disabled) cycling via P, AZERTY-safe codes, configurable via player.json v2 | 2026-07-30 |
 | [minimap-reveal](./tasks/minimap-reveal/) | Minimap fog-of-war discovery: spawn reveals only entrance room + 1-tile doorway peek, room enter reveals whole room + perimeter + 1-tile peek, corridor BFS radius 4 incremental + 1-tile peek into rooms, retro dither animation (random/Bayer) on M open ~400ms, dashed transparent trail (muted green) clipped to discovered, persistent across toggles, reset on R | 2026-07-30 |
 | [lighting-sprites](./tasks/lighting-sprites/) | Environmental lighting + PBR billboard sprites + particles: deterministic seeded placement wall/floor anchoring, min distance, max cap, Z anchored to floorHeight, unique phases, color/intensity/radius variation, zone/role pools; light system types/ids, organic flicker multi-octave drift+pop clamped, LightManager nearest sorted, MAX_LIGHTS array shader loop, sprite registry WeakMap atlas placeholder magenta/neutral, back-to-front blend, PBR same lights/fog/rim; material & TBN correctness now testable — wall tangent matches wallU flip (side==0 && ray.x>0), ceiling TBN right-handed vec3(x,-y,-z), flat plateau+beveled rim via Chebyshev→Euclidean cornerRound 0.5 smoothstep bevelStart 0.42/0.48 bevelDepth 0.22/0.16 roundness 0.06/0.05 groutDepth 0.08 normalFactor 1.6/1.4 heightScale 1.15, 6 Playwright screenshots proving torch-wall/brazier/multi/flicker-graph/PBR/editor | 2026-07-31 |
+| [live-edit](./tasks/live-edit/) | Live tuning system: SSE push + BroadcastChannel cross-tab instant preview, tiered updates T1 instant uniforms (fog/lighting/chamfer/corners/pbr/ao/shadows/rendering/palette/player/discovery/map) + T2 atlas rebuild + T3 regen banner, editor Live/Auto Save toggles with status pill, game badge hidden when OFF | 2026-08-01 (commit 96575d3) |
+| [grid-tile-chamfers](./tasks/grid-tile-chamfers/) | **Task 8 — COMPLETED.** Extends wall chamfer to floors/ceilings: faint 5-7cm grout grooves every 1m using `fract(floorWorld)`/`fract(ceilWorld)`, AO darken 0.88-0.90, normal tilt, trim highlight, roughness tweak, stacks with wall-proximity cove, Toggle Key 7, live-edit Tier 1. Implemented in `chamfer.json` grid section + `shaders.js` (4 render paths) + `renderer-gpu.js` uniforms. 7 Playwright screenshots | 2026-08-02 (commit 45b3798) — previously ambiguous, now clarified as DONE |
+| [materials-modifiers](./tasks/materials-modifiers/) | **Next — planned.** Makes materials tell a story: 6 smart PBR overlays on top of brick/slab atlases — moss, damaged/cracks, water wetness, mirror puddles (floors only), blood splatters, dust — each with its own noise mask + AO/height/roughness cues, spread by room role (blood in guardian, dust in secret, moss in entrance) to make the dungeon feel lived-in, aged, and fought-in. See [one-pager Task 9](https://docs.google.com/document/d/1zu_odjAu_dp_YkTFRoZp4zzc8I7FlLZF2lWhkWRGNjQ/edit?usp=sharing) | planned |
