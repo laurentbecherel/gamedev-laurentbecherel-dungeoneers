@@ -5,7 +5,7 @@
   "roomTarget": 14,
   "roomAttempts": 200,
   "levelCount": 1,
-  "seed": null,
+  "seed": 1337,
   "loopExtraChance": 0.02,
   "flattenStartRadius": 2,
   "items": {

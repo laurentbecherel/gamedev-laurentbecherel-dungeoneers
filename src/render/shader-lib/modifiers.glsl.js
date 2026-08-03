@@ -4,7 +4,7 @@ export const glslModifiers = `
 // Full UBO - 12 vec4 = 192 bytes, binding 1
 // v14 tweakable: no hard-coded magic, all values from config via UBO, other mods guaranteed zero
 // Layout:
-// 0 = puddle floorDepress.x + rest zero (was moss albedo zeroed, moss disabled via tex)
+// 0 = puddle floorDepress.x + seed.y + rest zero (was moss albedo zeroed, moss disabled via tex)
 // 1 = modMossParams = heightGroutLow, heightGroutHigh, aoGroutLow, aoGroutHigh
 // 2 = unused zero (water albedo zeroed)
 // 3 = modWaterParams = worldLowHigh, worldLowLow, maskBoost, darkBaseFactor
@@ -34,7 +34,9 @@ layout(std140) uniform ModifiersBlock {
 // --- Lean reusable noise - fast compile, no dynamic loops ---
 // Single cheap hash (IQ style) - 1 sin/dot instead of fract*2 + dot
 float hash21_puddle(vec2 p) {
-  return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453);
+  // seeded hash - shaderSeed from UBO block0.y (puddle.seed) for deterministic refresh
+  float seedOff = modMossAlbedoRough.y;
+  return fract(sin(dot(p + vec2(seedOff*0.13, seedOff*0.17), vec2(127.1, 311.7))) * 43758.5453);
 }
 float hash21_proc(vec2 p) { return hash21_puddle(p); }
 float hash21(vec2 p){ return hash21_puddle(p); }
@@ -216,7 +218,8 @@ void applyModifiers(inout vec3 albedo, inout vec3 N, inout float rough, inout fl
   float aoMix = modBloodParams.w;
   float darkBase = modWaterParams.w;
   float tintMix = modDustParams.x;
-  float floorDepress = modMossAlbedoRough.x; // now tweakable live - negative depresses floor visually
+    float floorDepress = modMossAlbedoRough.x; // now tweakable live - negative depresses floor visually
+  float shaderSeed = modMossAlbedoRough.y; // seed for noise, deterministic refresh
   float grooveMin = modDustParams.y;
   float edgeLow = modDustParams.z;
   float edgeHigh = modDustParams.w;

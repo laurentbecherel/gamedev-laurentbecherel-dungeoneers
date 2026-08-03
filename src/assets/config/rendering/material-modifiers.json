@@ -4,9 +4,10 @@
   "note": "v15 cleaned: only wired T1 params, docs, albedo /255 fix, cell feather fixes tile cut, lean reusable FBM",
   "noise": {
     "size": 128,
-    "seed": 1337,
+    "seed": null,
     "tiling": "seamless-periodic",
-    "note": "procedural hash in shader, not sampler"
+    "note": "seed derived from master generator.seed, not independent",
+    "seed_note": "null = derived from master generator.seed via dungeon.seed"
   },
   "generator": {
     "noiseScale": 0.22,
@@ -241,7 +242,8 @@
       "metalMix": "0-1 how much metal removed in puddle (water non-metal).",
       "rippleScale": "UV scale for ripple normal. 0=off, 3=visible ripples.",
       "aoMix": "0-1 how much AO darkening removed under water.",
-      "floorDepress": "-0.5..0.5 height depression where puddle (negative lowers floor). Now wired live, was dead before."
+      "floorDepress": "-0.5..0.5 height depression where puddle (negative lowers floor). Now wired live, was dead before.",
+      "seed_note": "Omitted - all noise/puddle seeds derived from master gameplay/generator.json seed via hash. One master seed = deterministic refresh."
     },
     "system": "All are T1 live-edit via UBO ModifiersBlock (binding=1). No regen. heightAdd/aoWeight/noiseScale/normalStrength/roughAdd were dead legacy and removed."
   }

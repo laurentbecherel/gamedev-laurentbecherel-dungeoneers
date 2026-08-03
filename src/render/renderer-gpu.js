@@ -900,8 +900,9 @@ export class GPURenderer {
         }
         function setVec4(off, xyz, w) { buf[off]=xyz[0]; buf[off+1]=xyz[1]; buf[off+2]=xyz[2]; buf[off+3]=w; }
         function setVec4Full(off, x,y,z,w){ buf[off]=x; buf[off+1]=y; buf[off+2]=z; buf[off+3]=w; }
-        // 0 repurposed: x=floorDepress (was moss albedo zeroed, moss disabled via tex channel) - now tweakable live
-        setVec4Full(0, puddle.floorDepress ?? -0.08, 0.0, 0.0, 0.0);
+        // 0 repurposed: x=floorDepress y=masterSeed (derived from dungeon.seed, master = generator.json)
+        // master seed = gameplay/generator.json seed, deterministic refresh, one seed drives all
+        setVec4Full(0, puddle.floorDepress ?? -0.08, dungeon.seed ?? 1337, 0.0, 0.0);
         // 1 grout thresholds
         setVec4Full(4, puddle.heightGroutLow ?? 0.12, puddle.heightGroutHigh ?? 0.48, puddle.aoGroutLow ?? 0.72, puddle.aoGroutHigh ?? 0.95);
         // 2 water zeroed
