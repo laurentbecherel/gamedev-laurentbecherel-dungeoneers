@@ -13,6 +13,27 @@ function status(msg, type = "ok") {
   setTimeout(() => { if (el.innerHTML.includes(msg)) el.innerHTML = ""; }, 3500);
 }
 
+function getDocForPath(fullPath) {
+  try {
+    const data = currentData;
+    if (!data || !data.docs) return null;
+    // fullPath like modifiers.puddle.threshold or threshold when inside puddle
+    let parts = fullPath.replace(/\[(\d+)\]/g, '.$1').split('.').filter(Boolean);
+    // strip modifiers/ prefix to look in docs.puddle...
+    if (parts[0] === 'modifiers') parts = parts.slice(1);
+    // also handle when path is just threshold inside puddle object - need to know current container path
+    // Try direct traversal under docs
+    let cur = data.docs;
+    for (let p of parts) {
+      if (cur && typeof cur === 'object' && p in cur) cur = cur[p];
+      else {
+        // try case where docs are under puddle even if path is deeper
+        return null;
+      }
+    }
+    return typeof cur === 'string' ? cur : null;
+  } catch { return null; }
+}
 function formatLabel(s) { return s.replace(/[-_]/g, " ").replace(/\b\w/g, c => c.toUpperCase()); }
 function iconFor(name, isFolder) { if (isFolder) return "ph-folder"; const ext = name.split(".").pop(); const m = { json: "ph-file-code", md: "ph-file-text", png: "ph-file-png", jpg: "ph-file-jpg", js: "ph-file-js", css: "ph-file-css", html: "ph-file-html" }; return m[ext] || "ph-file"; }
 
@@ -279,9 +300,14 @@ function buildForm(container, obj, path) {
   if (obj !== null && typeof obj === "object") {
     for (const key of Object.keys(obj)) {
       if (key.startsWith('_')) continue;
+      if (key === 'docs') continue;
       const val = obj[key]; const fp = path ? `${path}.${key}` : key;
       const fg = document.createElement("div"); fg.className = "field-group";
-      const lbl = document.createElement("label"); lbl.className = "field-label"; lbl.textContent = key.replace(/([A-Z])/g, ' $1').replace(/^./, s => s.toUpperCase()); fg.appendChild(lbl);
+      const lbl = document.createElement("label"); lbl.className = "field-label";
+      // tooltip from docs
+      const docText = getDocForPath(fp);
+      if (docText) lbl.title = docText;
+      lbl.textContent = key.replace(/([A-Z])/g, ' $1').replace(/^./, s => s.toUpperCase()); fg.appendChild(lbl);
       if (typeof val === "number") {
         const row = document.createElement("div"); row.style.display = "flex"; row.style.gap = "8px"; row.style.alignItems = "center";
         const inp = document.createElement("input"); inp.type = "number"; inp.className = "field-input"; inp.value = val; inp.step = "any"; inp.style.flex = "1";
@@ -296,14 +322,22 @@ function buildForm(container, obj, path) {
           row.appendChild(sl);
         }
         fg.appendChild(row);
+        const docForNum = getDocForPath(fp);
+        if (docForNum) {
+          const hint = document.createElement("div"); hint.className = "field-hint"; hint.textContent = docForNum; fg.appendChild(hint);
+        }
       } else if (typeof val === "string") {
         const inp = document.createElement("input"); inp.type = "text"; inp.className = "field-input"; inp.value = val;
         inp.oninput = () => { setByPath(currentData, fp, inp.value); triggerLiveChange(); }; fg.appendChild(inp);
+        const docForStr = getDocForPath(fp);
+        if (docForStr) { const hint = document.createElement("div"); hint.className = "field-hint"; hint.textContent = docForStr; fg.appendChild(hint); }
       } else if (typeof val === "boolean") {
         const tog = document.createElement("label"); tog.className = "toggle";
         tog.innerHTML = `<input type="checkbox" ${val ? "checked" : ""}><span class="toggle-slider"></span><span style="margin-left:8px;font-size:13px;color:var(--text-dim)">${val ? "enabled" : "disabled"}</span>`;
         tog.querySelector("input").onchange = e => { setByPath(currentData, fp, e.target.checked); tog.querySelector("span:last-child").textContent = e.target.checked ? "enabled" : "disabled"; triggerLiveChange(); };
         fg.appendChild(tog);
+        const docForBool = getDocForPath(fp);
+        if (docForBool) { const hint = document.createElement("div"); hint.className = "field-hint"; hint.textContent = docForBool; fg.appendChild(hint); }
       } else if (val === null) {
         const inp = document.createElement("input"); inp.type = "text"; inp.className = "field-input"; inp.placeholder = "null"; inp.value = "";
         inp.oninput = () => { setByPath(currentData, fp, inp.value === "" ? null : inp.value); triggerLiveChange(); }; fg.appendChild(inp);
@@ -318,6 +352,8 @@ function buildForm(container, obj, path) {
         const update = () => { const arr = inputs.map(inp => parseInt(inp.value) || 0); col.value = toHex(arr); setByPath(currentData, fp, arr); triggerLiveChange(); };
         col.oninput = () => { const arr = fromHex(col.value); inputs.forEach((inp, i) => inp.value = arr[i]); setByPath(currentData, fp, arr); triggerLiveChange(); };
         inputs.forEach(inp => inp.oninput = update); row.appendChild(col); inputs.forEach(inp => nums.appendChild(inp)); row.appendChild(nums); fg.appendChild(row);
+        const docForCol = getDocForPath(fp);
+        if (docForCol) { const hint = document.createElement("div"); hint.className = "field-hint"; hint.textContent = docForCol; fg.appendChild(hint); }
       } else if (Array.isArray(val)) { const sub = document.createElement("div"); sub.className = "nested-array"; buildForm(sub, val, fp); fg.appendChild(sub);
       } else if (typeof val === "object") {
         if (key === 'note' || key === 'structure' || key === 'delegation') {

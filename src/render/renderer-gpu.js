@@ -223,15 +223,15 @@ export class GPURenderer {
       const modMap = generateModifierMap(dungeon, config);
       this.modifierTex = gl.createTexture();
       gl.bindTexture(gl.TEXTURE_2D, this.modifierTex);
-      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.NEAREST);
-      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.NEAREST);
+      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
+      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
       gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
       gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
       gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, modMap.w, modMap.h, 0, gl.RGBA, gl.UNSIGNED_BYTE, modMap.data);
       this.modifierTex2 = gl.createTexture();
       gl.bindTexture(gl.TEXTURE_2D, this.modifierTex2);
-      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.NEAREST);
-      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.NEAREST);
+      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
+      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
       gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
       gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
       const data2 = modMap.data2 || modMap.data; // fallback for old maps
@@ -864,40 +864,86 @@ export class GPURenderer {
     if (this.noiseTex && ul.u_noiseTex) { /* optional legacy – not bound to conserve units */ }
     if (ul.u_modifiersEnabled) gl.uniform1i(ul.u_modifiersEnabled, this.modifiersEnabled?1:0);
 
-    // Modifiers params: fast path individual uniforms (instant compile), UBO optional if block exists
+    // Modifiers params v14: FULL UBO 12 vec4 = 48 floats, all puddle fields tweakable, other mods guaranteed zero
+    // Layout:
+    // 0 mossAlbedoRough (unused, zeroed)
+    // 1 mossParams = puddle grout thresholds: x=heightGroutLow y=heightGroutHigh z=aoGroutLow w=aoGroutHigh
+    // 2 waterAlbedoRough (unused zero)
+    // 3 waterParams = x=worldLowHigh y=worldLowLow z=maskBoost w=darkBaseFactor
+    // 4 puddleAlbedoRough = xyz albedo w roughTarget
+    // 5 puddleParams = x=colorStrength y=scaleLarge z=threshold w=feather
+    // 6 bloodAlbedoMix (unused zero, but w reused for aoMix fallback)
+    // 7 bloodParams = x=rippleScale y=edgeFoam z=heightInfluence w=aoMix
+    // 8 dustAlbedoRough (unused)
+    // 9 dustParams = x=tintMix y=grooveMin z=edgeLow w=edgeHigh
+    // 10 damagedAlbedoRough (unused)
+    // 11 damagedParams = x=roughLow y=roughHigh z=flatStrength w=metalMix
     try {
       const mm = cfg.materialModifiers || cfg['material-modifiers'] || this._cfgCache?.materialModifiers || {};
       const mods = mm.modifiers || {};
-      const moss = mods.moss || {}; const water = mods.water || {}; const puddle = mods.puddle || {};
-      const blood = mods.blood || {}; const dust = mods.dust || {}; const damaged = mods.damaged || {};
+      const puddle = mods.puddle || {};
+      // Guarantee: other mods forced zero / disabled regardless of texture data
+      const moss = { albedo:[0,0,0], roughAdd:0, colorStrength:0, noiseScale:0, threshold:0, aoWeight:0 };
+      const water = { albedo:[0,0,0], roughAdd:0, colorStrength:0, noiseScale:0, threshold:0, aoWeight:0 };
+      const blood = { albedo:[0,0,0], colorStrength:0 };
+      const dust = { albedo:[0,0,0], roughAdd:0, colorStrength:0, noiseScale:0, threshold:0, aoWeight:0 };
+      const damaged = { albedo:[0,0,0], roughAdd:0, colorStrength:0, noiseScale:0, threshold:0 };
       if (this.modifiersUBO && this.modifiersBlockIndex !== -1) {
         const buf = new Float32Array(48);
+        function normalizeAlbedo(arr, fallback) {
+          const a = arr || fallback;
+          // if values look like 0-255 (>1.0), convert to 0-1 to avoid saturation
+          if (a[0] > 1.0 || a[1] > 1.0 || a[2] > 1.0) {
+            return [a[0]/255.0, a[1]/255.0, a[2]/255.0];
+          }
+          return [a[0], a[1], a[2]];
+        }
         function setVec4(off, xyz, w) { buf[off]=xyz[0]; buf[off+1]=xyz[1]; buf[off+2]=xyz[2]; buf[off+3]=w; }
-        setVec4(0, moss.albedo || [0.18,0.42,0.15], moss.roughAdd ?? 0.35);
-        setVec4(4, [moss.colorStrength ?? 0.85,0,0,0], 0);
-        setVec4(8, water.albedo || [0.2,0.3,0.45], water.roughAdd ?? -0.45);
-        setVec4(12, [0,0,0,0], 0);
-        setVec4(16, puddle.albedo || [0.15,0.18,0.22], puddle.roughTarget ?? 0.08);
-        setVec4(24, blood.albedo || [0.55,0.12,0.12], blood.colorStrength ?? 0.75);
-        setVec4(32, dust.albedo || [0.65,0.6,0.5], dust.roughAdd ?? 0.28);
-        setVec4(40, damaged.albedo || [0.18,0.15,0.12], damaged.roughAdd ?? 0.3);
+        function setVec4Full(off, x,y,z,w){ buf[off]=x; buf[off+1]=y; buf[off+2]=z; buf[off+3]=w; }
+        // 0 repurposed: x=floorDepress (was moss albedo zeroed, moss disabled via tex channel) - now tweakable live
+        setVec4Full(0, puddle.floorDepress ?? -0.08, 0.0, 0.0, 0.0);
+        // 1 grout thresholds
+        setVec4Full(4, puddle.heightGroutLow ?? 0.12, puddle.heightGroutHigh ?? 0.48, puddle.aoGroutLow ?? 0.72, puddle.aoGroutHigh ?? 0.95);
+        // 2 water zeroed
+        setVec4(8, [0,0,0], 0);
+        // 3 world low + boost + darkBase
+        setVec4Full(12, puddle.worldLowHigh ?? 0.25, puddle.worldLowLow ?? -0.35, puddle.maskBoost ?? 1.4, puddle.darkBaseFactor ?? 0.35);
+        // 4 puddle albedo + roughTarget - normalized 0-255->0-1 to prevent saturation
+        setVec4(16, normalizeAlbedo(puddle.albedo, [0.10,0.14,0.19]), puddle.roughTarget ?? 0.04);
+        // 5 puddle main: colorStrength, scaleLarge, threshold, feather
+        setVec4Full(20, puddle.colorStrength ?? 0.92, puddle.noiseScaleLarge ?? 0.22, puddle.threshold ?? 0.55, puddle.feather ?? 0.12);
+        // 6 repurposed: puddle cell feather (was blood albedo zeroed, blood disabled via texture channel 0)
+        // x=cellFeatherLow y=cellFeatherHigh z=cellEpsilon w=unused - tweakable, avoids hard tile cut
+        setVec4Full(24, puddle.cellFeatherLow ?? 0.0, puddle.cellFeatherHigh ?? 0.28, puddle.cellEpsilon ?? 0.0005, 0.0);
+        // 7 ripple, edgeFoam, heightInfluence, aoMix
+        setVec4Full(28, puddle.rippleScale ?? 3.0, puddle.edgeFoam ?? 0.25, puddle.heightInfluence ?? 0.85, puddle.aoMix ?? 0.20);
+        // 8 dust zeroed
+        setVec4(32, [0,0,0], 0);
+        // 9 tintMix, grooveMin, edgeLow, edgeHigh
+        setVec4Full(36, puddle.tintMix ?? 0.60, puddle.grooveMin ?? 0.30, puddle.edgeLow ?? 0.0, puddle.edgeHigh ?? 0.15);
+        // 10 damaged zeroed
+        setVec4(40, [0,0,0], 0);
+        // 11 roughLow, roughHigh, flatStrength, metalMix
+        setVec4Full(44, puddle.roughFeatherLow ?? 0.0, puddle.roughFeatherHigh ?? 0.65, puddle.flatStrength ?? 0.88, puddle.metalMix ?? 0.85);
         updateUniformBuffer(gl, this.modifiersUBO, buf);
         bindUniformBufferBase(gl, this.modifiersBlockBinding, this.modifiersUBO);
       } else {
-        // Fast path – individual uniforms (no UBO, instant compile on ANGLE)
+        // Fast path - individual uniforms (no UBO)
         if (ul.u_modMossAlbedo) { const a=moss.albedo||[0.18,0.42,0.15]; gl.uniform3f(ul.u_modMossAlbedo,a[0],a[1],a[2]); }
         if (ul.u_modMossRoughAdd) gl.uniform1f(ul.u_modMossRoughAdd, moss.roughAdd ?? 0.35);
         if (ul.u_modMossColorStrength) gl.uniform1f(ul.u_modMossColorStrength, moss.colorStrength ?? 0.85);
         if (ul.u_modWaterAlbedo) { const a=water.albedo||[0.2,0.3,0.45]; gl.uniform3f(ul.u_modWaterAlbedo,a[0],a[1],a[2]); }
         if (ul.u_modWaterRoughAdd) gl.uniform1f(ul.u_modWaterRoughAdd, water.roughAdd ?? -0.45);
-        if (ul.u_modPuddleAlbedo) { const a=puddle.albedo||[0.15,0.18,0.22]; gl.uniform3f(ul.u_modPuddleAlbedo,a[0],a[1],a[2]); }
-        if (ul.u_modPuddleRoughTarget) gl.uniform1f(ul.u_modPuddleRoughTarget, puddle.roughTarget ?? 0.08);
+        if (ul.u_modPuddleAlbedo) { const a=puddle.albedo||[0.10,0.14,0.19]; gl.uniform3f(ul.u_modPuddleAlbedo,a[0],a[1],a[2]); }
+        if (ul.u_modPuddleRoughTarget) gl.uniform1f(ul.u_modPuddleRoughTarget, puddle.roughTarget ?? 0.04);
         if (ul.u_modBloodAlbedo) { const a=blood.albedo||[0.55,0.12,0.12]; gl.uniform3f(ul.u_modBloodAlbedo,a[0],a[1],a[2]); }
         if (ul.u_modBloodMix) gl.uniform1f(ul.u_modBloodMix, blood.colorStrength ?? 0.75);
         if (ul.u_modDustAlbedo) { const a=dust.albedo||[0.65,0.6,0.5]; gl.uniform3f(ul.u_modDustAlbedo,a[0],a[1],a[2]); }
         if (ul.u_modDustRoughAdd) gl.uniform1f(ul.u_modDustRoughAdd, dust.roughAdd ?? 0.28);
         if (ul.u_modDamagedAlbedo) { const a=damaged.albedo||[0.18,0.15,0.12]; gl.uniform3f(ul.u_modDamagedAlbedo,a[0],a[1],a[2]); }
         if (ul.u_modDamagedRoughAdd) gl.uniform1f(ul.u_modDamagedRoughAdd, damaged.roughAdd ?? 0.3);
+
+
       }
     } catch (e) { console.warn('[GPURenderer] modifier params upload failed', e); }
 
@@ -1296,3 +1342,4 @@ export class GPURenderer {
     this._renderUIPass();
   }
 }
+

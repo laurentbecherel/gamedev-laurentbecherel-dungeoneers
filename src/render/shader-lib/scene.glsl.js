@@ -1,30 +1,46 @@
-// Scene rendering helpers – main() split v11.1: unified horizontal to cut compile cost
-// Floor/Ceiling were 2× duplicated, now one function shadeHorizontalCell(isCeil)
+
+// Scene rendering helpers - v14 puddle precise debug bright mask
 
 export const glslScene = `
-// Grid debug colors – forward declared
+// Grid debug colors
 vec3 getGridColor(in vec2 world, in bool isCeil) {
   if (isCeil) return vec3(0.0, 0.0, (fract(world).x > 0.97 || fract(world).y > 0.97 ? 1.0 : 0.25) * 0.9);
   return vec3(0.0, (fract(world).x > 0.97 || fract(world).y > 0.97 ? 1.0 : 0.25) * 0.9, 0.0);
 }
 
-// Modifier mask debug visualization – shows per-cell intensities (v2 2-texture)
 vec3 debugModifiersViz(in ivec2 cell, in int mode) {
   vec4 m1 = texelFetch(u_modifierMap, cell, 0);
   vec4 m2 = texelFetch(u_modifierMap2, cell, 0);
-  if (mode == 9) return m1.rgb; // moss/water/puddle combined RGB
-  if (mode == 10) return vec3(m1.a, m2.r, m2.g); // dust/damaged/blood
-  if (mode == 11) return vec3(m1.r); // moss only
-  if (mode == 12) return vec3(m1.g); // water only
-  if (mode == 13) return vec3(m1.b); // puddle only
-  if (mode == 14) return vec3(m1.a); // dust only
-  if (mode == 15) return vec3(m2.r); // damaged only
-  if (mode == 16) return vec3(m2.g); // blood only
-  if (mode == 17) return vec3(m1.r, m1.g, m2.g); // moss/water/blood highlight
+  if (mode == 9) return m1.rgb;
+  if (mode == 10) return vec3(m1.a, m2.r, m2.g);
+  if (mode == 11) return vec3(m1.r);
+  if (mode == 12) return vec3(m1.g);
+  if (mode == 13) return vec3(m1.b);
+  if (mode == 14) return vec3(m1.a);
+  if (mode == 15) return vec3(m2.r);
+  if (mode == 16) return vec3(m2.g);
+  if (mode == 17) return vec3(m1.r, m1.g, m2.g);
   return vec3(0.0);
 }
 
-// Unified horizontal (floor/ceil) – reduces code size ~50% vs two separate functions
+// Bright mask visualization - BIG BLUE / PINK as requested, not dark PBR
+vec3 debugFinalPuddleMask(in vec3 worldPos, in float matHeight, in float ao) {
+  vec2 modUV = worldPos.xy / u_mapSize;
+  vec4 mod1 = texture(u_modifierMap, modUV);
+  float puddleCell = mod1.b;
+  float mask = computePuddleMaskTweakable(worldPos, matHeight, ao, puddleCell);
+  // BIG COLOR: bright cyan for water, magenta for edge, high contrast vs black
+  // Use intense colors that survive doom palette quantization
+  float edge = mask * (1.0 - mask) * 5.0;
+  vec3 inside = vec3(0.10, 0.55, 1.0) * mask * 1.8; // BRIGHT BLUE
+  vec3 edgeCol = vec3(1.0, 0.25, 0.85) * edge; // BRIGHT PINK/MAGENTA edge
+  vec3 bg = vec3(0.02, 0.02, 0.03); // near black background
+  vec3 col = bg + inside + edgeCol;
+  // Add solid fill for high mask so it's BIG COLOR
+  if (mask > 0.5) col = mix(col, vec3(0.20, 0.75, 1.0), 0.6); // even brighter inside puddle
+  return clamp(col, 0.0, 1.0);
+}
+
 vec3 shadeHorizontalCell(in vec2 horizWorld, in vec2 horizUV, in float matId, in float count, in vec2 ray, in float eyeZ, in float heightAtRay, in bool isCeil, out float outDist) {
   float layer = clampLayer(matId, count);
   vec2 uv = horizUV;
@@ -64,16 +80,30 @@ vec3 shadeHorizontalCell(in vec2 horizWorld, in vec2 horizUV, in float matId, in
   float emissiveStrength = u_pbrEmissiveStrength > 0.0 ? u_pbrEmissiveStrength : 2.5;
   vec3 emissive = albedoRaw * emissiveAlbedoMul * rma.b * emissiveStrength;
 
-  // Modifier debug takes precedence to allow seeing masks even when grid debug on
   if (u_pbrDebugMode >= 9 && u_pbrDebugMode <= 17) {
     outDist = distance(horizWorld, u_playerPos);
+    if (u_pbrDebugMode == 13) {
+      // Puddle only -> BRIGHT BLUE/PINK cloud mask, not PBR, as requested
+      return debugFinalPuddleMask(vec3(horizWorld, heightAtRay), heightVal, ao);
+    }
     return debugModifiersViz(ivec2(floor(horizWorld)), u_pbrDebugMode);
+  }
+  if (u_pbrDebugMode == 18) {
+    outDist = distance(horizWorld, u_playerPos);
+    return debugFinalPuddleMask(vec3(horizWorld, heightAtRay), heightVal, ao);
+  }
+  if (u_pbrDebugMode == 19) {
+    // Show raw cell as bright magenta to contrast with final mask
+    outDist = distance(horizWorld, u_playerPos);
+    vec4 m1 = texelFetch(u_modifierMap, ivec2(floor(horizWorld)), 0);
+    float cell = m1.b;
+    return vec3(cell) * vec3(1.0, 0.2, 0.9);
   }
   if (u_gridDebug == 1) {
     outDist = distance(horizWorld, u_playerPos);
     return getGridColor(horizWorld, isCeil);
   }
-  if (u_pbrDebugMode != 0 && u_gridDebug == 0) {
+  if (u_pbrDebugMode != 0 && u_gridDebug == 0 && u_pbrDebugMode < 9) {
     outDist = distance(horizWorld, u_playerPos);
     return debugShowPBR(u_pbrDebugMode, albedoRaw, normalRaw, Nw, heightVal, rma, emissive);
   }
@@ -88,14 +118,14 @@ vec3 shadeHorizontalCell(in vec2 horizWorld, in vec2 horizUV, in float matId, in
     applyFloorBaseboard(horizWorld, N, ao, albedo, rma);
     applyGridFloor(horizWorld, N, ao, albedo, rma);
   }
-  applyModifiers(albedo, N, rma.r, rma.g, ao, vec3(horizWorld, heightAtRay));
+  float isFloorSurface = isCeil ? 0.0 : 1.0;
+  applyModifiers(albedo, N, rma.r, rma.g, ao, vec3(horizWorld, heightAtRay), heightVal, isFloorSurface);
   vec3 worldPos = vec3(horizWorld, heightAtRay);
   vec3 viewDir = normalize(vec3(u_playerPos, eyeZ) - worldPos);
   outDist = distance(horizWorld, u_playerPos);
   return pbrShade(albedo, N, rma.r, rma.g, ao, emissive, worldPos, viewDir);
 }
 
-// Wrappers kept for tests / old call sites – forward to unified
 vec3 shadeFloorCell(in vec2 floorWorld, in vec2 floorUV, in float matId, in float fc, in vec2 ray, in float eyeZ, in float floorH_atRay, out float outDist) {
   return shadeHorizontalCell(floorWorld, floorUV, matId, fc, ray, eyeZ, floorH_atRay, false, outDist);
 }
@@ -153,7 +183,17 @@ vec3 shadeWallCell(in float wallU, in float wallV, in float matId, in float wc, 
   vec3 Nw = normalize(tangent * normalTSw.x + bitangent * normalTSw.y + Ngeom * normalTSw.z);
 
   if (u_pbrDebugMode >= 9 && u_pbrDebugMode <= 17) {
+    if (u_pbrDebugMode == 13) {
+      return debugFinalPuddleMask(worldPos, heightVal, rmaW.a);
+    }
     return debugModifiersViz(ivec2(floor(hitPos)), u_pbrDebugMode);
+  }
+  if (u_pbrDebugMode == 18) {
+    return debugFinalPuddleMask(worldPos, heightVal, rmaW.a);
+  }
+  if (u_pbrDebugMode == 19) {
+    vec4 m1 = texelFetch(u_modifierMap, ivec2(floor(hitPos)), 0);
+    return vec3(m1.b) * vec3(1.0, 0.2, 0.9);
   }
   if (u_gridDebug == 1) {
     float wallH = 1.0;
@@ -161,7 +201,7 @@ vec3 shadeWallCell(in float wallU, in float wallV, in float matId, in float wc, 
     float grid = (wuv.x > 0.95 || wuv.y > 0.95 || wuv.x < 0.05 || wuv.y < 0.05) ? 1.0 : 0.25;
     return vec3(grid * 0.9, 0.0, 0.0);
   }
-  if (u_pbrDebugMode != 0 && u_gridDebug == 0) {
+  if (u_pbrDebugMode != 0 && u_gridDebug == 0 && u_pbrDebugMode < 9) {
     return debugShowPBR(u_pbrDebugMode, albedoRaw, normalRaw, Nw, heightVal, rmaW, emissiveW);
   }
 
@@ -177,7 +217,8 @@ vec3 shadeWallCell(in float wallU, in float wallV, in float matId, in float wc, 
   applyWallFloorTrim(wallV, Ngeom, Nw, albedoRaw, rmaW);
   applyWallCeilTrim(wallV, Ngeom, Nw, albedoRaw, rmaW);
   if (!hasCornerRound) applyWallVerticalEdge(wallU, side, Ngeom, Nw, albedoRaw, rmaW);
-  applyModifiers(albedoRaw, Nw, rmaW.r, rmaW.g, rmaW.a, worldPos);
+  float isFloorSurface = 0.0;
+  applyModifiers(albedoRaw, Nw, rmaW.r, rmaW.g, rmaW.a, worldPos, heightVal, isFloorSurface);
 
   vec3 color = pbrShade(albedoRaw, Nw, rmaW.r, rmaW.g, rmaW.a, emissiveW, worldPos, viewDir);
   if (side == 1) {

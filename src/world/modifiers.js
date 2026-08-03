@@ -1,26 +1,23 @@
-// Modifier map baking — CPU side, per-cell modifier field
-// v11 Full: 2 textures for lossless 6-channel separation + UBO for params
-// Design: 6 logical modifiers (moss, damaged, water, puddle, blood, dust) -> 2 RGBA8 textures
+
+// Modifier map baking - CPU side, per-cell modifier field
+// v13 puddle precise: smaller organic pools, higher threshold, linear smooth, noise cloud mask not just cells
 
 export const MOD_CHANNELS = {
-  MOSS: 0,        // R – moss growth
-  WATER: 1,       // G – water wetness
-  PUDDLE: 2,      // B – floor puddle
-  DUST: 3         // A – dust
+  MOSS: 0,
+  WATER: 1,
+  PUDDLE: 2,
+  DUST: 3
 };
 
 export const MOD2_CHANNELS = {
-  DAMAGED: 0,     // R – damaged cracks
-  BLOOD: 1,       // G – blood splatter
+  DAMAGED: 0,
+  BLOOD: 1,
   UNUSED_A: 2,
   UNUSED_B: 3
 };
 
 export const MODIFIER_NAMES = ['moss', 'damaged', 'water', 'puddle', 'blood', 'dust'];
 
-// v2 packing: 2 textures lossless
-// Tex1: R=moss, G=water, B=puddle, A=dust
-// Tex2: R=damaged, G=blood
 export const MOD_PACKING = {
   version: 2,
   textures: 2,
@@ -43,8 +40,7 @@ export const MOD_PACKING = {
       B: { name: 'unused', logical: [], channel: 2 },
       A: { name: 'unused', logical: [], channel: 3 }
     }
-  },
-  legacyV1: 'v1 packed water+damage in G and puddle+blood in B for single texture compat'
+  }
 };
 
 function hash2i(x, y, seed) {
@@ -69,39 +65,36 @@ function fbm(x,y,seed,octaves=3){
   return norm>0?v/norm:0;
 }
 
-// Default role weights for modifiers
 export const DEFAULT_ROLE_WEIGHTS = {
-  entrance:{ moss:0.3, dust:0.2, water:0.4, puddle:0.2, blood:0.05, damaged:0.15 },
-  exit:{ moss:0.1, dust:0.2, water:0.3, puddle:0.1, blood:0.15, damaged:0.5 },
-  guardian:{ moss:0.05, dust:0.1, water:0.1, puddle:0.05, blood:0.8, damaged:0.6 },
-  treasure:{ moss:0.15, dust:0.7, water:0.05, puddle:0.02, blood:0.05, damaged:0.1 },
-  secret:{ moss:0.2, dust:0.75, water:0.1, puddle:0.05, blood:0.02, damaged:0.05 },
-  shrine:{ moss:0.5, dust:0.4, water:0.2, puddle:0.1, blood:0.05, damaged:0.1 },
-  hub:{ moss:0.1, dust:0.2, water:0.15, puddle:0.08, blood:0.3, damaged:0.4 },
-  armory:{ moss:0.05, dust:0.3, water:0.08, puddle:0.05, blood:0.5, damaged:0.3 },
-  hall:{ moss:0.1, dust:0.2, water:0.1, puddle:0.05, blood:0.1, damaged:0.15 },
-  corridor:{ moss:0.05, dust:0.15, water:0.15, puddle:0.05, blood:0.08, damaged:0.2 },
+  entrance:{ moss:0.0, dust:0.0, water:0.0, puddle:0.75, blood:0.0, damaged:0.0 },
+  exit:{ moss:0.0, dust:0.0, water:0.0, puddle:0.75, blood:0.0, damaged:0.0 },
+  guardian:{ moss:0.0, dust:0.0, water:0.0, puddle:0.65, blood:0.0, damaged:0.0 },
+  treasure:{ moss:0.0, dust:0.0, water:0.0, puddle:0.70, blood:0.0, damaged:0.0 },
+  secret:{ moss:0.0, dust:0.0, water:0.0, puddle:0.70, blood:0.0, damaged:0.0 },
+  shrine:{ moss:0.0, dust:0.0, water:0.0, puddle:0.75, blood:0.0, damaged:0.0 },
+  hub:{ moss:0.0, dust:0.0, water:0.0, puddle:0.70, blood:0.0, damaged:0.0 },
+  armory:{ moss:0.0, dust:0.0, water:0.0, puddle:0.65, blood:0.0, damaged:0.0 },
+  hall:{ moss:0.0, dust:0.0, water:0.0, puddle:0.70, blood:0.0, damaged:0.0 },
+  corridor:{ moss:0.0, dust:0.0, water:0.0, puddle:0.60, blood:0.0, damaged:0.0 },
 };
 
-/**
- * Generate per-cell modifier maps – v2 with 2 textures lossless.
- * Returns { data, data2, w,h }
- * data = RGBA moss,water,puddle,dust
- * data2 = RG damaged,blood
- */
 export function generateModifierMap(dungeon, config) {
   const w = dungeon.w, h = dungeon.h;
   const size = w*h;
-  const data = new Uint8Array(size*4); // tex1
-  const data2 = new Uint8Array(size*4); // tex2
+  const data = new Uint8Array(size*4);
+  const data2 = new Uint8Array(size*4);
   const modCfg = config.materialModifiers || config['material-modifiers'] || config.modifiers || {};
-  const enabled = modCfg.enabled ?? false;
-  if (!enabled) {
-    return { data, data2, w, h, enabled:false, packing: MOD_PACKING };
-  }
+  const enabled = modCfg.enabled ?? true;
+  if (!enabled) return { data, data2, w, h, enabled:false, packing: MOD_PACKING };
+
   const seed = dungeon.seed ?? 1337;
-  const globalNoiseScale = modCfg.generator?.noiseScale ?? 0.18;
-  const roleWeights = modCfg.generator?.roleWeights || DEFAULT_ROLE_WEIGHTS;
+  const genCfg = modCfg.generator || {};
+  const globalNoiseScale = genCfg.noiseScale ?? 0.22;
+  const puddleScaleLarge = genCfg.puddleScaleLarge ?? 0.22;
+  const puddleThreshold = genCfg.puddleThreshold ?? 0.55;
+  const puddleFeather = genCfg.puddleFeather ?? 0.11;
+  const puddleBoost = genCfg.debugPuddleBoost ?? 1.1;
+  const roleWeights = genCfg.roleWeights || DEFAULT_ROLE_WEIGHTS;
 
   const roomGrid = new Int16Array(size).fill(-1);
   if (dungeon.rooms) {
@@ -113,31 +106,61 @@ export function generateModifierMap(dungeon, config) {
     }
   }
 
+  function isNearWall(x,y){
+    for(let dy=-1; dy<=1; dy++) for(let dx=-1; dx<=1; dx++){
+      if(dx===0 && dy===0) continue;
+      const nx=x+dx, ny=y+dy;
+      if(nx<0||ny<0||nx>=w||ny>=h) return true;
+      const gi = ny*w+nx;
+      if(dungeon.grid && dungeon.grid[gi] !== 0) return true;
+    }
+    return false;
+  }
+
   for(let y=0;y<h;y++) for(let x=0;x<w;x++){
     const i=y*w+x;
+    const isFloor = dungeon.grid ? dungeon.grid[i]===0 : true;
     const ri = roomGrid[i];
-    const role = (ri>=0 ? dungeon.rooms[ri]?.role : null) || (dungeon.grid[i]===0 ? 'corridor' : 'hall');
+    const role = (ri>=0 ? dungeon.rooms[ri]?.role : null) || (isFloor ? 'corridor' : 'hall');
     const rw = roleWeights[role] || roleWeights['corridor'];
-    const n = fbm(x*globalNoiseScale, y*globalNoiseScale, seed, 3);
-    const n2 = fbm(x*globalNoiseScale*1.7+10, y*globalNoiseScale*1.7+20, seed+101, 2);
 
-    const mossI = Math.max(0, rw.moss * (0.5 + 0.5*n) - 0.05);
-    const waterI = Math.max(0, (rw.water ?? 0) * (0.5 + 0.5*n2) - 0.06);
+    // Domain-warped FBM for organic cloud mask (map-based) - sample at texel centers (x+0.5) for LINEAR alignment
+    const xc = x + 0.5;
+    const yc = y + 0.5;
+    const wx = xc * 0.12, wy = yc * 0.12;
+    const warpX = fbm(wx, wy, seed+111, 2) * 1.3;
+    const warpY = fbm(wx+7.3, wy+3.1, seed+222, 2) * 1.3;
+    const largeNoise = fbm((xc + warpX) * puddleScaleLarge, (yc + warpY) * puddleScaleLarge, seed+77, 4);
+    const medNoise = fbm((xc + warpX*0.5) * puddleScaleLarge * 2.1 + 11, (yc + warpY*0.5) * puddleScaleLarge * 2.1 + 23, seed+88, 3);
+    const smallNoise = fbm(xc * 0.55, yc * 0.55, seed+99, 2);
+
+    const low = puddleThreshold - puddleFeather;
+    const high = puddleThreshold + puddleFeather;
+    let t = (largeNoise - low) / Math.max(0.0001, high - low);
+    t = Math.max(0, Math.min(1, t));
+    t = smooth(t);
+    let shape = t * (0.45 + 0.55 * medNoise) * (0.75 + 0.25 * smallNoise);
+
     const fh = dungeon.floorHeight ? dungeon.floorHeight[i] : 0;
-    const lowFloorFactor = 1 - Math.max(0, Math.min(1, fh + 0.5));
-    const puddleI = Math.max(0, (rw.puddle ?? 0) * lowFloorFactor * (0.6 + 0.4*n) - 0.04);
-    const dustI = Math.max(0, rw.dust * (0.6 + 0.4*n) - 0.04);
-    const damagedI = Math.max(0, (rw.damaged ?? 0) * (0.5 + 0.5*n2) - 0.05);
-    const bloodI = Math.max(0, (rw.blood ?? 0) * n - 0.03);
+    const lowFloorFactor = 1.0 - Math.max(0, Math.min(1, fh + 0.5));
+    const floorBoost = 0.55 + 0.45 * lowFloorFactor;
+    const nearWall = isNearWall(x,y) ? 1.2 : 1.0;
 
-    data[i*4 + MOD_CHANNELS.MOSS] = Math.round(Math.min(1, mossI)*255);
-    data[i*4 + MOD_CHANNELS.WATER] = Math.round(Math.min(1, waterI)*255);
-    data[i*4 + MOD_CHANNELS.PUDDLE] = Math.round(Math.min(1, puddleI)*255);
-    data[i*4 + MOD_CHANNELS.DUST] = Math.round(Math.min(1, dustI)*255);
+    const rolePuddle = rw.puddle ?? 0.65;
+    let puddleI = rolePuddle * shape * floorBoost * nearWall;
 
-    data2[i*4 + MOD2_CHANNELS.DAMAGED] = Math.round(Math.min(1, damagedI)*255);
-    data2[i*4 + MOD2_CHANNELS.BLOOD] = Math.round(Math.min(1, bloodI)*255);
-    // unused channels stay 0
+    const globalN = fbm(xc*globalNoiseScale, yc*globalNoiseScale, seed, 2);
+    puddleI *= (0.5 + 0.5 * globalN);
+    puddleI *= puddleBoost;
+    if(!isFloor) puddleI *= 0.02;
+    puddleI = Math.max(0, Math.min(1, puddleI));
+
+    data[i*4 + MOD_CHANNELS.MOSS] = 0;
+    data[i*4 + MOD_CHANNELS.WATER] = 0;
+    data[i*4 + MOD_CHANNELS.PUDDLE] = Math.round(puddleI*255);
+    data[i*4 + MOD_CHANNELS.DUST] = 0;
+    data2[i*4 + MOD2_CHANNELS.DAMAGED] = 0;
+    data2[i*4 + MOD2_CHANNELS.BLOOD] = 0;
   }
   return { data, data2, w, h, enabled:true, packing: MOD_PACKING };
 }

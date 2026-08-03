@@ -84,7 +84,8 @@ vec3 pbrShade(vec3 albedo, vec3 N, float rough, float metal, float ao, vec3 emis
 
   // Point lights – single loop (was duplicated for simple/PBR)
   for (int i=0;i<8;i++) {
-    if (i >= u_numLights) break;
+    // fixed 8, no dynamic break -> fast ANGLE compile, use continue instead
+    if (i >= u_numLights) continue;
     float inten = u_lightIntensity[i];
     if (inten <= 0.001) continue;
     vec3 lPos = u_lightPos[i];

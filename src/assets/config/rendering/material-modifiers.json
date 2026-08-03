@@ -1,15 +1,248 @@
 {
-  "version": 2,
+  "version": 5,
   "enabled": true,
-  "note": "v11.3 proper: Full UBO + 2 textures lossless, procedural seamless noise, enabled. Subtle intensities 0.10-0.15 to keep PBR intact.",
-  "noise": {"size": 128, "seed": 1337, "tiling": "seamless-periodic", "note": "CPU gen now periodic, shader uses procedural hash21_proc – no sampler needed"},
-  "generator": {"noiseScale": 0.18, "roleWeights": {"entrance": {"moss": 0.3, "dust": 0.2, "water": 0.4, "puddle": 0.2, "blood": 0.05, "damaged": 0.15}, "exit": {"moss": 0.1, "dust": 0.2, "water": 0.3, "puddle": 0.1, "blood": 0.15, "damaged": 0.5}, "guardian": {"moss": 0.05, "dust": 0.1, "water": 0.1, "puddle": 0.05, "blood": 0.8, "damaged": 0.6}, "treasure": {"moss": 0.15, "dust": 0.7, "water": 0.05, "puddle": 0.02, "blood": 0.05, "damaged": 0.1}, "secret": {"moss": 0.2, "dust": 0.75, "water": 0.1, "puddle": 0.05, "blood": 0.02, "damaged": 0.05}, "shrine": {"moss": 0.5, "dust": 0.4, "water": 0.2, "puddle": 0.1, "blood": 0.05, "damaged": 0.1}, "hub": {"moss": 0.1, "dust": 0.2, "water": 0.15, "puddle": 0.08, "blood": 0.3, "damaged": 0.4}, "armory": {"moss": 0.05, "dust": 0.3, "water": 0.08, "puddle": 0.05, "blood": 0.5, "damaged": 0.3}, "hall": {"moss": 0.1, "dust": 0.2, "water": 0.1, "puddle": 0.05, "blood": 0.1, "damaged": 0.15}, "corridor": {"moss": 0.05, "dust": 0.15, "water": 0.15, "puddle": 0.05, "blood": 0.08, "damaged": 0.2}}},
+  "note": "v15 cleaned: only wired T1 params, docs, albedo /255 fix, cell feather fixes tile cut, lean reusable FBM",
+  "noise": {
+    "size": 128,
+    "seed": 1337,
+    "tiling": "seamless-periodic",
+    "note": "procedural hash in shader, not sampler"
+  },
+  "generator": {
+    "noiseScale": 0.22,
+    "puddleScaleLarge": 0.22,
+    "puddleThreshold": 0.55,
+    "puddleFeather": 0.11,
+    "puddleOctaves": 4,
+    "debugPuddleBoost": 1.1,
+    "roleWeights": {
+      "entrance": {
+        "moss": 0,
+        "dust": 0,
+        "water": 0,
+        "puddle": 0.85,
+        "blood": 0,
+        "damaged": 0
+      },
+      "exit": {
+        "moss": 0,
+        "dust": 0,
+        "water": 0,
+        "puddle": 0.85,
+        "blood": 0,
+        "damaged": 0
+      },
+      "guardian": {
+        "moss": 0,
+        "dust": 0,
+        "water": 0,
+        "puddle": 0.75,
+        "blood": 0,
+        "damaged": 0
+      },
+      "treasure": {
+        "moss": 0,
+        "dust": 0,
+        "water": 0,
+        "puddle": 0.8,
+        "blood": 0,
+        "damaged": 0
+      },
+      "secret": {
+        "moss": 0,
+        "dust": 0,
+        "water": 0,
+        "puddle": 0.8,
+        "blood": 0,
+        "damaged": 0
+      },
+      "shrine": {
+        "moss": 0,
+        "dust": 0,
+        "water": 0,
+        "puddle": 0.85,
+        "blood": 0,
+        "damaged": 0
+      },
+      "hub": {
+        "moss": 0,
+        "dust": 0,
+        "water": 0,
+        "puddle": 0.8,
+        "blood": 0,
+        "damaged": 0
+      },
+      "armory": {
+        "moss": 0,
+        "dust": 0,
+        "water": 0,
+        "puddle": 0.75,
+        "blood": 0,
+        "damaged": 0
+      },
+      "hall": {
+        "moss": 0,
+        "dust": 0,
+        "water": 0,
+        "puddle": 0.8,
+        "blood": 0,
+        "damaged": 0
+      },
+      "corridor": {
+        "moss": 0,
+        "dust": 0,
+        "water": 0,
+        "puddle": 0.7,
+        "blood": 0,
+        "damaged": 0
+      }
+    }
+  },
   "modifiers": {
-    "moss": {"enabled": true, "albedo": [0.18, 0.42, 0.15], "roughAdd": 0.35, "heightAdd": 0.18, "normalStrength": 0.6, "colorStrength": 0.85, "noiseScale": 0.35, "threshold": 0.42, "aoWeight": 0.7},
-    "damaged": {"enabled": true, "albedo": [0.18, 0.15, 0.12], "roughAdd": 0.3, "heightAdd": -0.22, "normalStrength": 0.8, "colorStrength": 0.55, "noiseScale": 0.28, "threshold": 0.45},
-    "water": {"enabled": true, "albedo": [0.2, 0.3, 0.45], "roughAdd": -0.45, "heightAdd": -0.12, "normalStrength": 0.5, "colorStrength": 0.6, "noiseScale": 0.22, "threshold": 0.38},
-    "puddle": {"enabled": true, "albedo": [0.15, 0.18, 0.22], "roughAdd": -0.55, "roughTarget": 0.08, "heightAdd": -0.32, "normalStrength": 0.4, "colorStrength": 0.6, "noiseScale": 0.18, "threshold": 0.48, "floorDepress": 0.35},
-    "blood": {"enabled": true, "albedo": [0.55, 0.12, 0.12], "roughAdd": 0.12, "heightAdd": 0.08, "normalStrength": 0.5, "colorStrength": 0.75, "noiseScale": 0.32, "threshold": 0.5, "aoWeight": 0.6},
-    "dust": {"enabled": true, "albedo": [0.65, 0.6, 0.5], "roughAdd": 0.28, "heightAdd": 0.12, "normalStrength": 0.3, "colorStrength": 0.45, "noiseScale": 0.26, "threshold": 0.35, "aoWeight": 0.4}
+    "moss": {
+      "enabled": false,
+      "albedo": [
+        0.18,
+        0.42,
+        0.15
+      ],
+      "roughAdd": 0.35,
+      "heightAdd": 0.18,
+      "normalStrength": 0.6,
+      "colorStrength": 0.85,
+      "noiseScale": 0.35,
+      "threshold": 0.42,
+      "aoWeight": 0.7
+    },
+    "damaged": {
+      "enabled": false,
+      "albedo": [
+        0.18,
+        0.15,
+        0.12
+      ],
+      "roughAdd": 0.3,
+      "heightAdd": -0.22,
+      "normalStrength": 0.8,
+      "colorStrength": 0.55,
+      "noiseScale": 0.28,
+      "threshold": 0.45
+    },
+    "water": {
+      "enabled": false,
+      "albedo": [
+        0.2,
+        0.3,
+        0.45
+      ],
+      "roughAdd": -0.45,
+      "heightAdd": -0.12,
+      "normalStrength": 0.5,
+      "colorStrength": 0.6,
+      "noiseScale": 0.22,
+      "threshold": 0.38
+    },
+    "puddle": {
+      "enabled": true,
+      "albedo": [
+        10,
+        14,
+        19
+      ],
+      "roughTarget": 0.04,
+      "colorStrength": 0.55,
+      "tintMix": 0.35,
+      "darkBaseFactor": 0.65,
+      "noiseScaleLarge": 0.29,
+      "threshold": 0.55,
+      "feather": 0.1,
+      "cellFeatherLow": 0.0,
+      "cellFeatherHigh": 0.28,
+      "cellEpsilon": 0.0005,
+      "heightGroutLow": 0.12,
+      "heightGroutHigh": 0.48,
+      "aoGroutLow": 0.72,
+      "aoGroutHigh": 0.95,
+      "grooveMin": 0.3,
+      "heightInfluence": 0.85,
+      "worldLowHigh": 0.25,
+      "worldLowLow": -0.35,
+      "maskBoost": 1.2,
+      "edgeLow": 0.0,
+      "edgeHigh": 0.15,
+      "edgeFoam": 0.08,
+      "roughFeatherLow": 0.0,
+      "roughFeatherHigh": 0.65,
+      "flatStrength": 0.88,
+      "metalMix": 0.85,
+      "rippleScale": 3.0,
+      "aoMix": 0.2,
+      "floorDepress": -0.08
+    },
+    "blood": {
+      "enabled": false,
+      "albedo": [
+        0.55,
+        0.12,
+        0.12
+      ],
+      "roughAdd": 0.12,
+      "heightAdd": 0.08,
+      "normalStrength": 0.5,
+      "colorStrength": 0.75,
+      "noiseScale": 0.32,
+      "threshold": 0.5,
+      "aoWeight": 0.6
+    },
+    "dust": {
+      "enabled": false,
+      "albedo": [
+        0.65,
+        0.6,
+        0.5
+      ],
+      "roughAdd": 0.28,
+      "heightAdd": 0.12,
+      "normalStrength": 0.3,
+      "colorStrength": 0.45,
+      "noiseScale": 0.26,
+      "threshold": 0.35,
+      "aoWeight": 0.4
+    }
+  },
+  "docs": {
+    "puddle": {
+      "albedo": "0-255 RGB base puddle color. Dark (10,40,80) for water. Mixed with darkBase. Now auto /255.",
+      "roughTarget": "0-1 target roughness where puddle (0.04=glossy mirror, 0.8=matte).",
+      "colorStrength": "0-1 how much floor albedo replaced by puddle tint. 0.55 subtle, 0.92 full.",
+      "tintMix": "0-1 mix darkBase vs pure albedo. 0=only darkened floor, 1=pure albedo.",
+      "darkBaseFactor": "0-1 darkening of floor before tint. 0.65 darker base less saturated.",
+      "noiseScaleLarge": "World scale of large blobs. Smaller= larger pools. Tweak live.",
+      "threshold": "0-1 noise cutoff where cloud becomes puddle. Lower=more coverage.",
+      "feather": "0-0.2 softness of threshold edge. Higher=softer cloud edge.",
+      "cellFeatherLow": "Tile border feather low (0). Tweak to remove straight cut.",
+      "cellFeatherHigh": "Tile border feather high (0.28). Higher=more bleed across tiles, fixes your screenshot cut.",
+      "cellEpsilon": "Epsilon cutoff (0.0005) - puddle invisible below.",
+      "heightGroutLow": "Height tex threshold: below this = definitely grout/low",
+      "heightGroutHigh": "Height tex threshold: above this = not grout",
+      "aoGroutLow": "AO threshold low for grout",
+      "aoGroutHigh": "AO threshold high",
+      "grooveMin": "Min puddle strength in non-grout when heightInfluence=1. Lower= only grout gets puddles.",
+      "heightInfluence": "0=ignore height/AO (puddles everywhere), 1=strongly prefer low/grout. If flat floor, lower heightGroutHigh to see effect.",
+      "worldLowHigh": "World Z high: above this less puddle",
+      "worldLowLow": "World Z low: below this more puddle (floor depressions)",
+      "maskBoost": "Overall opacity boost after grout/world bias. 1.2 subtle, 1.4 strong.",
+      "edgeLow": "Edge mask low for foam rim",
+      "edgeHigh": "Edge mask high for foam rim",
+      "edgeFoam": "0-0.5 bright foam rim strength. Low=0.08 subtle.",
+      "roughFeatherLow": "Mask low for roughness lerp",
+      "roughFeatherHigh": "Mask high for roughness lerp",
+      "flatStrength": "0-1 how much normal becomes flat up (0,0,1) as water surface.",
+      "metalMix": "0-1 how much metal removed in puddle (water non-metal).",
+      "rippleScale": "UV scale for ripple normal. 0=off, 3=visible ripples.",
+      "aoMix": "0-1 how much AO darkening removed under water.",
+      "floorDepress": "-0.5..0.5 height depression where puddle (negative lowers floor). Now wired live, was dead before."
+    },
+    "system": "All are T1 live-edit via UBO ModifiersBlock (binding=1). No regen. heightAdd/aoWeight/noiseScale/normalStrength/roughAdd were dead legacy and removed."
   }
 }
