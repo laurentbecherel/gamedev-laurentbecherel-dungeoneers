@@ -505,6 +505,11 @@ export class Game {
         if (this.renderer && typeof this.renderer.updateMaterialModifiers === 'function') this.renderer.updateMaterialModifiers(data);
         break;
       }
+      case 'ssr': {
+        this.cfg.ssr = data;
+        if (this.renderer && typeof this.renderer.updateSSR === 'function') this.renderer.updateSSR(data);
+        break;
+      }
       default: {
         if (category.includes('material-modifiers') || primaryLogical === 'material-modifiers') {
           this.cfg.materialModifiers = data;
@@ -681,6 +686,8 @@ export class Game {
     if (code === "Digit7" || code === "Numpad7") { const v = this.renderer.toggleChamfer(); this._showHud("Chamfer: " + (v ? "ON (floor/ceil baseboard + vertical edges)" : "OFF (sharp 90°)")); return; }
     if (code === "Digit8" || code === "Numpad8") { const v = this.renderer.toggleCorner(); this._showHud("Corner Geometry: " + (v ? "ON (rounded intruding r=0.15 outer+inner)" : "OFF")); return; }
     if (code === "Digit9" || code === "Numpad9") { const v = this.renderer.toggleModifiers(); this._showHud("Modifiers: " + (v ? "ON (moss/water/puddle/dust/damaged/blood via 2x modifierMap + procNoise + UBO 192B)" : "OFF (clean PBR)")); return; }
+    if (code === "Digit0" || code === "Numpad0") { const v = this.renderer.toggleSSR(); this._showHud("SSR Puddle Reflections: " + (v ? "ON (puddle-only, sprite-aware)" : "OFF")); return; }
+    if (code === "KeyO") { const v = this.renderer.cycleSSRDebug(); const names=["OFF","PuddleMask cyan/pink","Depth","Normal","ReflectionUV","HitMask","RayDir","Fresnel","SSR only"]; this._showHud("SSR Debug: " + (names[v]||"Mode "+v) + " ("+v+") - O cycle, 0 toggle"); return; }
   }
 
   _showHud(msg) {

@@ -19,6 +19,8 @@ export const CONFIG_PATHS = {
   'material-assignments': ['config/rendering/material-assignments', 'config/material-assignments', 'config/main'],
   'material-modifiers': ['config/rendering/material-modifiers', 'config/material-modifiers', 'config/main'],
   'material-modifiers.json': ['config/rendering/material-modifiers', 'config/main'],
+  'ssr': ['config/rendering/ssr', 'config/ssr', 'config/main'],
+  'ssr.json': ['config/rendering/ssr', 'config/main'],
   // lighting — Task 6 extended, Task10: 8 lights
   'lighting':       ['config/lighting/lighting', 'config/lighting', 'config/main'],
   'shadows':        ['config/lighting/shadows', 'config/shadows', 'config/main'],
@@ -142,12 +144,14 @@ export async function getSpritesConfig(){ return _fetchConfig('sprites'); }
 export async function getLightTypesConfig(){ return _fetchConfig('light-types'); }
 export async function getParticlesConfig(){ return _fetchConfig('particles'); }
 export async function getMaterialModifiersConfig(){ return _fetchConfig('material-modifiers'); }
+export async function getSSRConfig(){ return _fetchConfig('ssr'); }
 export async function getMaterialAssignmentsConfig(){ return _fetchConfig('material-assignments'); }
 export async function saveMaterialAssignmentsConfig(cfg){ return _saveConfig('material-assignments', cfg); }
 export async function saveSpritesConfig(cfg){ return _saveConfig('sprites', cfg); }
 export async function saveLightTypesConfig(cfg){ return _saveConfig('light-types', cfg); }
 export async function saveParticlesConfig(cfg){ return _saveConfig('particles', cfg); }
 export async function saveMaterialModifiersConfig(cfg){ return _saveConfig('material-modifiers', cfg); }
+export async function saveSSRConfig(cfg){ return _saveConfig('ssr', cfg); }
 export function getFogConfigSync(){
   const c = _caches['fog'];
   if(!c) throw new Error('Fog config not loaded yet');
@@ -161,7 +165,7 @@ export async function saveFogConfig(cfg){
 
 // Batch load all rendering configs at once for Game init
 export async function getAllRenderConfigs(){
-  const names = ['rendering','palette','pom','pbr','ao','lighting','shadows','chamfer','corners','raymarch','fog','generator','map','materials-proc','material-assignments','material-modifiers','player','debug','discovery','sprites','light-types','particles'];
+  const names = ['rendering','palette','pom','pbr','ao','lighting','shadows','chamfer','corners','raymarch','fog','generator','map','materials-proc','material-assignments','material-modifiers','ssr','player','debug','discovery','sprites','light-types','particles'];
   const promises = names.map(n => _fetchConfig(n).catch(()=>null));
   const results = await Promise.all(promises);
   const out = {};

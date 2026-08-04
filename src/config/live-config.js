@@ -28,6 +28,7 @@ const TIER_MAP = {
   'light-types': 'T1',
   'particles': 'T1',
   'material-modifiers': 'T1',
+  'ssr': 'T1',
   'main': 'T1',
   // T2 array rebuild
   'materials-proc': 'T2',
@@ -59,6 +60,8 @@ const PATH_TIER_OVERRIDES = {
   'config/geometry/corners': 'T1',
   'config/rendering/material-modifiers': 'T1',
   'config/material-modifiers': 'T1',
+  'config/rendering/ssr': 'T1',
+  'config/ssr': 'T1',
 };
 
 export function getTierForLogical(logicalOrPath) {

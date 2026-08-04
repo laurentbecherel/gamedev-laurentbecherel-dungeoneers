@@ -8,7 +8,7 @@
 // - Live-edit T1 instant uniforms + T2 material array rebuild + T3 regen banner
 
 import { createProgram, createProgramAsync, createTexture, createTexture2DArray, isTexture2DArraySupported, createUniformBuffer, updateUniformBuffer, bindUniformBlock, bindUniformBufferBase } from './gl-utils.js';
-import { vsSource, fsSource, vsQuantize, fsQuantize, vsUI, fsUI, MAX_LIGHTS, vsSpriteSrc, fsSpritePBRSrc } from './shaders.js';
+import { vsSource, fsSource, vsQuantize, fsQuantize, vsUI, fsUI, MAX_LIGHTS, vsSpriteSrc, fsSpritePBRSrc, vsSSR, fsSSR, vsComposite, fsComposite } from './shaders.js';
 import { uploadMapTexture, updateMapTexture } from './map-upload.js';
 import { generateMaterialArrayData, generateMaterialAtlases } from '../world/materials.js';
 import { getAsset } from '../config/config.js';
@@ -75,6 +75,22 @@ export class GPURenderer {
     this._sprites = [];
     this._lightsCache = [];
     this.maxLights = MAX_LIGHTS || 8;
+    this.gNormalDepthTex = null;
+    this.ssrTex = null;
+    this.compositeTex = null;
+    this.blueNoiseTex = null;
+    this.ssrFBO = null;
+    this.compositeFBO = null;
+    this.gBufferFBO = null;
+    this.ssrProgram = null;
+    this.compositeProgram = null;
+    this.vaoSSR = null;
+    this.vaoComposite = null;
+    this.uSSR = {};
+    this.uComposite = {};
+    this.ssrEnabled = 1;
+    this.ssrDebugMode = 0;
+    this._ssrCfgCache = null;
   }
 
   async init(dungeon, config) {
@@ -86,10 +102,12 @@ export class GPURenderer {
       try { return createProgramAsync(gl, vs, fs).catch(()=>null); } catch { return Promise.resolve(null); }
     };
     // Start all in parallel
-    const [pMain, pQuant, pUI] = await Promise.all([
+    const [pMain, pQuant, pUI, pSSR, pComp] = await Promise.all([
       compileAsync(vsSource, fsSource),
       compileAsync(vsQuantize, fsQuantize),
-      compileAsync(vsUI, fsUI)
+      compileAsync(vsUI, fsUI),
+      compileAsync(vsSSR, fsSSR),
+      compileAsync(vsComposite, fsComposite)
     ]);
     this.program = pMain || createProgram(gl, vsSource, fsSource);
     if (!this.program) throw new Error('Shader compile failed raycast');
@@ -97,6 +115,10 @@ export class GPURenderer {
     if (!this.quantProgram) throw new Error('Shader compile failed quantize');
     this.uiProgram = pUI || createProgram(gl, vsUI, fsUI);
     if (!this.uiProgram) throw new Error('Shader compile failed UI');
+    this.ssrProgram = pSSR || createProgram(gl, vsSSR, fsSSR);
+    if (!this.ssrProgram) console.warn('SSR compile failed');
+    this.compositeProgram = pComp || createProgram(gl, vsComposite, fsComposite);
+    if (!this.compositeProgram) console.warn('Composite compile failed');
 
     this.vao = gl.createVertexArray();
     gl.bindVertexArray(this.vao);
@@ -109,6 +131,8 @@ export class GPURenderer {
     gl.bindVertexArray(null);
 
     this.vaoQuant = gl.createVertexArray();
+    this.vaoSSR = gl.createVertexArray();
+    this.vaoComposite = gl.createVertexArray();
     gl.bindVertexArray(this.vaoQuant);
     const buf2 = gl.createBuffer();
     gl.bindBuffer(gl.ARRAY_BUFFER, buf2);
@@ -117,7 +141,30 @@ export class GPURenderer {
     gl.enableVertexAttribArray(locQ);
     gl.vertexAttribPointer(locQ, 2, gl.FLOAT, false, 0, 0);
     gl.bindVertexArray(null);
-
+    try {
+      gl.bindVertexArray(this.vaoSSR);
+      {
+        const buf = gl.createBuffer();
+        gl.bindBuffer(gl.ARRAY_BUFFER, buf);
+        gl.bufferData(gl.ARRAY_BUFFER, new Float32Array([-1,-1, 1,-1, -1,1, 1,1]), gl.STATIC_DRAW);
+        if (this.ssrProgram) {
+          const loc = gl.getAttribLocation(this.ssrProgram, 'a_pos');
+          if (loc >= 0) { gl.enableVertexAttribArray(loc); gl.vertexAttribPointer(loc, 2, gl.FLOAT, false, 0, 0); }
+        }
+      }
+      gl.bindVertexArray(null);
+      gl.bindVertexArray(this.vaoComposite);
+      {
+        const buf = gl.createBuffer();
+        gl.bindBuffer(gl.ARRAY_BUFFER, buf);
+        gl.bufferData(gl.ARRAY_BUFFER, new Float32Array([-1,-1, 1,-1, -1,1, 1,1]), gl.STATIC_DRAW);
+        if (this.compositeProgram) {
+          const loc = gl.getAttribLocation(this.compositeProgram, 'a_pos');
+          if (loc >= 0) { gl.enableVertexAttribArray(loc); gl.vertexAttribPointer(loc, 2, gl.FLOAT, false, 0, 0); }
+        }
+      }
+      gl.bindVertexArray(null);
+    } catch {}
     this.vaoUI = gl.createVertexArray();
     gl.bindVertexArray(this.vaoUI);
     const uiBuf = gl.createBuffer();
@@ -248,13 +295,84 @@ export class GPURenderer {
     const cw2 = this.canvas.width || 640, ch2 = this.canvas.height || 360;
     this.sceneTex = gl.createTexture();
     gl.bindTexture(gl.TEXTURE_2D, this.sceneTex);
-    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
-    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.NEAREST);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.NEAREST);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
     gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA8, cw2, ch2, 0, gl.RGBA, gl.UNSIGNED_BYTE, null);
     this.sceneFBO = gl.createFramebuffer();
     gl.bindFramebuffer(gl.FRAMEBUFFER, this.sceneFBO);
     gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.TEXTURE_2D, this.sceneTex, 0);
     gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+
+    this.gNormalDepthTex = gl.createTexture();
+    gl.bindTexture(gl.TEXTURE_2D, this.gNormalDepthTex);
+    gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA8, cw2, ch2, 0, gl.RGBA, gl.UNSIGNED_BYTE, null);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.NEAREST);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.NEAREST);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+
+    this.ssrTex = gl.createTexture();
+    gl.bindTexture(gl.TEXTURE_2D, this.ssrTex);
+    gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA8, cw2, ch2, 0, gl.RGBA, gl.UNSIGNED_BYTE, null);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.NEAREST);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.NEAREST);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+
+    this.compositeTex = gl.createTexture();
+    gl.bindTexture(gl.TEXTURE_2D, this.compositeTex);
+    gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA8, cw2, ch2, 0, gl.RGBA, gl.UNSIGNED_BYTE, null);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.NEAREST);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.NEAREST);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+
+    this.blueNoiseTex = gl.createTexture();
+    gl.bindTexture(gl.TEXTURE_2D, this.blueNoiseTex);
+    {
+      const size = 64;
+      const data = new Uint8Array(size*size*4);
+      let seed = 1337;
+      function rnd(){ seed = (seed * 1664525 + 1013904223) >>> 0; return seed / 0xffffffff; }
+      for(let i=0;i<size*size;i++){ data[i*4]=Math.floor(rnd()*255); data[i*4+1]=Math.floor(rnd()*255); data[i*4+2]=Math.floor(rnd()*255); data[i*4+3]=255; }
+      gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, size, size, 0, gl.RGBA, gl.UNSIGNED_BYTE, data);
+    }
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.NEAREST);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.NEAREST);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.REPEAT);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.REPEAT);
+
+    this.gBufferFBO = gl.createFramebuffer();
+    gl.bindFramebuffer(gl.FRAMEBUFFER, this.gBufferFBO);
+    gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.TEXTURE_2D, this.sceneTex, 0);
+    gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT1, gl.TEXTURE_2D, this.gNormalDepthTex, 0);
+    try { gl.drawBuffers([gl.COLOR_ATTACHMENT0, gl.COLOR_ATTACHMENT1]); } catch {}
+
+    this.ssrFBO = gl.createFramebuffer();
+    gl.bindFramebuffer(gl.FRAMEBUFFER, this.ssrFBO);
+    gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.TEXTURE_2D, this.ssrTex, 0);
+    try { gl.drawBuffers([gl.COLOR_ATTACHMENT0]); } catch {}
+
+    this.compositeFBO = gl.createFramebuffer();
+    gl.bindFramebuffer(gl.FRAMEBUFFER, this.compositeFBO);
+    gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.TEXTURE_2D, this.compositeTex, 0);
+    try { gl.drawBuffers([gl.COLOR_ATTACHMENT0]); } catch {}
+
+    gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+
+    // fill blue noise after FBO unbind
+    {
+      const gl2 = gl;
+      gl2.bindTexture(gl2.TEXTURE_2D, this.blueNoiseTex);
+      const size = 64;
+      const data = new Uint8Array(size*size*4);
+      let seed = 1337;
+      function rnd(){ seed = (seed * 1664525 + 1013904223) >>> 0; return seed / 0xffffffff; }
+      for(let i=0;i<size*size;i++){ data[i*4]=Math.floor(rnd()*255); data[i*4+1]=Math.floor(rnd()*255); data[i*4+2]=Math.floor(rnd()*255); data[i*4+3]=255; }
+      gl2.texImage2D(gl2.TEXTURE_2D, 0, gl2.RGBA, size, size, 0, gl2.RGBA, gl2.UNSIGNED_BYTE, data);
+    }
 
     this.mapUITex = gl.createTexture();
     gl.bindTexture(gl.TEXTURE_2D, this.mapUITex);
@@ -291,8 +409,8 @@ export class GPURenderer {
       'u_numLights',
       // array path counts
       'u_wallCount','u_floorCount','u_ceilCount',
-      // modifiers v11.3 PROPER: 2 textures (14&15) + Full UBO 192 bytes (no individual uniforms)
       'u_modifierMap','u_modifierMap2','u_modifiersEnabled',
+      'u_ssrDepthRange',
     ];
     names.forEach(n => ul[n] = gl.getUniformLocation(p, n));
 
@@ -571,6 +689,11 @@ export class GPURenderer {
   setCornerEnabled(v) { this.cornerEnabled = v ? 1 : 0; }
   setPBRDebugMode(v) { this.pbrDebugMode = Math.max(0, Math.min(17, v | 0)); }
   setModifiersEnabled(v){ this.modifiersEnabled = v?1:0; }
+  setSSREnabled(v){ this.ssrEnabled = v?1:0; }
+  setSSRDebugMode(v){ this.ssrDebugMode = Math.max(0, Math.min(8, v|0)); }
+  toggleSSR(){ this.ssrEnabled ^= 1; return this.ssrEnabled; }
+  cycleSSRDebug(){ this.ssrDebugMode = (this.ssrDebugMode + 1) % 9; return this.ssrDebugMode; }
+  updateSSR(ssrCfg){ if(!ssrCfg) return; if(!this._cfgCache) this._cfgCache={}; this._cfgCache.ssr = ssrCfg; this._ssrCfgCache = ssrCfg; this.ssrEnabled = (ssrCfg.enabled!==false)?1:0; if(ssrCfg.debug && ssrCfg.debug.mode!==undefined) this.ssrDebugMode = ssrCfg.debug.mode|0; }
 
   toggleGridDebug() { this.gridDebug ^= 1; return this.gridDebug; }
   toggleLighting() { this.lightingEnabled ^= 1; return this.lightingEnabled; }
@@ -803,10 +926,13 @@ export class GPURenderer {
     if (!this.ready) return;
     const gl = this.gl;
     const cfg = player._cfg || this._cfgCache || {};
-    gl.bindFramebuffer(gl.FRAMEBUFFER, this.sceneFBO);
+    const isGBuffer = !!(this.gBufferFBO && this.gNormalDepthTex && this.gBufferFBO !== this.sceneFBO);
+    const targetFBO = isGBuffer ? this.gBufferFBO : this.sceneFBO;
+    gl.bindFramebuffer(gl.FRAMEBUFFER, targetFBO);
+    try { if (isGBuffer) gl.drawBuffers([gl.COLOR_ATTACHMENT0, gl.COLOR_ATTACHMENT1]); else gl.drawBuffers([gl.COLOR_ATTACHMENT0]); } catch {}
     gl.viewport(0, 0, this.canvas.width, this.canvas.height);
     gl.clearColor(0, 0, 0, 1);
-    gl.clear(gl.COLOR_BUFFER_BIT);
+    if (isGBuffer) { try { gl.clearBufferfv(gl.COLOR, 0, [0,0,0,1]); gl.clearBufferfv(gl.COLOR, 1, [0.5,0.5,0,0]); } catch { gl.clear(gl.COLOR_BUFFER_BIT); } } else { gl.clear(gl.COLOR_BUFFER_BIT); }
     gl.useProgram(this.program);
     gl.bindVertexArray(this.vao);
     const ul = this.uLoc;
@@ -952,6 +1078,7 @@ export class GPURenderer {
     if (ul.u_wallCount) gl.uniform1f(ul.u_wallCount, ai.wallCount || 1);
     if (ul.u_floorCount) gl.uniform1f(ul.u_floorCount, ai.floorCount || 1);
     if (ul.u_ceilCount) gl.uniform1f(ul.u_ceilCount, ai.ceilCount || 1);
+    if (ul.u_ssrDepthRange) { const ssrCfg = cfg.ssr || {}; const dr = ssrCfg.reprojection?.depthRange ?? 25.0; gl.uniform1f(ul.u_ssrDepthRange, dr); }
 
     // Lighting base
     const ambientLevel = this._resolveConfigValue(cfg, ['lighting.ambient.level','lights.ambient','renderer.ambient'], 0.36);
@@ -1296,7 +1423,8 @@ export class GPURenderer {
             visible: orig.visible !== false, material: orig.material || null,
           });
         }
-        gl.bindFramebuffer(gl.FRAMEBUFFER, this.sceneFBO);
+        gl.bindFramebuffer(gl.FRAMEBUFFER, targetFBO);
+        try { gl.drawBuffers([gl.COLOR_ATTACHMENT0]); } catch {}
         this.spriteRenderer.render(spritesForRender, camera, this._lightsCache, timeSec, {
           sunDir: { x: sunDir[0]/sunLen, y: sunDir[1]/sunLen, z: sunDir[2]/sunLen },
           sunIntensity, sunColor, ambient: ambientLevel,
@@ -1306,21 +1434,139 @@ export class GPURenderer {
       } catch (e) { console.warn('[render sprites] failed', e); }
     }
 
-    gl.bindFramebuffer(gl.FRAMEBUFFER, null);
-    gl.viewport(0, 0, this.canvas.width, this.canvas.height);
-    gl.useProgram(this.quantProgram);
-    gl.bindVertexArray(this.vaoQuant);
-    gl.activeTexture(gl.TEXTURE0); gl.bindTexture(gl.TEXTURE_2D, this.sceneTex);
-    gl.activeTexture(gl.TEXTURE1); gl.bindTexture(gl.TEXTURE_2D, this.paletteTex);
-    gl.activeTexture(gl.TEXTURE2); gl.bindTexture(gl.TEXTURE_2D, this.lutTex);
-    gl.uniform1i(this.uQuant.scene, 0);
-    gl.uniform1i(this.uQuant.palette, 1);
-    gl.uniform1i(this.uQuant.lut, 2);
-    gl.uniform1i(this.uQuant.authentic, this.authentic ? 1 : 0);
-    const palMap = { doom: 0, smooth256: 1, truecolor: 2, grayscale: 3, sepia: 4 };
-    gl.uniform1i(this.uQuant.style, palMap[this.paletteStyle] ?? 0);
-    gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
-    gl.bindVertexArray(null);
+    let ssrShouldRun = false;
+    let ssrCfgForCheck = null;
+    try {
+      ssrCfgForCheck = this._cfgCache?.ssr || this._ssrCfgCache || {};
+      ssrShouldRun = (this.ssrEnabled !== 0) && (ssrCfgForCheck.enabled !== false) && !!this.ssrProgram && !!this.ssrTex && !!this.gNormalDepthTex && !!this.blueNoiseTex;
+      if (ssrShouldRun) {
+        const ssrCfg = ssrCfgForCheck;
+        gl.bindFramebuffer(gl.FRAMEBUFFER, this.ssrFBO);
+        gl.viewport(0, 0, this.canvas.width, this.canvas.height);
+        gl.clearColor(0,0,0,0);
+        gl.clear(gl.COLOR_BUFFER_BIT);
+        gl.useProgram(this.ssrProgram);
+        gl.bindVertexArray(this.vaoSSR);
+        gl.activeTexture(gl.TEXTURE0); gl.bindTexture(gl.TEXTURE_2D, this.sceneTex);
+        gl.activeTexture(gl.TEXTURE1); gl.bindTexture(gl.TEXTURE_2D, this.gNormalDepthTex);
+        gl.activeTexture(gl.TEXTURE2); gl.bindTexture(gl.TEXTURE_2D, this.blueNoiseTex);
+        const ulSSR = this.uSSR;
+        if (!ulSSR._inited) {
+          const names = ['u_sceneColor','u_gNormalDepth','u_blueNoise','u_resolution','u_playerPos','u_playerAngle','u_fov','u_time','u_ssrDepthRange','u_ssrEnabled','u_ssrMinPuddleMask','u_ssrNormalThreshold','u_ssrMaxGrazingAngle','u_ssrSteps','u_ssrBinarySteps','u_ssrMaxDistance','u_ssrThickness','u_ssrStride','u_ssrJitter','u_ssrDepthBias','u_ssrZThicknessScale','u_ssrMaxRayAngle','u_ssrEdgeFadeStart','u_ssrEdgeFadeEnd','u_ssrDistanceFadeStart','u_ssrDistanceFadeEnd','u_ssrFresnelPower','u_ssrFresnelMin','u_ssrFresnelMax','u_ssrBlendStrength','u_ssrDebugMode'];
+          names.forEach(n => ulSSR[n] = gl.getUniformLocation(this.ssrProgram, n));
+          ulSSR._inited = true;
+        }
+        if (ulSSR.u_sceneColor) gl.uniform1i(ulSSR.u_sceneColor, 0);
+        if (ulSSR.u_gNormalDepth) gl.uniform1i(ulSSR.u_gNormalDepth, 1);
+        if (ulSSR.u_blueNoise) gl.uniform1i(ulSSR.u_blueNoise, 2);
+        const ssrG = ssrCfg.gating || {};
+        const ssrR = ssrCfg.rayMarch || {};
+        const ssrF = ssrCfg.fade || {};
+        const ssrD = ssrCfg.debug || {};
+        if (ulSSR.u_resolution) gl.uniform2f(ulSSR.u_resolution, this.canvas.width, this.canvas.height);
+        if (ulSSR.u_playerPos) gl.uniform2f(ulSSR.u_playerPos, camX, camY);
+        if (ulSSR.u_playerAngle) gl.uniform1f(ulSSR.u_playerAngle, renderAngle);
+        if (ulSSR.u_fov) gl.uniform1f(ulSSR.u_fov, fov);
+        if (ulSSR.u_time) gl.uniform1f(ulSSR.u_time, time);
+        const dr = ssrCfg.reprojection?.depthRange ?? 25.0;
+        if (ulSSR.u_ssrDepthRange) gl.uniform1f(ulSSR.u_ssrDepthRange, dr);
+        if (ulSSR.u_ssrEnabled) gl.uniform1i(ulSSR.u_ssrEnabled, this.ssrEnabled?1:0);
+        if (ulSSR.u_ssrMinPuddleMask) gl.uniform1f(ulSSR.u_ssrMinPuddleMask, ssrG.minPuddleMask ?? 0.08);
+        if (ulSSR.u_ssrNormalThreshold) gl.uniform1f(ulSSR.u_ssrNormalThreshold, ssrG.normalThreshold ?? 0.35);
+        if (ulSSR.u_ssrMaxGrazingAngle) gl.uniform1f(ulSSR.u_ssrMaxGrazingAngle, ssrG.maxGrazingAngle ?? 0.92);
+        if (ulSSR.u_ssrSteps) gl.uniform1i(ulSSR.u_ssrSteps, ssrR.steps ?? 32);
+        if (ulSSR.u_ssrBinarySteps) gl.uniform1i(ulSSR.u_ssrBinarySteps, ssrR.binarySteps ?? 4);
+        if (ulSSR.u_ssrMaxDistance) gl.uniform1f(ulSSR.u_ssrMaxDistance, ssrR.maxDistance ?? 18.0);
+        if (ulSSR.u_ssrThickness) gl.uniform1f(ulSSR.u_ssrThickness, ssrR.thickness ?? 1.2);
+        if (ulSSR.u_ssrStride) gl.uniform1f(ulSSR.u_ssrStride, ssrR.stride ?? 1.15);
+        if (ulSSR.u_ssrJitter) gl.uniform1f(ulSSR.u_ssrJitter, ssrR.jitter ?? 0.35);
+        if (ulSSR.u_ssrDepthBias) gl.uniform1f(ulSSR.u_ssrDepthBias, ssrR.depthBias ?? 0.015);
+        if (ulSSR.u_ssrZThicknessScale) gl.uniform1f(ulSSR.u_ssrZThicknessScale, ssrR.zThicknessScale ?? 0.8);
+        if (ulSSR.u_ssrMaxRayAngle) gl.uniform1f(ulSSR.u_ssrMaxRayAngle, ssrR.maxRayAngle ?? 0.98);
+        if (ulSSR.u_ssrEdgeFadeStart) gl.uniform1f(ulSSR.u_ssrEdgeFadeStart, ssrF.edgeFadeStart ?? 0.82);
+        if (ulSSR.u_ssrEdgeFadeEnd) gl.uniform1f(ulSSR.u_ssrEdgeFadeEnd, ssrF.edgeFadeEnd ?? 1.08);
+        if (ulSSR.u_ssrDistanceFadeStart) gl.uniform1f(ulSSR.u_ssrDistanceFadeStart, ssrF.distanceFadeStart ?? 4.5);
+        if (ulSSR.u_ssrDistanceFadeEnd) gl.uniform1f(ulSSR.u_ssrDistanceFadeEnd, ssrF.distanceFadeEnd ?? 11.0);
+        if (ulSSR.u_ssrFresnelPower) gl.uniform1f(ulSSR.u_ssrFresnelPower, ssrF.fresnelPower ?? 4.5);
+        if (ulSSR.u_ssrFresnelMin) gl.uniform1f(ulSSR.u_ssrFresnelMin, ssrF.fresnelMin ?? 0.08);
+        if (ulSSR.u_ssrFresnelMax) gl.uniform1f(ulSSR.u_ssrFresnelMax, ssrF.fresnelMax ?? 1.0);
+        if (ulSSR.u_ssrBlendStrength) gl.uniform1f(ulSSR.u_ssrBlendStrength, ssrF.blendStrength ?? 1.0);
+        if (ulSSR.u_ssrDebugMode) gl.uniform1i(ulSSR.u_ssrDebugMode, this.ssrDebugMode ?? ssrD.mode ?? 0);
+        gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
+        gl.bindVertexArray(null);
+      }
+    } catch(e){ console.warn('[SSR] failed', e); }
+    try {
+      if (this.compositeProgram && this.compositeTex && this.ssrTex && ssrShouldRun) {
+        gl.bindFramebuffer(gl.FRAMEBUFFER, this.compositeFBO);
+        gl.viewport(0, 0, this.canvas.width, this.canvas.height);
+        gl.clearColor(0,0,0,1);
+        gl.clear(gl.COLOR_BUFFER_BIT);
+        gl.useProgram(this.compositeProgram);
+        gl.bindVertexArray(this.vaoComposite);
+        gl.activeTexture(gl.TEXTURE0); gl.bindTexture(gl.TEXTURE_2D, this.sceneTex);
+        gl.activeTexture(gl.TEXTURE1); gl.bindTexture(gl.TEXTURE_2D, this.ssrTex);
+        gl.activeTexture(gl.TEXTURE2); gl.bindTexture(gl.TEXTURE_2D, this.gNormalDepthTex);
+        const ulC = this.uComposite;
+        if (!ulC._inited) {
+          const names = ['u_sceneColor','u_ssrColor','u_gNormalDepth','u_ssrTint','u_ssrTintStrength','u_ssrBlendStrength','u_ssrPuddleMaskInfluence','u_ssrAdditiveBoost','u_ssrMinPuddleMask','u_ssrDebugMode'];
+          names.forEach(n => ulC[n] = gl.getUniformLocation(this.compositeProgram, n));
+          ulC._inited = true;
+        }
+        if (ulC.u_sceneColor) gl.uniform1i(ulC.u_sceneColor, 0);
+        if (ulC.u_ssrColor) gl.uniform1i(ulC.u_ssrColor, 1);
+        if (ulC.u_gNormalDepth) gl.uniform1i(ulC.u_gNormalDepth, 2);
+        const ssrCfg2 = ssrCfgForCheck || this._cfgCache?.ssr || this._ssrCfgCache || {};
+        const comp = ssrCfg2.composition || {};
+        const gat = ssrCfg2.gating || {};
+        const fade = ssrCfg2.fade || {};
+        const dbg = ssrCfg2.debug || {};
+        const tint = comp.tint || [0.22,0.32,0.45];
+        if (ulC.u_ssrTint) gl.uniform3f(ulC.u_ssrTint, tint[0], tint[1], tint[2]);
+        if (ulC.u_ssrTintStrength) gl.uniform1f(ulC.u_ssrTintStrength, comp.tintStrength ?? 0.05);
+        if (ulC.u_ssrBlendStrength) gl.uniform1f(ulC.u_ssrBlendStrength, fade.blendStrength ?? 1.0);
+        if (ulC.u_ssrPuddleMaskInfluence) gl.uniform1f(ulC.u_ssrPuddleMaskInfluence, fade.puddleMaskInfluence ?? 0.95);
+        if (ulC.u_ssrAdditiveBoost) gl.uniform1f(ulC.u_ssrAdditiveBoost, comp.additiveBoost ?? 0.0);
+        if (ulC.u_ssrMinPuddleMask) gl.uniform1f(ulC.u_ssrMinPuddleMask, gat.minPuddleMask ?? 0.08);
+        if (ulC.u_ssrDebugMode) gl.uniform1i(ulC.u_ssrDebugMode, this.ssrDebugMode ?? dbg.mode ?? 0);
+        gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
+        gl.bindVertexArray(null);
+      }
+    } catch(e){ console.warn('[Composite] failed', e); }
+    const isDebug = (this.ssrDebugMode !== 0);
+    if (isDebug && ssrShouldRun) {
+      gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+      gl.viewport(0, 0, this.canvas.width, this.canvas.height);
+      gl.useProgram(this.quantProgram);
+      gl.bindVertexArray(this.vaoQuant);
+      gl.activeTexture(gl.TEXTURE0); gl.bindTexture(gl.TEXTURE_2D, this.compositeTex);
+      gl.activeTexture(gl.TEXTURE1); gl.bindTexture(gl.TEXTURE_2D, this.paletteTex);
+      gl.activeTexture(gl.TEXTURE2); gl.bindTexture(gl.TEXTURE_2D, this.lutTex);
+      gl.uniform1i(this.uQuant.scene, 0);
+      gl.uniform1i(this.uQuant.palette, 1);
+      gl.uniform1i(this.uQuant.lut, 2);
+      gl.uniform1i(this.uQuant.authentic, 0);
+      gl.uniform1i(this.uQuant.style, 2);
+      gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
+      gl.bindVertexArray(null);
+    } else {
+      gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+      gl.viewport(0, 0, this.canvas.width, this.canvas.height);
+      gl.useProgram(this.quantProgram);
+      gl.bindVertexArray(this.vaoQuant);
+      const finalSceneTex = (this.compositeTex && ssrShouldRun) ? this.compositeTex : this.sceneTex;
+      gl.activeTexture(gl.TEXTURE0); gl.bindTexture(gl.TEXTURE_2D, finalSceneTex);
+      gl.activeTexture(gl.TEXTURE1); gl.bindTexture(gl.TEXTURE_2D, this.paletteTex);
+      gl.activeTexture(gl.TEXTURE2); gl.bindTexture(gl.TEXTURE_2D, this.lutTex);
+      gl.uniform1i(this.uQuant.scene, 0);
+      gl.uniform1i(this.uQuant.palette, 1);
+      gl.uniform1i(this.uQuant.lut, 2);
+      gl.uniform1i(this.uQuant.authentic, this.authentic ? 1 : 0);
+      const palMap = { doom: 0, smooth256: 1, truecolor: 2, grayscale: 3, sepia: 4 };
+      gl.uniform1i(this.uQuant.style, palMap[this.paletteStyle] ?? 0);
+      gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
+      gl.bindVertexArray(null);
+    }
 
     this._renderUIPass();
   }
@@ -1330,6 +1576,9 @@ export class GPURenderer {
     const gl = this.gl;
     gl.bindTexture(gl.TEXTURE_2D, this.sceneTex);
     gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA8, w, h, 0, gl.RGBA, gl.UNSIGNED_BYTE, null);
+    if (this.gNormalDepthTex) { gl.bindTexture(gl.TEXTURE_2D, this.gNormalDepthTex); gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA8, w, h, 0, gl.RGBA, gl.UNSIGNED_BYTE, null); }
+    if (this.ssrTex) { gl.bindTexture(gl.TEXTURE_2D, this.ssrTex); gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA8, w, h, 0, gl.RGBA, gl.UNSIGNED_BYTE, null); }
+    if (this.compositeTex) { gl.bindTexture(gl.TEXTURE_2D, this.compositeTex); gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA8, w, h, 0, gl.RGBA, gl.UNSIGNED_BYTE, null); }
     if (this.spriteRenderer) this.spriteRenderer.resize();
   }
   isReady() { return this.ready; }

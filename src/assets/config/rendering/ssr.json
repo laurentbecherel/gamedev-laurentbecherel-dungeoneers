@@ -6,8 +6,8 @@
   "gating": {
     "puddleOnly": true,
     "requireModifiersEnabled": true,
-    "minPuddleMask": 0.18,
-    "roughnessThreshold": 0.18,
+    "minPuddleMask": 0.08,
+    "roughnessThreshold": 1,
     "normalThreshold": 0.35,
     "maxGrazingAngle": 0.92,
     "facingOnly": true,
@@ -15,41 +15,41 @@
     "note": "Only floor where puddle mask > min gets SSR"
   },
   "rayMarch": {
-    "steps": 20,
-    "binarySteps": 4,
-    "maxDistance": 12.0,
-    "thickness": 0.35,
-    "stride": 1.2,
-    "jitter": 0.35,
-    "depthBias": 0.015,
-    "zThicknessScale": 0.8,
-    "maxRayAngle": 0.98,
-    "worldExpire": 20.0,
-    "note": "Linear + binary refine, thickness tolerant to POM + floorDepress"
+    "steps": 48,
+    "binarySteps": 6,
+    "maxDistance": 24,
+    "thickness": 2,
+    "stride": 1.08,
+    "jitter": 0.02,
+    "depthBias": 0.06,
+    "zThicknessScale": 0.15,
+    "maxRayAngle": 0.995,
+    "worldExpire": 24,
+    "note": "More steps, less jitter (mirror), thicker for 8-bit depth, less stride growth"
   },
   "reprojection": {
     "viewSpace": false,
     "useGBufferDepth": true,
     "linearDepth": true,
-    "depthRange": 25.0,
+    "depthRange": 25,
     "planeLenFromFov": true,
     "reconstructFrom": "gNormalDepth",
     "normalEncoding": "octa",
     "note": "View ray from playerPos/Angle/FOV + gBuffer depth B=perpDist/depthRange"
   },
   "fade": {
-    "edgeFadeStart": 0.82,
-    "edgeFadeEnd": 1.08,
-    "distanceFadeStart": 4.5,
-    "distanceFadeEnd": 11.0,
-    "fresnelPower": 4.5,
-    "fresnelMin": 0.08,
-    "fresnelMax": 1.0,
-    "blendStrength": 0.78,
-    "puddleMaskInfluence": 0.95,
-    "roughnessFade": true,
-    "selfAlphaFade": 0.22,
-    "note": "Edge vignette, distance, fresnel"
+    "edgeFadeStart": 1.15,
+    "edgeFadeEnd": 1.35,
+    "distanceFadeStart": 12,
+    "distanceFadeEnd": 35,
+    "fresnelPower": 2.2,
+    "fresnelMin": 0.25,
+    "fresnelMax": 1,
+    "blendStrength": 1,
+    "puddleMaskInfluence": 0.7,
+    "roughnessFade": false,
+    "selfAlphaFade": 0,
+    "note": "Boosted for visibility - less edge/distance fade, higher min fresnel"
   },
   "roughness": {
     "blurEnabled": true,
@@ -75,16 +75,16 @@
   "composition": {
     "blendMode": "fresnel_puddle",
     "tint": [
-      0.22,
-      0.32,
-      0.45
+      0.4,
+      0.5,
+      0.65
     ],
-    "tintStrength": 0.12,
-    "additiveBoost": 0.0,
-    "specularBoost": 0.35,
-    "preserveQuantize": true,
-    "quantizeReflection": true,
-    "note": "lerp base/mirror by fresnel*mask*blend, tint water, quantize after"
+    "tintStrength": 0.05,
+    "additiveBoost": 0.15,
+    "specularBoost": 0.6,
+    "preserveQuantize": false,
+    "quantizeReflection": false,
+    "note": "Boosted visibility, minimal tint, preserveQuantize false for clearer reflection"
   },
   "debug": {
     "mode": 0,

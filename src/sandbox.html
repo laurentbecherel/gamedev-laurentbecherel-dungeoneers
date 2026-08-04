@@ -1,0 +1,90 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1.0">
+<title>DUNGEONEERS SANDBOX — Render Test Lab</title>
+<link rel="stylesheet" href="style.css">
+<style>
+  .sandbox-body { display:flex; flex-direction:column; height:100vh; background:#0f0f0f; color:#e0e0e0; font-family: 'JetBrains Mono', monospace; }
+  .sandbox-topbar { display:flex; align-items:center; gap:12px; padding:8px 12px; background:#1a1a1a; border-bottom:1px solid #333; }
+  .sandbox-topbar .brand { font-weight:700; letter-spacing:2px; }
+  .sandbox-main { display:flex; flex:1; overflow:hidden; }
+  .game-viewport { flex:1; display:flex; align-items:center; justify-content:center; background:#080808; position:relative; }
+  #game-canvas { border:1px solid #333; image-rendering:pixelated; image-rendering:crisp-edges; }
+  .sandbox-sidebar { width:340px; background:#1a1a1a; border-left:1px solid #333; display:flex; flex-direction:column; overflow:auto; }
+  .sidebar-section { padding:12px; border-bottom:1px solid #2a2a2a; }
+  .sidebar-section h3 { margin:0 0 8px 0; font-size:12px; letter-spacing:1px; color:#888; text-transform:uppercase; }
+  .scene-btn { display:block; width:100%; text-align:left; padding:8px 10px; margin:4px 0; background:#252525; border:1px solid #333; color:#ccc; cursor:pointer; font-family:inherit; font-size:12px; }
+  .scene-btn.active { background:#2a4a6a; border-color:#4a8; color:#fff; }
+  .scene-btn:hover { background:#2a2a2a; }
+  .kv { display:flex; justify-content:space-between; font-size:11px; padding:3px 0; }
+  .kv span:first-child { color:#888; }
+  .kv span:last-child { color:#e0e0e0; }
+  .color-swatch { display:inline-block; width:12px; height:12px; border:1px solid #444; vertical-align:middle; margin-right:6px; }
+  .debug-grid { display:grid; grid-template-columns: 1fr 1fr; gap:4px; }
+  .debug-btn { padding:6px; font-size:10px; background:#222; border:1px solid #333; color:#aaa; cursor:pointer; }
+  .debug-btn.active { background:#4a2a2a; color:#fff; border-color:#a44; }
+  .log { font-size:10px; color:#666; white-space:pre-wrap; max-height:120px; overflow:auto; background:#111; padding:6px; border:1px solid #222; }
+  #fps { position:absolute; top:8px; left:8px; background:rgba(0,0,0,0.7); padding:4px 8px; font-size:10px; color:#0f0; }
+</style>
+</head>
+<body class="sandbox-body">
+<div class="sandbox-topbar">
+  <div class="brand">SANDBOX • RENDER TEST LAB</div>
+  <div style="flex:1"></div>
+  <a href="game.html" style="color:#888; text-decoration:none; font-size:12px;">Game</a>
+  <a href="editor.html" style="color:#888; text-decoration:none; font-size:12px; margin-left:12px;">Editor</a>
+  <a href="index.html" style="color:#888; text-decoration:none; font-size:12px; margin-left:12px;">Home</a>
+</div>
+<div class="sandbox-main">
+  <div class="game-viewport">
+    <canvas id="game-canvas" width="640" height="360"></canvas>
+    <div id="fps">FPS: -</div>
+  </div>
+  <div class="sandbox-sidebar">
+    <div class="sidebar-section">
+      <h3>Test Scenes (flat math colors)</h3>
+      <button class="scene-btn active" data-scene="flatColorRoom">0: FlatColorRoom — 4 colored walls, gray floor, blue puddle 2x2 center</button>
+      <button class="scene-btn" data-scene="puddleMirror">1: PuddleMirror — red wall behind, puddle front, should reflect red</button>
+      <button class="scene-btn" data-scene="corridorDepth">2: CorridorDepth — 20 cells long, depth gradient white far</button>
+      <button class="scene-btn" data-scene="normalCheck">3: NormalCheck — 8x8 empty, test 1/3 floor/wall/ceil normals</button>
+      <button class="scene-btn" data-scene="spriteReflect">4: SpriteReflect — torch + monster in front of puddle, SSR should show them</button>
+    </div>
+    <div class="sidebar-section">
+      <h3>SSR Controls (same pipeline as game)</h3>
+      <div class="debug-grid">
+        <button class="debug-btn" data-action="toggleSSR">0: Toggle SSR</button>
+        <button class="debug-btn" data-action="cycleDebug">O: Cycle Debug</button>
+        <button class="debug-btn" data-action="toggleModifiers">9: Toggle Modifiers</button>
+        <button class="debug-btn" data-action="togglePalette">P: Palette</button>
+        <button class="debug-btn" data-action="runMath">Math Validation (unit)</button>
+        <button class="debug-btn" data-action="autoSweep">Auto Sweep Angles</button>
+        <button class="debug-btn" data-action="visualCheck">Visual Diff Check</button>
+      </div>
+      <div style="margin-top:8px;" class="kv"><span>SSR Enabled</span><span id="val-ssr">-</span></div>
+      <div class="kv"><span>SSR Debug Mode</span><span id="val-debug">-</span></div>
+      <div class="kv"><span>Modifiers</span><span id="val-mod">-</span></div>
+      <div class="kv"><span>Palette</span><span id="val-pal">-</span></div>
+      <div class="kv"><span>Scene</span><span id="val-scene">flatColorRoom</span></div>
+    </div>
+    <div class="sidebar-section">
+      <h3>Expected Math (for Playwright)</h3>
+      <div class="kv"><span>Floor normal</span><span><span class="color-swatch" style="background:#8080FF"></span>(0,0,1)=blue #8080FF</span></div>
+      <div class="kv"><span>Ceil normal</span><span><span class="color-swatch" style="background:#808000"></span>(0,0,-1)=olive #808000</span></div>
+      <div class="kv"><span>Wall +X red</span><span><span class="color-swatch" style="background:#FF8080"></span>(1,0,0)</span></div>
+      <div class="kv"><span>Wall -X cyan</span><span><span class="color-swatch" style="background:#00FFFF"></span>(-1,0,0)</span></div>
+      <div class="kv"><span>Wall +Y green</span><span><span class="color-swatch" style="background:#80FF80"></span>(0,1,0)</span></div>
+      <div class="kv"><span>PuddleMask</span><span>blue/pink smooth, no palette</span></div>
+      <div class="kv"><span>Depth</span><span>black near → white far</span></div>
+      <div class="kv"><span>ReflectionUV</span><span>orange gradient RG = hitUV</span></div>
+      <div class="kv"><span>SSR only</span><span>should show wall reflection, not black</span></div>
+    </div>
+    <div class="sidebar-section">
+      <h3>Playwright API (window.sandbox)</h3>
+      <div class="log" id="log">Loading...</div>
+    </div>
+  </div>
+</div>
+<script type="module" src="sandbox.js"></script>
+</body>
+</html>

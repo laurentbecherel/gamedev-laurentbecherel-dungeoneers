@@ -1,8 +1,5 @@
-// GLSL shader sources — v11 Full UBO + 2x modifier textures + main() split
-// - Array pipeline (sampler2DArray) – 12 textures + map + matMap + noise + 2*modifier = 17 units (checks max units)
-// - Modifiers: 2 textures lossless (tex1 moss/water/puddle/dust, tex2 damaged/blood) + UBO ModifiersBlock 192 bytes std140
-// - Main split into shadeFloorCell, shadeCeilCell, shadeWallCell in shader-lib/scene.glsl.js
-// - Unified chamfer, periodic noise
+// GLSL shader sources — v12 SSR GBuffer MRT
+// - Array pipeline – 16 units, modifiers 2 textures + UBO binding=1, SSR binding=2
 
 import { glslCommon } from './shader-lib/common.glsl.js';
 import { glslMaterial } from './shader-lib/material.glsl.js';
@@ -13,6 +10,7 @@ import { glslChamfer } from './shader-lib/chamfer.glsl.js';
 import { glslGridChamfer } from './shader-lib/grid-chamfer.glsl.js';
 import { glslModifiers } from './shader-lib/modifiers.glsl.js';
 import { glslScene } from './shader-lib/scene.glsl.js';
+import { glslSSR } from './shader-lib/ssr.glsl.js';
 
 export const MAX_LIGHTS = 8;
 export const MAX_CHARS = 8;
@@ -33,7 +31,8 @@ precision highp sampler2D;
 precision highp sampler2DArray;
 
 in vec2 v_uv;
-out vec4 outColor;
+layout(location=0) out vec4 outColor;
+layout(location=1) out vec4 outGBuffer;
 
 // ---- core ----
 uniform vec2  u_resolution;
@@ -195,7 +194,17 @@ uniform float u_renderCeilMul;
 uniform float u_renderWallDarken;
 uniform float u_renderEyeFactor;
 
+// ---- SSR GBuffer ----
+uniform float u_ssrDepthRange;
+
 const float PI = 3.14159265;
+
+vec2 octaEncodeGN(vec3 n){
+  n/= (abs(n.x)+abs(n.y)+abs(n.z));
+  vec2 enc=n.xy;
+  if(n.z<0.0){ enc=(1.0-abs(enc.yx))*vec2(n.x>=0.0?1.0:-1.0,n.y>=0.0?1.0:-1.0); }
+  return enc*0.5+0.5;
+}
 
 ${glslCommon}
 ${glslMaterial}
@@ -250,6 +259,7 @@ void main() {
   float fc = u_floorCount > 0.0 ? u_floorCount : 1.0;
   float cc = u_ceilCount > 0.0 ? u_ceilCount : 1.0;
   float eyeFactor = u_renderEyeFactor >= 0.0 ? u_renderEyeFactor : 0.15;
+  float gWallV_raw = 0.0; // for GBuffer correct 1/3 wall detection
 
   if (hit == 1) {
     float floorH = 0.0; float ceilH = 1.0;
@@ -261,6 +271,7 @@ void main() {
     float drawStart = u_resolution.y * 0.5 - (ceilH - eyeZ) * wallH_full;
     float drawEnd = u_resolution.y * 0.5 + (eyeZ - floorH) * wallH_full;
     float wallV_raw = (fragCoord.y - drawStart) / max(drawEnd - drawStart, 0.001);
+    gWallV_raw = wallV_raw;
 
     if (wallV_raw < 0.0 || wallV_raw > 1.0) {
       float horizon = 0.5; float vNorm = fragCoord.y / u_resolution.y;
@@ -359,6 +370,42 @@ void main() {
     }
   }
   outColor = vec4(finalColor,1.0);
+  // GBuffer: correct 1/3 floor blue (0,0,1), 1/3 wall red/green, 1/3 ceil olive
+  vec3 gNormal = vec3(0.0,0.0,1.0);
+  float gMask = 0.0;
+  if (hit == 1) {
+    if (hasCornerRound) gNormal = normalize(cornerNormal);
+    else { if (side==0) gNormal = vec3(float(-stepDir.x),0.0,0.0); else gNormal = vec3(0.0,float(-stepDir.y),0.0); }
+    float wV = gWallV_raw;
+    if (wV < 0.0) { gNormal = vec3(0.0,0.0,-1.0); }
+    else if (wV > 1.0) {
+      vec2 modUVf = (u_playerPos + ray * perpDist) / u_mapSize;
+      float puddleCellf = texture(u_modifierMap, modUVf).b;
+      vec3 worldPosf = vec3(u_playerPos + ray * perpDist, 0.0);
+      gMask = computePuddleMaskTweakable(worldPosf, 0.5, 1.0, puddleCellf);
+      gNormal = vec3(0.0,0.0,1.0);
+    }
+  } else {
+    float vNormH = fragCoord.y / u_resolution.y;
+    if (vNormH > 0.5) {
+      vec2 fw = u_playerPos + ray * perpDist;
+      vec2 modUVf2 = fw / u_mapSize;
+      float pc = texture(u_modifierMap, modUVf2).b;
+      vec3 wp2 = vec3(fw,0.0);
+      gMask = computePuddleMaskTweakable(wp2,0.5,1.0,pc);
+      gNormal = vec3(0.0,0.0,1.0);
+    } else { gNormal = vec3(0.0,0.0,-1.0); }
+  }
+  // PBR: for puddle add subtle ripple to normal so SSR shows distortion, not perfect mirror
+  if (gMask > 0.02) {
+    vec2 fw2 = u_playerPos + ray * perpDist;
+    float rippleX = sin(fw2.x * 2.7 + u_time * 0.6) * 0.08 + sin(fw2.y * 3.3 + u_time * 0.4) * 0.04;
+    float rippleY = cos(fw2.x * 2.1 + u_time * 0.5) * 0.08 + cos(fw2.y * 2.9 + u_time * 0.3) * 0.04;
+    gNormal = normalize(vec3(rippleX * gMask, rippleY * gMask, 1.0));
+  }
+  vec2 enc = octaEncodeGN(normalize(gNormal));
+  float depthNorm = clamp(perpDist / max(0.001, u_ssrDepthRange), 0.0, 1.0);
+  outGBuffer = vec4(enc.x, enc.y, depthNorm, clamp(gMask,0.0,1.0));
 }
 `;
 
@@ -622,3 +669,147 @@ void main(){
   outColor = vec4(color, albedoS.a * v_alpha);
 }
 `;
+
+// SSR
+export const vsSSR = `#version 300 es
+in vec2 a_pos;
+out vec2 v_uv;
+void main(){ v_uv = a_pos * 0.5 + 0.5; gl_Position = vec4(a_pos, 0.0, 1.0); }
+`;
+
+export const fsSSR = `#version 300 es
+precision highp float;
+in vec2 v_uv;
+uniform sampler2D u_sceneColor;
+uniform sampler2D u_gNormalDepth;
+uniform sampler2D u_blueNoise;
+uniform vec2 u_resolution;
+uniform vec2 u_playerPos;
+uniform float u_playerAngle;
+uniform float u_fov;
+uniform float u_time;
+uniform float u_ssrDepthRange;
+uniform int u_ssrEnabled;
+uniform float u_ssrMinPuddleMask;
+uniform float u_ssrNormalThreshold;
+uniform float u_ssrMaxGrazingAngle;
+uniform int u_ssrSteps;
+uniform int u_ssrBinarySteps;
+uniform float u_ssrMaxDistance;
+uniform float u_ssrThickness;
+uniform float u_ssrStride;
+uniform float u_ssrJitter;
+uniform float u_ssrDepthBias;
+uniform float u_ssrZThicknessScale;
+uniform float u_ssrMaxRayAngle;
+uniform float u_ssrEdgeFadeStart;
+uniform float u_ssrEdgeFadeEnd;
+uniform float u_ssrDistanceFadeStart;
+uniform float u_ssrDistanceFadeEnd;
+uniform float u_ssrFresnelPower;
+uniform float u_ssrFresnelMin;
+uniform float u_ssrFresnelMax;
+uniform float u_ssrBlendStrength;
+uniform int u_ssrDebugMode;
+
+${glslSSR}
+
+vec3 octaDecode(vec2 enc){
+  vec2 f = enc*2.0-1.0;
+  vec3 n = vec3(f.x,f.y,1.0-abs(f.x)-abs(f.y));
+  float t = max(0.0,-n.z);
+  n.xy += vec2(n.x>=0.0?-t:t, n.y>=0.0?-t:t);
+  return normalize(n);
+}
+out vec4 outColor;
+void main(){
+  vec4 g = texture(u_gNormalDepth, v_uv);
+  float depthNorm = g.b;
+  float puddleMask = g.a;
+  vec2 enc = g.rg;
+  vec3 N = octaDecode(enc);
+  if (u_ssrDebugMode == 1){
+    float edge = puddleMask * (1.0 - puddleMask) * 5.0;
+    vec3 inside = vec3(0.10,0.55,1.0) * puddleMask * 1.8;
+    vec3 edgeCol = vec3(1.0,0.25,0.85) * edge;
+    vec3 col = vec3(0.02,0.02,0.03) + inside + edgeCol;
+    if (puddleMask > 0.5) col = mix(col, vec3(0.20,0.75,1.0), 0.6);
+    outColor = vec4(col,1.0); return;
+  } else if (u_ssrDebugMode == 2){
+    outColor = vec4(vec3(pow(clamp(depthNorm,0.0,1.0),0.55)),1.0); return;
+  } else if (u_ssrDebugMode == 3){
+    outColor = vec4(N*0.5+0.5,1.0); return;
+  }
+  if (u_ssrEnabled == 0 || puddleMask < u_ssrMinPuddleMask){ outColor = vec4(0.0); return; }
+  if (N.z < u_ssrNormalThreshold){ outColor = vec4(0.0); return; }
+  vec2 fragCoord = vec2(v_uv.x * u_resolution.x, (1.0 - v_uv.y) * u_resolution.y);
+  float cameraX = 2.0 * fragCoord.x / u_resolution.x - 1.0;
+  float planeLen = tan(u_fov * 0.5);
+  vec2 rayDir = vec2(cos(u_playerAngle), sin(u_playerAngle));
+  vec2 plane = vec2(-rayDir.y, rayDir.x) * planeLen;
+  vec2 ray = rayDir + plane * cameraX;
+  float linearDepth = depthNorm * u_ssrDepthRange;
+  vec3 worldPos = vec3(u_playerPos + ray * linearDepth, 0.0);
+  vec3 eyePos = vec3(u_playerPos, 0.5);
+  vec3 V = normalize(eyePos - worldPos);
+  float NdotV = clamp(dot(N,V),0.0,1.0);
+  if (NdotV < (1.0 - u_ssrMaxGrazingAngle)){ outColor = vec4(0.0); return; }
+  int steps = u_ssrSteps > 0 ? u_ssrSteps : 32;
+  int binarySteps = u_ssrBinarySteps >=0 ? u_ssrBinarySteps : 4;
+  // proper world->screen projection fixes orientation weirdness you saw
+  SSRResult r = traceScreenSpaceRaySSR(v_uv, N, V, linearDepth, puddleMask, 0.04, u_sceneColor, u_gNormalDepth, u_blueNoise, u_resolution, steps, binarySteps, u_ssrMaxDistance, u_ssrThickness, u_ssrStride, u_ssrJitter, u_ssrDepthBias, u_ssrZThicknessScale, u_ssrMaxRayAngle, u_playerPos, 0.5, u_playerAngle, planeLen);
+  float edgeFade = 1.0 - smoothstep(u_ssrEdgeFadeStart, u_ssrEdgeFadeEnd, max(abs(r.hitUV.x - 0.5), abs(r.hitUV.y - 0.5)) * 2.0);
+  float distFade = 1.0 - smoothstep(u_ssrDistanceFadeStart, u_ssrDistanceFadeEnd, r.rayLength);
+  float fresnel = u_ssrFresnelMin + (u_ssrFresnelMax - u_ssrFresnelMin) * pow(1.0 - NdotV, u_ssrFresnelPower);
+  float fade = edgeFade * distFade * fresnel * r.hit * puddleMask;
+  if (u_ssrDebugMode == 4){ outColor = vec4(r.hitUV,0.0,1.0); return; }
+  else if (u_ssrDebugMode == 5){ outColor = vec4(vec3(r.hit),1.0); return; }
+  else if (u_ssrDebugMode == 6){ outColor = vec4(vec3(NdotV),1.0); return; }
+  else if (u_ssrDebugMode == 7 || u_ssrDebugMode == 8){ outColor = vec4(r.color,1.0); return; }
+  outColor = vec4(r.color, fade);
+}
+`;
+
+export const vsComposite = `#version 300 es
+in vec2 a_pos;
+out vec2 v_uv;
+void main(){ v_uv = a_pos * 0.5 + 0.5; gl_Position = vec4(a_pos, 0.0, 1.0); }
+`;
+
+export const fsComposite = `#version 300 es
+precision highp float;
+in vec2 v_uv;
+uniform sampler2D u_sceneColor;
+uniform sampler2D u_ssrColor;
+uniform sampler2D u_gNormalDepth;
+uniform vec3 u_ssrTint;
+uniform float u_ssrTintStrength;
+uniform float u_ssrBlendStrength;
+uniform float u_ssrPuddleMaskInfluence;
+uniform float u_ssrAdditiveBoost;
+uniform float u_ssrMinPuddleMask;
+uniform int u_ssrDebugMode;
+out vec4 outColor;
+void main(){
+  vec4 base = texture(u_sceneColor, v_uv);
+  vec4 refl = texture(u_ssrColor, v_uv);
+  vec4 g = texture(u_gNormalDepth, v_uv);
+  float puddleMask = g.a;
+  if (u_ssrDebugMode == 1 || u_ssrDebugMode == 2 || u_ssrDebugMode == 3 || u_ssrDebugMode == 4 || u_ssrDebugMode == 5 || u_ssrDebugMode == 6 || u_ssrDebugMode == 7 || u_ssrDebugMode == 8){
+  } else {
+    if (puddleMask < u_ssrMinPuddleMask){ outColor = base; return; }
+  }
+  float fade = refl.a;
+  fade *= mix(1.0, puddleMask, u_ssrPuddleMaskInfluence);
+  vec3 reflection = refl.rgb;
+  reflection = mix(reflection, reflection * u_ssrTint * 2.0, u_ssrTintStrength);
+  float lum = dot(reflection, vec3(0.299,0.587,0.114));
+  reflection += vec3(lum * u_ssrAdditiveBoost);
+  vec3 composite = mix(base.rgb, reflection, clamp(fade * u_ssrBlendStrength,0.0,1.0));
+  if (u_ssrDebugMode == 1 || u_ssrDebugMode == 2 || u_ssrDebugMode == 3 || u_ssrDebugMode == 4 || u_ssrDebugMode == 5 || u_ssrDebugMode == 6 || u_ssrDebugMode == 7 || u_ssrDebugMode == 8){
+    outColor = vec4(reflection,1.0); return;
+  }
+  outColor = vec4(composite, base.a);
+}
+`;
+
