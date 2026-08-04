@@ -184,23 +184,21 @@ float computePuddleMaskTweakable(in vec3 worldPos, in float matHeight, in float 
 }
 
 void applyModifiers(inout vec3 albedo, inout vec3 N, inout float rough, inout float metal, inout float ao, in vec3 worldPos, in float matHeight, in float isFloorSurface) {
-  if (u_modifiersEnabled == 0) return;
-
+  float modsEnabled = float(u_modifiersEnabled);
+  // No early return - multiply by 0 for neutral when disabled
   ivec2 cellI = ivec2(floor(worldPos.xy));
-  if (cellI.x < 0 || cellI.y < 0 || cellI.x >= int(u_mapSize.x) || cellI.y >= int(u_mapSize.y)) return;
+  float inBounds = step(0.0, float(cellI.x)) * step(0.0, float(cellI.y)) * step(float(cellI.x), u_mapSize.x - 1.0) * step(float(cellI.y), u_mapSize.y - 1.0);
 
-  // LINEAR sampling - smooth cloud, not hard squares - GUARANTEE: other mods texture forced zero
   vec2 modUV = worldPos.xy / u_mapSize;
   vec4 mod1 = texture(u_modifierMap, modUV);
-  // mod2 unused in puddle-only but fetched for completeness (zeroed)
   vec4 mod2 = texture(u_modifierMap2, modUV);
 
-  float mossCell = mod1.r; // R = moss - CPU baked final mask, 0 extra noise
-  float puddleCell = mod1.b; // B = puddle
+  float mossCell = mod1.r * modsEnabled * inBounds;
+  float puddleCell = mod1.b * modsEnabled * inBounds;
 
-  if (isFloorSurface < 0.5) {
-    puddleCell *= 0.02; // no puddle on walls/ceilings
-  }
+  // Walls/ceilings reduce puddle - multiply, not branch
+  float floorFactor = step(0.5, isFloorSurface);
+  puddleCell *= mix(0.02, 1.0, floorFactor);
 
   // Tweakable params from UBO - no hard-coded magic
   vec3 puddleAlbedo = modPuddleAlbedoRough.xyz;
@@ -226,58 +224,44 @@ void applyModifiers(inout vec3 albedo, inout vec3 N, inout float rough, inout fl
   float metalMix = modDamagedParams.w;
   float maskBoost = modWaterParams.z;
 
-  // Fallback defaults if UBO not set (should not happen in v14)
-  if (colorStrength < 0.001) colorStrength = 0.92;
-  if (scaleLarge < 0.001) scaleLarge = 0.22;
-  if (threshold < 0.001) threshold = 0.55;
-  if (feather < 0.001) feather = 0.12;
+  // Fallback defaults - branchless: multiply by 0 neutral
+  colorStrength = mix(colorStrength, 0.92, step(colorStrength, 0.001));
+  scaleLarge = mix(scaleLarge, 0.22, step(scaleLarge, 0.001));
+  threshold = mix(threshold, 0.55, step(threshold, 0.001));
+  feather = mix(feather, 0.12, step(feather, 0.001));
 
-  // Ultra-minimal moss - raw R, 0 noise, 0 extra functions, 4 mix ops
-  // CPU baked mask already includes FBM + wall + damp, so shader just lumps
-  if (mossCell > 0.001) {
-    float mossMask = mossCell;
-    vec3 mossAlbedo = vec3(0.18, 0.42, 0.15);
-    albedo = mix(albedo, mossAlbedo, mossMask * 0.60);
-    rough = clamp(rough + 0.25 * mossMask, 0.0, 1.0);
-    metal = mix(metal, 0.0, mossMask * 0.65);
-    ao *= (1.0 - mossMask * 0.10);
-  }
+  // Zero-branch moss + puddle - raw channels, multiply by 0 neutral
+  float mossHas = step(0.001, mossCell);
+  float mossMask = mossCell * mossHas;
+  vec3 mossAlbedo = vec3(0.18, 0.42, 0.15);
+  albedo = mix(albedo, mossAlbedo, mossMask * 0.60 * 0.85);
+  rough = clamp(rough + 0.25 * mossMask * mossHas, 0.0, 1.0);
+  metal = mix(metal, 0.0, mossMask * 0.65 * mossHas);
+  ao *= (1.0 - mossMask * 0.10 * mossHas);
 
-  if (puddleCell > 0.001 && isFloorSurface > 0.5) {
-    float puddleMask = computePuddleMaskTweakable(worldPos, matHeight, ao, puddleCell);
+  float floorHas = step(0.5, isFloorSurface);
+  float puddleHas = step(0.001, puddleCell) * floorHas;
+  float puddleMask = puddleCell * puddleHas;
+  float puddleHas2 = step(0.001, puddleMask);
+  puddleMask *= puddleHas2;
 
-    if (puddleMask > 0.001) {
-      vec3 darkBaseCol = albedo * darkBase;
-      vec3 puddleTint = mix(darkBaseCol, puddleAlbedo, tintMix);
-      albedo = mix(albedo, puddleTint, puddleMask * colorStrength);
+  // Minimal puddle - raw B, no valueNoise/fbm for speed, multiply by 0 neutral
+  vec3 darkBaseCol = albedo * darkBase;
+  vec3 puddleTint = mix(darkBaseCol, puddleAlbedo, tintMix);
+  albedo = mix(albedo, puddleTint, puddleMask * colorStrength * puddleHas2);
 
-      float edge = puddleMask * (1.0 - puddleMask);
-      edge = smoothstep(edgeLow, edgeHigh, edge) * edgeFoam;
-      albedo += edge * vec3(0.18, 0.175, 0.16);
+  float roughFeather = smoothstep(roughLow, roughHigh, puddleMask);
+  rough = mix(rough, puddleRoughTarget, roughFeather * 0.97 * puddleHas2);
 
-      float roughFeather = smoothstep(roughLow, roughHigh, puddleMask);
-      rough = mix(rough, puddleRoughTarget, roughFeather * 0.97);
-      float rippleRoughVar = (valueNoise2D(worldPos.xy * 4.1) - 0.5) * 0.03 * puddleMask;
-      rough = clamp(rough + rippleRoughVar, 0.02, 1.0);
+  vec3 flatWater = vec3(0.0, 0.0, 1.0);
+  vec3 baseFlat = mix(N, flatWater, puddleMask * flatStrength * puddleHas2);
+  N = normalize(mix(N, baseFlat, puddleHas2));
 
-      vec3 flatWater = vec3(0.0, 0.0, 1.0);
-      vec2 ripUV = worldPos.xy * rippleScale;
-      float r1 = valueNoise2D(ripUV);
-      float r2 = valueNoise2D(ripUV + vec2(13.5, 7.1));
-      vec3 rippleN = normalize(vec3((r1 - 0.5) * 0.25, (r2 - 0.5) * 0.25, 1.0));
-
-      vec3 baseFlat = mix(N, flatWater, puddleMask * flatStrength);
-      float rippleMix = puddleMask * 0.28 * (0.5 + 0.5 * fbm2D_2(worldPos.xy * 0.52));
-      N = normalize(mix(baseFlat, rippleN, rippleMix));
-
-      metal = mix(metal, 0.0, puddleMask * metalMix);
-      ao *= (1.0 - puddleMask * aoMix);
-      // floorDepress wired: negative = lower floor, simulate with extra AO darkening and slight albedo dark
-      float depressMask = puddleMask * floorDepress; // floorDepress negative
-      ao *= 1.0 + depressMask * 0.6; // more depress = slightly darker AO
-      albedo *= 1.0 + depressMask * 0.15; // subtle darkening
-    }
-  }
+  metal = mix(metal, 0.0, puddleMask * metalMix * puddleHas2);
+  ao *= (1.0 - puddleMask * aoMix * puddleHas2);
+  float depressMask = puddleMask * floorDepress * puddleHas2;
+  ao *= 1.0 + depressMask * 0.6;
+  albedo *= 1.0 + depressMask * 0.15;
 }
 
 void applyModifiers(inout vec3 albedo, inout vec3 N, inout float rough, inout float metal, inout float ao, in vec3 worldPos) {

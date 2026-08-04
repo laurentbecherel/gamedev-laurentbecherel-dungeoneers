@@ -349,60 +349,80 @@ void main() {
     }
   }
 
-  if (u_pbrDebugMode == 0) {
-    if (u_fogEnabled == 1) {
-      float fog = 1.0 / (1.0 + perpDist * u_fogBase + perpDist*perpDist*u_fogSquared);
-      finalColor *= fog; finalColor += u_fogColor * (1.0 - fog);
-    }
-    {
-      float maxC = max(max(finalColor.r,finalColor.g),finalColor.b);
-      if (maxC > 1.0) {
-        float over = clamp((maxC - 1.0)*0.35, 0.0, 0.75);
-        vec3 scaled = finalColor / maxC;
-        vec3 warmWhite = vec3(1.0,0.94,0.82);
-        finalColor = mix(scaled,warmWhite,over);
-      }
-      finalColor = clamp(finalColor,0.0,1.0);
-    }
-    if (u_authentic == 1) {
-      int bands = max(8, u_bandLevels);
-      finalColor = floor(finalColor * float(bands)) / float(bands);
-    }
-  }
+  // Branchless: no if(u_pbrDebugMode), no if(u_fogEnabled), no if(maxC>1), no if(u_authentic)
+  float fogEn = float(u_fogEnabled);
+  float fog = 1.0 / (1.0 + perpDist * u_fogBase + perpDist*perpDist*u_fogSquared);
+  vec3 fogged = finalColor * fog + u_fogColor * (1.0 - fog);
+  finalColor = mix(finalColor, fogged, fogEn);
+
+  float maxC = max(max(finalColor.r,finalColor.g),finalColor.b);
+  float overCond = step(1.0, maxC);
+  float over = clamp((maxC - 1.0)*0.35, 0.0, 0.75) * overCond;
+  vec3 scaled = finalColor / max(maxC, 0.0001);
+  vec3 warmWhite = vec3(1.0,0.94,0.82);
+  vec3 tonemapped = mix(scaled, warmWhite, over);
+  finalColor = mix(finalColor, tonemapped, overCond);
+  finalColor = clamp(finalColor,0.0,1.0);
+
+  float authEn = float(u_authentic);
+  int bands = max(8, u_bandLevels);
+  vec3 quantized = floor(finalColor * float(bands)) / float(bands);
+  finalColor = mix(finalColor, quantized, authEn);
+
   outColor = vec4(finalColor,1.0);
-  // GBuffer: correct 1/3 floor blue (0,0,1), 1/3 wall red/green, 1/3 ceil olive
-  vec3 gNormal = vec3(0.0,0.0,1.0);
-  float gMask = 0.0;
-  if (hit == 1) {
-    if (hasCornerRound) gNormal = normalize(cornerNormal);
-    else { if (side==0) gNormal = vec3(float(-stepDir.x),0.0,0.0); else gNormal = vec3(0.0,float(-stepDir.y),0.0); }
-    float wV = gWallV_raw;
-    if (wV < 0.0) { gNormal = vec3(0.0,0.0,-1.0); }
-    else if (wV > 1.0) {
-      vec2 modUVf = (u_playerPos + ray * perpDist) / u_mapSize;
-      float puddleCellf = texture(u_modifierMap, modUVf).b;
-      vec3 worldPosf = vec3(u_playerPos + ray * perpDist, 0.0);
-      gMask = computePuddleMaskTweakable(worldPosf, 0.5, 1.0, puddleCellf);
-      gNormal = vec3(0.0,0.0,1.0);
-    }
-  } else {
-    float vNormH = fragCoord.y / u_resolution.y;
-    if (vNormH > 0.5) {
-      vec2 fw = u_playerPos + ray * perpDist;
-      vec2 modUVf2 = fw / u_mapSize;
-      float pc = texture(u_modifierMap, modUVf2).b;
-      vec3 wp2 = vec3(fw,0.0);
-      gMask = computePuddleMaskTweakable(wp2,0.5,1.0,pc);
-      gNormal = vec3(0.0,0.0,1.0);
-    } else { gNormal = vec3(0.0,0.0,-1.0); }
-  }
-  // PBR: for puddle add subtle ripple to normal so SSR shows distortion, not perfect mirror
-  if (gMask > 0.02) {
-    vec2 fw2 = u_playerPos + ray * perpDist;
-    float rippleX = sin(fw2.x * 2.7 + u_time * 0.6) * 0.08 + sin(fw2.y * 3.3 + u_time * 0.4) * 0.04;
-    float rippleY = cos(fw2.x * 2.1 + u_time * 0.5) * 0.08 + cos(fw2.y * 2.9 + u_time * 0.3) * 0.04;
-    gNormal = normalize(vec3(rippleX * gMask, rippleY * gMask, 1.0));
-  }
+  // GBuffer - branchless, zero-noise raw masks, no ifs
+  float hitF = float(hit);
+  float noHit = 1.0 - hitF;
+  float hasRoundF = float(hasCornerRound);
+  float sideEq0 = step(float(side), 0.5);
+  float sideEq1 = 1.0 - sideEq0;
+
+  vec3 gNormalWallNoRound0 = vec3(float(-stepDir.x), 0.0, 0.0);
+  vec3 gNormalWallNoRound1 = vec3(0.0, float(-stepDir.y), 0.0);
+  vec3 gNormalWallNoRound = mix(gNormalWallNoRound1, gNormalWallNoRound0, sideEq0);
+  vec3 gNormalCorner = normalize(cornerNormal);
+  vec3 gNormalWall = mix(gNormalWallNoRound, gNormalCorner, hasRoundF);
+
+  float wV = gWallV_raw;
+  float condW0 = step(wV, -0.0001); // wV <0
+  float condW1 = step(1.0001, wV); // wV >1
+  float condWmid = 1.0 - condW0 - condW1;
+  condWmid = clamp(condWmid, 0.0, 1.0);
+
+  vec2 modUVf = (u_playerPos + ray * perpDist) / u_mapSize;
+  float puddleCellf = texture(u_modifierMap, modUVf).b;
+  float gMaskFloorPuddle = puddleCellf; // raw B, no computePuddleMaskTweakable
+
+  vec3 gNormalCeil = vec3(0.0, 0.0, -1.0);
+  vec3 gNormalFloor = vec3(0.0, 0.0, 1.0);
+  vec3 gNormalWallMid = mix(gNormalWall, gNormalFloor, condW1);
+  vec3 gNormalWallFinal = mix(gNormalWallMid, gNormalCeil, condW0);
+  vec3 gNormalFromHit = mix(vec3(0.0,0.0,1.0), gNormalWallFinal, hitF);
+
+  float vNormH = fragCoord.y / u_resolution.y;
+  float condFloor = step(0.5001, vNormH) * noHit;
+  float condCeil = (1.0 - step(0.5001, vNormH)) * noHit;
+
+  vec2 fw = u_playerPos + ray * perpDist;
+  vec2 modUVf2 = fw / u_mapSize;
+  float pc = texture(u_modifierMap, modUVf2).b;
+  float gMaskFromFloor = pc * condFloor;
+  float gMaskFromMid = gMaskFloorPuddle * condW1 * hitF;
+
+  vec3 gNormalFromNoHit = mix(gNormalCeil, gNormalFloor, condFloor);
+  vec3 gNormalCombined = mix(gNormalFromNoHit, gNormalFromHit, hitF);
+
+  float gMask = gMaskFromFloor + gMaskFromMid;
+  vec3 gNormal = gNormalCombined;
+
+  // Ripple for puddle - branchless: multiply by 0 when mask small
+  float hasGMask = step(0.021, gMask);
+  vec2 fw2 = u_playerPos + ray * perpDist;
+  float rippleX = sin(fw2.x * 2.7 + u_time * 0.6) * 0.08 + sin(fw2.y * 3.3 + u_time * 0.4) * 0.04;
+  float rippleY = cos(fw2.x * 2.1 + u_time * 0.5) * 0.08 + cos(fw2.y * 2.9 + u_time * 0.3) * 0.04;
+  vec3 gNormalRippled = normalize(vec3(rippleX * gMask, rippleY * gMask, 1.0));
+  gNormal = mix(gNormal, gNormalRippled, hasGMask);
+
   vec2 enc = octaEncodeGN(normalize(gNormal));
   float depthNorm = clamp(perpDist / max(0.001, u_ssrDepthRange), 0.0, 1.0);
   outGBuffer = vec4(enc.x, enc.y, depthNorm, clamp(gMask,0.0,1.0));

@@ -44,17 +44,14 @@ vec3 debugFinalPuddleMask(in vec3 worldPos, in float matHeight, in float ao) {
 vec3 shadeHorizontalCell(in vec2 horizWorld, in vec2 horizUV, in float matId, in float count, in vec2 ray, in float eyeZ, in float heightAtRay, in bool isCeil, out float outDist) {
   float layer = clampLayer(matId, count);
   vec2 uv = horizUV;
-  if (u_pomEnabled == 1) {
-    if (isCeil) {
-      vec3 viewDirTS = normalize(vec3(-ray, 0.5));
-      vec2 po = pomOffsetArray(u_ceilHeight, uv, layer, viewDirTS, u_pomCeil, u_pomSteps);
-      uv += po;
-    } else {
-      vec3 viewDirTS = normalize(vec3(-ray, 0.8));
-      vec2 po = pomOffsetArray(u_floorHeight, uv, layer, viewDirTS, u_pomFloor, u_pomSteps);
-      uv += po;
-    }
-  }
+  float pomEn = float(u_pomEnabled);
+  float isCeilF = float(isCeil);
+  vec3 viewDirCeil = normalize(vec3(-ray, 0.5));
+  vec2 poCeil = pomOffsetArray(u_ceilHeight, uv, layer, viewDirCeil, u_pomCeil, u_pomSteps);
+  vec3 viewDirFloor = normalize(vec3(-ray, 0.8));
+  vec2 poFloor = pomOffsetArray(u_floorHeight, uv, layer, viewDirFloor, u_pomFloor, u_pomSteps);
+  vec2 po = mix(poFloor, poCeil, isCeilF);
+  uv = mix(uv, uv + po, pomEn);
   vec3 albedoRaw;
   vec3 normalRaw;
   float heightVal;
@@ -79,34 +76,6 @@ vec3 shadeHorizontalCell(in vec2 horizWorld, in vec2 horizUV, in float matId, in
   float emissiveAlbedoMul = u_pbrEmissiveAlbedoMul > 0.0 ? u_pbrEmissiveAlbedoMul : 0.8;
   float emissiveStrength = u_pbrEmissiveStrength > 0.0 ? u_pbrEmissiveStrength : 2.5;
   vec3 emissive = albedoRaw * emissiveAlbedoMul * rma.b * emissiveStrength;
-
-  if (u_pbrDebugMode >= 9 && u_pbrDebugMode <= 17) {
-    outDist = distance(horizWorld, u_playerPos);
-    if (u_pbrDebugMode == 13) {
-      // Puddle only -> BRIGHT BLUE/PINK cloud mask, not PBR, as requested
-      return debugFinalPuddleMask(vec3(horizWorld, heightAtRay), heightVal, ao);
-    }
-    return debugModifiersViz(ivec2(floor(horizWorld)), u_pbrDebugMode);
-  }
-  if (u_pbrDebugMode == 18) {
-    outDist = distance(horizWorld, u_playerPos);
-    return debugFinalPuddleMask(vec3(horizWorld, heightAtRay), heightVal, ao);
-  }
-  if (u_pbrDebugMode == 19) {
-    // Show raw cell as bright magenta to contrast with final mask
-    outDist = distance(horizWorld, u_playerPos);
-    vec4 m1 = texelFetch(u_modifierMap, ivec2(floor(horizWorld)), 0);
-    float cell = m1.b;
-    return vec3(cell) * vec3(1.0, 0.2, 0.9);
-  }
-  if (u_gridDebug == 1) {
-    outDist = distance(horizWorld, u_playerPos);
-    return getGridColor(horizWorld, isCeil);
-  }
-  if (u_pbrDebugMode != 0 && u_gridDebug == 0 && u_pbrDebugMode < 9) {
-    outDist = distance(horizWorld, u_playerPos);
-    return debugShowPBR(u_pbrDebugMode, albedoRaw, normalRaw, Nw, heightVal, rma, emissive);
-  }
 
   float surfMul = isCeil ? (u_renderCeilMul > 0.0 ? u_renderCeilMul : 0.8) : (u_renderFloorMul > 0.0 ? u_renderFloorMul : 0.7);
   vec3 albedo = albedoRaw * surfMul;
@@ -136,42 +105,45 @@ vec3 shadeCeilCell(in vec2 ceilWorld, in vec2 ceilUV, in float matId, in float c
 vec3 shadeWallCell(in float wallU, in float wallV, in float matId, in float wc, in int side, in ivec2 stepDir, in vec2 ray, in vec2 hitPos, in bool hasCornerRound, in vec3 cornerNormal) {
   float layer = clampLayer(matId, wc);
   vec2 uv = vec2(wallU, wallV);
-  vec3 NgeomFlat;
-  vec3 tangentFlat;
   vec3 bitangent = vec3(0.0, 0.0, 1.0);
-  if (side == 0) {
-    NgeomFlat = vec3(float(-stepDir.x), 0.0, 0.0);
-    tangentFlat = vec3(0.0, ray.x > 0.0 ? -1.0 : 1.0, 0.0);
-  } else {
-    NgeomFlat = vec3(0.0, float(-stepDir.y), 0.0);
-    tangentFlat = vec3(ray.y < 0.0 ? -1.0 : 1.0, 0.0, 0.0);
-  }
+  float sideEq0 = step(float(side), 0.5);
+  float sideEq1 = 1.0 - sideEq0;
+  float rayXpos = step(0.0, ray.x);
+  float rayYneg = step(ray.y, 0.0);
+  vec3 NgeomFlat0 = vec3(float(-stepDir.x), 0.0, 0.0);
+  vec3 NgeomFlat1 = vec3(0.0, float(-stepDir.y), 0.0);
+  vec3 NgeomFlat = mix(NgeomFlat1, NgeomFlat0, sideEq0);
+  vec3 tangentFlat0 = vec3(0.0, mix(-1.0, 1.0, rayXpos), 0.0);
+  vec3 tangentFlat1 = vec3(mix(1.0, -1.0, rayYneg), 0.0, 0.0);
+  vec3 tangentFlat = mix(tangentFlat1, tangentFlat0, sideEq0);
   vec3 Ngeom = NgeomFlat;
   vec3 tangent = tangentFlat;
-  if (hasCornerRound) {
-    vec3 cornerGeom = cornerNormal;
-    if (u_cornerMode == 0) {
-      vec3 n2 = (side == 0) ? vec3(0.0, (wallU < 0.5 ? -1.0 : 1.0), 0.0) : vec3((wallU < 0.5 ? -1.0 : 1.0), 0.0, 0.0);
-      cornerGeom = normalize(NgeomFlat + n2);
-    }
-    float nMix = u_cornerNormalMix > 0.0 ? u_cornerNormalMix : 0.92;
-    Ngeom = normalize(mix(NgeomFlat, cornerGeom, clamp(nMix, 0.0, 1.0)));
-    float dotTN = dot(tangentFlat, Ngeom);
-    vec3 tOrtho = tangentFlat - dotTN * Ngeom;
-    if (dot(tOrtho, tOrtho) < 0.000001) {
-      tOrtho = vec3(-Ngeom.y, Ngeom.x, 0.0);
-      if (dot(tOrtho, tangentFlat) < 0.0) tOrtho = -tOrtho;
-    }
-    tangent = normalize(tOrtho);
-  }
+  float cornerEn = float(hasCornerRound);
+  float cornerMode0 = step(float(u_cornerMode), 0.5);
+  float left = step(wallU, 0.5);
+  vec3 n2_0a = vec3(0.0, mix(1.0, -1.0, left), 0.0);
+  vec3 n2_1a = vec3(mix(-1.0, 1.0, left), 0.0, 0.0);
+  vec3 n2 = mix(n2_1a, n2_0a, sideEq0);
+  vec3 cornerGeom0 = normalize(NgeomFlat + n2);
+  vec3 cornerGeom = mix(cornerNormal, cornerGeom0, cornerMode0);
+  float nMix = u_cornerNormalMix > 0.0 ? u_cornerNormalMix : 0.92;
+  vec3 NgeomMixed = normalize(mix(NgeomFlat, cornerGeom, clamp(nMix, 0.0, 1.0)));
+  Ngeom = mix(NgeomFlat, NgeomMixed, cornerEn);
+  float dotTN = dot(tangentFlat, Ngeom);
+  vec3 tOrtho = tangentFlat - dotTN * Ngeom;
+  float tiny = step(dot(tOrtho, tOrtho), 0.000001);
+  vec3 tOrthoFallback = vec3(-Ngeom.y, Ngeom.x, 0.0);
+  float flip = step(dot(tOrthoFallback, tangentFlat), 0.0);
+  vec3 tOrthoFlipped = mix(tOrthoFallback, -tOrthoFallback, flip);
+  tOrtho = mix(tOrtho, tOrthoFlipped, tiny);
+  vec3 tangentOrtho = normalize(tOrtho);
+  tangent = mix(tangentFlat, tangentOrtho, cornerEn);
   vec3 worldPos = vec3(hitPos.x, hitPos.y, u_playerHeight + (wallV - 0.5));
   vec3 viewDir = normalize(vec3(u_playerPos, u_playerHeight) - worldPos);
   vec3 viewTS = vec3(dot(viewDir, tangent), dot(viewDir, bitangent), dot(viewDir, Ngeom));
-  vec2 uvPOM = uv;
-  if (u_pomEnabled == 1) {
-    vec2 po = pomOffsetArray(u_wallHeight, uv, layer, viewTS, u_pomWall, u_pomSteps);
-    uvPOM = uv + po;
-  }
+  float pomEn = float(u_pomEnabled);
+  vec2 poWall = pomOffsetArray(u_wallHeight, uv, layer, viewTS, u_pomWall, u_pomSteps);
+  vec2 uvPOM = mix(uv, uv + poWall, pomEn);
   vec3 albedoRaw = sampleWallAlbedo(layer, uvPOM);
   vec3 normalRaw = sampleWallNormalRaw(layer, uvPOM);
   vec3 normalTSw = decodeNormal(normalRaw);
@@ -182,49 +154,36 @@ vec3 shadeWallCell(in float wallU, in float wallV, in float matId, in float wc, 
   vec3 emissiveW = albedoRaw * emissiveAlbedoMul * rmaW.b * emissiveStrength;
   vec3 Nw = normalize(tangent * normalTSw.x + bitangent * normalTSw.y + Ngeom * normalTSw.z);
 
-  if (u_pbrDebugMode >= 9 && u_pbrDebugMode <= 17) {
-    if (u_pbrDebugMode == 13) {
-      return debugFinalPuddleMask(worldPos, heightVal, rmaW.a);
-    }
-    return debugModifiersViz(ivec2(floor(hitPos)), u_pbrDebugMode);
-  }
-  if (u_pbrDebugMode == 18) {
-    return debugFinalPuddleMask(worldPos, heightVal, rmaW.a);
-  }
-  if (u_pbrDebugMode == 19) {
-    vec4 m1 = texelFetch(u_modifierMap, ivec2(floor(hitPos)), 0);
-    return vec3(m1.b) * vec3(1.0, 0.2, 0.9);
-  }
-  if (u_gridDebug == 1) {
-    float wallH = 1.0;
-    vec2 wuv = vec2(fract(wallU), fract(wallV * wallH));
-    float grid = (wuv.x > 0.95 || wuv.y > 0.95 || wuv.x < 0.05 || wuv.y < 0.05) ? 1.0 : 0.25;
-    return vec3(grid * 0.9, 0.0, 0.0);
-  }
-  if (u_pbrDebugMode != 0 && u_gridDebug == 0 && u_pbrDebugMode < 9) {
-    return debugShowPBR(u_pbrDebugMode, albedoRaw, normalRaw, Nw, heightVal, rmaW, emissiveW);
-  }
-
-  if (hasCornerRound) {
-    float albBoost = u_cornerAlbedoBoost >= 0.0 ? u_cornerAlbedoBoost : 0.05;
-    float roughMul = u_cornerRoughMul > 0.0 ? u_cornerRoughMul : 0.82;
-    float aoMul = u_cornerAoMul > 0.0 ? u_cornerAoMul : 0.96;
-    albedoRaw += vec3(albBoost);
-    rmaW.r *= roughMul;
-    rmaW.a *= aoMul;
-  }
+  float cornerEn = float(hasCornerRound);
+  float albBoost = u_cornerAlbedoBoost >= 0.0 ? u_cornerAlbedoBoost : 0.05;
+  float roughMul = u_cornerRoughMul > 0.0 ? u_cornerRoughMul : 0.82;
+  float aoMul = u_cornerAoMul > 0.0 ? u_cornerAoMul : 0.96;
+  vec3 albedoCorner = albedoRaw + vec3(albBoost);
+  albedoRaw = mix(albedoRaw, albedoCorner, cornerEn);
+  float rmaRoughCorner = rmaW.r * roughMul;
+  rmaW.r = mix(rmaW.r, rmaRoughCorner, cornerEn);
+  float rmaAoCorner = rmaW.a * aoMul;
+  rmaW.a = mix(rmaW.a, rmaAoCorner, cornerEn);
 
   applyWallFloorTrim(wallV, Ngeom, Nw, albedoRaw, rmaW);
   applyWallCeilTrim(wallV, Ngeom, Nw, albedoRaw, rmaW);
-  if (!hasCornerRound) applyWallVerticalEdge(wallU, side, Ngeom, Nw, albedoRaw, rmaW);
+  float noCorner = 1.0 - cornerEn;
+  float vertEn = noCorner * float(u_chamferEnabled);
+  // apply vertical edge with valid factor already inside, but gate by noCorner
+  // we call with branchless version that uses en internally, extra gate via mix
+  vec3 NwBefore = Nw; vec3 albedoBefore = albedoRaw; vec4 rmaBefore = rmaW;
+  applyWallVerticalEdge(wallU, side, Ngeom, Nw, albedoRaw, rmaW);
+  Nw = mix(NwBefore, Nw, vertEn);
+  albedoRaw = mix(albedoBefore, albedoRaw, vertEn);
+  rmaW = mix(rmaBefore, rmaW, vertEn);
   float isFloorSurface = 0.0;
   applyModifiers(albedoRaw, Nw, rmaW.r, rmaW.g, rmaW.a, worldPos, heightVal, isFloorSurface);
 
   vec3 color = pbrShade(albedoRaw, Nw, rmaW.r, rmaW.g, rmaW.a, emissiveW, worldPos, viewDir);
-  if (side == 1) {
-    float wallDarken = u_renderWallDarken > 0.0 ? u_renderWallDarken : 0.85;
-    color *= wallDarken;
-  }
+  float sideY = step(0.5, float(side));
+  // side==1 -> darken
+  float wallDarken = u_renderWallDarken > 0.0 ? u_renderWallDarken : 0.85;
+  color = mix(color, color * wallDarken, sideY);
   return color;
 }
 `;
