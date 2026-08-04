@@ -19,8 +19,11 @@ vec3 worldToScreenUVSSR(vec3 worldPos, vec2 camPos, float eyeZ, float playerAngl
   if (forwardDist < 0.06) forwardDist = 0.06;
   float cameraX = rightDist / forwardDist / max(0.0001, planeLen);
   float uvX = cameraX * 0.5 + 0.5;
+  // Match main shader: wallH_full = res.x / perpDist *0.5 / tan(fov/2), fragY = 0.5*res.y + (eyeZ - worldZ)*wallH_full
+  // v_uv = 0.5 - (eyeZ - worldZ)*(res.x/res.y)*0.5/(tan*perp) + bob/res
   float fovFactor = 1.0 / max(0.0001, planeLen);
-  float yShift = (eyeZ - worldPos.z) / forwardDist * fovFactor * 0.5;
+  float aspect = resolution.x / max(1.0, resolution.y);
+  float yShift = (eyeZ - worldPos.z) / forwardDist * fovFactor * 0.5 * aspect;
   // Base projection without bob:
   float uvY_noBob = 0.5 - yShift;
   // Main pass does: fragCoord = (1 - v_uv)*res.y + bobPixels => v_uv = uv_noBob + bobPixels/res.y

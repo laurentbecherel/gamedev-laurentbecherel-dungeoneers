@@ -39,8 +39,9 @@ export function normalize(v){
   return [v[0]/len, v[1]/len, v[2]/len];
 }
 
-// world -> screen UV for raycast camera - matches glsl worldToScreenUVSSR fixed Y sign + bob
+// world -> screen UV for raycast camera - matches glsl worldToScreenUVSSR fixed Y sign + bob + aspect
 // resolution = [w,h] or {x,y}, bobPixels same as u_bobPixels (screen-space vertical shift)
+// Matches main: v_uv = 0.5 - (eyeZ - worldZ)*(resX/resY)*0.5/(tan*perp) + bob/resY
 export function worldToScreenUV(worldPos, camPos, eyeZ, playerAngle, planeLen, resolution, bobPixels=0){
   const dx = worldPos[0] - camPos[0];
   const dy = worldPos[1] - camPos[1];
@@ -54,9 +55,11 @@ export function worldToScreenUV(worldPos, camPos, eyeZ, playerAngle, planeLen, r
   const cameraX = rightDist / forwardDist / Math.max(0.0001, planeLen);
   const uvX = cameraX*0.5 + 0.5;
   const fovFactor = 1.0 / Math.max(0.0001, planeLen);
-  const yShift = (eyeZ - worldPos[2]) / forwardDist * fovFactor * 0.5;
-  const uvY_noBob = 0.5 - yShift;
+  const resX = Array.isArray(resolution) ? resolution[0] : (resolution.x ?? resolution.width ?? 640);
   const resY = Array.isArray(resolution) ? resolution[1] : (resolution.y ?? resolution.height ?? 360);
+  const aspect = resX / Math.max(1, resY);
+  const yShift = (eyeZ - worldPos[2]) / forwardDist * fovFactor * 0.5 * aspect;
+  const uvY_noBob = 0.5 - yShift;
   const uvY = uvY_noBob + bobPixels / Math.max(1, resY);
   return { uv:[uvX, uvY], uvNoBob:[uvX, uvY_noBob], forwardDist, cameraX, rightDist };
 }
