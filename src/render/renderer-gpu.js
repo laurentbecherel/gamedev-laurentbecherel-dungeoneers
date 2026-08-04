@@ -1565,7 +1565,7 @@ export class GPURenderer {
     let ssrCfgForCheck = null;
     try {
       ssrCfgForCheck = this._cfgCache?.ssr || this._ssrCfgCache || {};
-      ssrShouldRun = (this.ssrEnabled !== 0) && (ssrCfgForCheck.enabled !== false) && !!this.ssrProgram && !!this.ssrTex && !!this.gNormalDepthTex && !!this.blueNoiseTex;
+      ssrShouldRun = (this.ssrEnabled !== 0) && (this.pbrDebugMode === 0) && (ssrCfgForCheck.enabled !== false) && !!this.ssrProgram && !!this.ssrTex && !!this.gNormalDepthTex && !!this.blueNoiseTex;
       if (ssrShouldRun) {
         const ssrCfg = ssrCfgForCheck;
         gl.bindFramebuffer(gl.FRAMEBUFFER, this.ssrFBO);
