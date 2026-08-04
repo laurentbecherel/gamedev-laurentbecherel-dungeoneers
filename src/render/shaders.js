@@ -438,20 +438,19 @@ void main(){ v_uv = a_pos * 0.5 + 0.5; gl_Position = vec4(a_pos, 0.0, 1.0); }
 `;
 
 // Debug programs - separate shaders, swapped via useProgram, no branching in main (avoids ANGLE giga)
+// Bright masks like puddle had: blue/pink for puddle, green for moss
 export const fsDebugMoss = fsSource.replace(
   'outColor = vec4(finalColor,1.0);',
   `vec3 dbgWPos = vec3(u_playerPos + ray * perpDist, 0.0);
-   vec2 dbgModUV = dbgWPos.xy / u_mapSize;
-   float mossCell = texture(u_modifierMap, dbgModUV).r;
-   outColor = vec4(vec3(mossCell), 1.0);`
+   vec3 dbgCol = debugFinalMossMask(dbgWPos, 0.5, 1.0);
+   outColor = vec4(dbgCol, 1.0);`
 );
 
 export const fsDebugPuddle = fsSource.replace(
   'outColor = vec4(finalColor,1.0);',
   `vec3 dbgWPos = vec3(u_playerPos + ray * perpDist, 0.0);
-   vec2 dbgModUV = dbgWPos.xy / u_mapSize;
-   float puddleCell = texture(u_modifierMap, dbgModUV).b;
-   outColor = vec4(vec3(puddleCell), 1.0);`
+   vec3 dbgCol = debugFinalPuddleMask(dbgWPos, 0.5, 1.0);
+   outColor = vec4(dbgCol, 1.0);`
 );
 
 export const fsDebugCombined = fsSource.replace(
@@ -461,6 +460,14 @@ export const fsDebugCombined = fsSource.replace(
    float mossCell = texture(u_modifierMap, dbgModUV).r;
    float puddleCell = texture(u_modifierMap, dbgModUV).b;
    outColor = vec4(mossCell, puddleCell, 0.0, 1.0);`
+);
+
+export const fsDebugMossRaw = fsSource.replace(
+  'outColor = vec4(finalColor,1.0);',
+  `vec3 dbgWPos = vec3(u_playerPos + ray * perpDist, 0.0);
+   vec2 dbgModUV = dbgWPos.xy / u_mapSize;
+   float mossCell = texture(u_modifierMap, dbgModUV).r;
+   outColor = vec4(vec3(mossCell), 1.0);`
 );
 
 export const fsQuantize = `#version 300 es

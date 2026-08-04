@@ -8,7 +8,7 @@
 // - Live-edit T1 instant uniforms + T2 material array rebuild + T3 regen banner
 
 import { createProgram, createProgramAsync, createTexture, createTexture2DArray, isTexture2DArraySupported, createUniformBuffer, updateUniformBuffer, bindUniformBlock, bindUniformBufferBase } from './gl-utils.js';
-import { vsSource, fsSource, vsQuantize, fsQuantize, vsUI, fsUI, MAX_LIGHTS, vsSpriteSrc, fsSpritePBRSrc, vsSSR, fsSSR, vsComposite, fsComposite, fsDebugMoss, fsDebugPuddle, fsDebugCombined } from './shaders.js';
+import { vsSource, fsSource, vsQuantize, fsQuantize, vsUI, fsUI, MAX_LIGHTS, vsSpriteSrc, fsSpritePBRSrc, vsSSR, fsSSR, vsComposite, fsComposite, fsDebugMoss, fsDebugPuddle, fsDebugCombined, fsDebugMossRaw } from './shaders.js';
 import { uploadMapTexture, updateMapTexture } from './map-upload.js';
 import { generateMaterialArrayData, generateMaterialAtlases } from '../world/materials.js';
 import { getAsset } from '../config/config.js';

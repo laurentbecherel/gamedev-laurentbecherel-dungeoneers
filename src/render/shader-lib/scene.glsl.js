@@ -29,15 +29,29 @@ vec3 debugFinalPuddleMask(in vec3 worldPos, in float matHeight, in float ao) {
   vec4 mod1 = texture(u_modifierMap, modUV);
   float puddleCell = mod1.b;
   float mask = computePuddleMaskTweakable(worldPos, matHeight, ao, puddleCell);
-  // BIG COLOR: bright cyan for water, magenta for edge, high contrast vs black
-  // Use intense colors that survive doom palette quantization
   float edge = mask * (1.0 - mask) * 5.0;
-  vec3 inside = vec3(0.10, 0.55, 1.0) * mask * 1.8; // BRIGHT BLUE
-  vec3 edgeCol = vec3(1.0, 0.25, 0.85) * edge; // BRIGHT PINK/MAGENTA edge
-  vec3 bg = vec3(0.02, 0.02, 0.03); // near black background
+  vec3 inside = vec3(0.10, 0.55, 1.0) * mask * 1.8;
+  vec3 edgeCol = vec3(1.0, 0.25, 0.85) * edge;
+  vec3 bg = vec3(0.02, 0.02, 0.03);
   vec3 col = bg + inside + edgeCol;
-  // Add solid fill for high mask so it's BIG COLOR
-  if (mask > 0.5) col = mix(col, vec3(0.20, 0.75, 1.0), 0.6); // even brighter inside puddle
+  float high = step(0.5, mask);
+  col = mix(col, vec3(0.20, 0.75, 1.0), high * 0.6);
+  return clamp(col, 0.0, 1.0);
+}
+
+vec3 debugFinalMossMask(in vec3 worldPos, in float matHeight, in float ao) {
+  vec2 modUV = worldPos.xy / u_mapSize;
+  vec4 mod1 = texture(u_modifierMap, modUV);
+  float mossCell = mod1.r;
+  // For fast debug, use raw cell as mask (CPU baked already), no extra FBM
+  float mask = mossCell;
+  float edge = mask * (1.0 - mask) * 4.0;
+  vec3 inside = vec3(0.18, 0.68, 0.18) * mask * 1.6; // BRIGHT GREEN
+  vec3 edgeCol = vec3(0.35, 1.0, 0.35) * edge * 0.9; // lighter green edge
+  vec3 bg = vec3(0.02, 0.02, 0.03);
+  vec3 col = bg + inside + edgeCol;
+  float high = step(0.5, mask);
+  col = mix(col, vec3(0.22, 0.85, 0.22), high * 0.55);
   return clamp(col, 0.0, 1.0);
 }
 
