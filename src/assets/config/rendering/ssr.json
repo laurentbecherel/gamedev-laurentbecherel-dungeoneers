@@ -15,9 +15,9 @@
     "note": "Only floor where puddle mask > min gets SSR"
   },
   "rayMarch": {
-    "steps": 20,
+    "steps": 48,
     "binarySteps": 6,
-    "maxDistance": 24,
+    "maxDistance": 12,
     "thickness": 2,
     "stride": 1.08,
     "jitter": 0.02,
@@ -45,7 +45,7 @@
     "fresnelPower": 2.2,
     "fresnelMin": 0.25,
     "fresnelMax": 1,
-    "blendStrength": 10,
+    "blendStrength": 4,
     "puddleMaskInfluence": 0.7,
     "roughnessFade": false,
     "selfAlphaFade": 0,
