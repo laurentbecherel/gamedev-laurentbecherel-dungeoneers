@@ -132,16 +132,16 @@ SSRResult traceScreenSpaceRaySSR(in vec2 startUV, in vec3 N, in vec3 V, in float
   }
 
   if (res.hit < 0.5 && puddleMask > 0.02) {
-    // fallback with proper projection - sample forward wall
+    // fallback with proper projection - sample forward wall, but DO NOT clamp (clamping causes stretched columns)
     vec3 fallbackW = worldPos + R * (maxDistance * 0.5);
     float fDist;
     vec3 fProj = worldToScreenUVSSR(fallbackW, camPos, eyeZ, playerAngle, planeLen, resolution, bobPixels, fDist);
-    vec2 fUV = clamp(fProj.xy, 0.0, 1.0);
-    // Fallback: any non-floor hit (wall or ceil) is ok, clamp uv, no Y threshold – normal does the work
-    {
+    vec2 fUV = fProj.xy;
+    // Only accept if inside screen, otherwise leave as miss (avoids edge-column stretch)
+    if (fUV.x >= 0.0 && fUV.x <= 1.0 && fUV.y >= 0.0 && fUV.y <= 1.0) {
       vec4 fG = texture(gNormalDepthTex, fUV);
       vec3 fN = octaDecodeSSR(fG.rg);
-      if (fG.b > 0.001 && fN.z <= 0.60) { // not floor
+      if (fG.b > 0.001 && fN.z <= 0.60) { // not floor, wall or ceiling
         res.color = texture(sceneTex, fUV).rgb * 0.7;
         res.hit = 0.5;
         res.hitUV = fUV;
