@@ -8,7 +8,7 @@
 // - Live-edit T1 instant uniforms + T2 material array rebuild + T3 regen banner
 
 import { createProgram, createProgramAsync, createTexture, createTexture2DArray, isTexture2DArraySupported, createUniformBuffer, updateUniformBuffer, bindUniformBlock, bindUniformBufferBase } from './gl-utils.js';
-import { vsSource, fsSource, vsQuantize, fsQuantize, vsUI, fsUI, MAX_LIGHTS, vsSpriteSrc, fsSpritePBRSrc, vsSSR, fsSSR, vsComposite, fsComposite } from './shaders.js';
+import { vsSource, fsSource, vsQuantize, fsQuantize, vsUI, fsUI, MAX_LIGHTS, vsSpriteSrc, fsSpritePBRSrc, vsSSR, fsSSR, vsComposite, fsComposite, fsDebugMoss, fsDebugPuddle, fsDebugCombined } from './shaders.js';
 import { uploadMapTexture, updateMapTexture } from './map-upload.js';
 import { generateMaterialArrayData, generateMaterialAtlases } from '../world/materials.js';
 import { getAsset } from '../config/config.js';
@@ -102,13 +102,16 @@ export class GPURenderer {
     const compileAsync = (vs, fs) => {
       try { return createProgramAsync(gl, vs, fs).catch(()=>null); } catch { return Promise.resolve(null); }
     };
-    // Start all in parallel
-    const [pMain, pQuant, pUI, pSSR, pComp] = await Promise.all([
+    // Start all in parallel - main now has NO debug branching (fast), debug are separate programs
+    const [pMain, pQuant, pUI, pSSR, pComp, pDbgMoss, pDbgPuddle, pDbgCombined] = await Promise.all([
       compileAsync(vsSource, fsSource),
       compileAsync(vsQuantize, fsQuantize),
       compileAsync(vsUI, fsUI),
       compileAsync(vsSSR, fsSSR),
-      compileAsync(vsComposite, fsComposite)
+      compileAsync(vsComposite, fsComposite),
+      compileAsync(vsSource, fsDebugMoss),
+      compileAsync(vsSource, fsDebugPuddle),
+      compileAsync(vsSource, fsDebugCombined)
     ]);
     this.program = pMain || createProgram(gl, vsSource, fsSource);
     if (!this.program) throw new Error('Shader compile failed raycast');
@@ -120,6 +123,15 @@ export class GPURenderer {
     if (!this.ssrProgram) console.warn('SSR compile failed');
     this.compositeProgram = pComp || createProgram(gl, vsComposite, fsComposite);
     if (!this.compositeProgram) console.warn('Composite compile failed');
+    // Debug programs - swapped via useProgram, not uniform branching (avoids ANGLE giga)
+    this.debugMossProgram = pDbgMoss || createProgram(gl, vsSource, fsDebugMoss);
+    this.debugPuddleProgram = pDbgPuddle || createProgram(gl, vsSource, fsDebugPuddle);
+    this.debugCombinedProgram = pDbgCombined || createProgram(gl, vsSource, fsDebugCombined);
+    if (!this.debugMossProgram) console.warn('Debug moss compile failed');
+    // Cache UL for debug programs (reuse same uniform layout)
+    this.uLocDebugMoss = null;
+    this.uLocDebugPuddle = null;
+    this.uLocDebugCombined = null;
 
     this.vao = gl.createVertexArray();
     gl.bindVertexArray(this.vao);
@@ -436,6 +448,59 @@ export class GPURenderer {
       ul.u_lightPhase.push(gl.getUniformLocation(p, `u_lightPhase[${i}]`));
     }
 
+    // Helper to cache raycast uniforms for any program (main or debug)
+    const cacheRaycastUniforms = (gl, prog) => {
+      const u = {};
+      const ns = [
+        'u_resolution','u_playerPos','u_playerAngle','u_fov','u_playerHeight','u_mapTex','u_matMap','u_mapSize',
+        'u_wallAlbedo','u_wallNormal','u_wallHeight','u_wallRoughMetal',
+        'u_floorAlbedo','u_floorNormal','u_floorHeight','u_floorRoughMetal',
+        'u_ceilAlbedo','u_ceilNormal','u_ceilHeight','u_ceilRoughMetal',
+        'u_ambientColor','u_ambientLevel','u_worldAmbientMul',
+        'u_sunDir','u_sunDirZ','u_sunIntensity','u_sunColor',
+        'u_fogBase','u_fogSquared','u_fogColor','u_fogEnabled',
+        'u_pomWall','u_pomFloor','u_pomCeil','u_pomSteps','u_pomMaxOffset','u_pomMinVz','u_pomMinEffVz','u_pomFadeStart','u_pomFadeEnd',
+        'u_authentic','u_bandLevels','u_time',
+        'u_gridDebug','u_lightingEnabled','u_pbrEnabled','u_pomEnabled','u_pbrDebugMode',
+        'u_aoSun','u_aoPoint','u_aoAmbient',
+        'u_chamferEnabled','u_chamferFloorSize','u_chamferCeilSize','u_chamferWallSize','u_chamferCornerRadius','u_chamferDarken','u_chamferRoundCorners','u_chamferBlendFloor','u_chamferBlendWall','u_chamferRough','u_chamferFloor','u_chamferCeil','u_chamferWall',
+        'u_chamferTrimFloor','u_chamferTrimCeil','u_chamferTrimWall','u_chamferTrimFloorAlt','u_chamferTrimCeilAlt','u_chamferCreviceEnd','u_chamferCreviceSmoothEnd','u_chamferTrimStart','u_chamferTrimMid','u_chamferTrimEnd',
+        'u_chamferGridEnabled','u_chamferGridFloorSize','u_chamferGridCeilSize','u_chamferGridFloorDarken','u_chamferGridCeilDarken','u_chamferGridFloorTrim','u_chamferGridCeilTrim','u_chamferGridFloorRough','u_chamferGridCeilRough','u_chamferGridFloorBlend','u_chamferGridCeilBlend','u_chamferGridCreviceEnd','u_chamferGridCreviceSmoothEnd','u_chamferGridTrimStart','u_chamferGridTrimMid','u_chamferGridTrimEnd',
+        'u_cornerEnabled','u_cornerRadius','u_cornerMode','u_cornerInner',
+        'u_cornerBandNear','u_cornerBandFarExtra','u_cornerBandFarFactor','u_cornerSectorThresh','u_cornerNormalMix','u_cornerAlbedoBoost','u_cornerRoughMul','u_cornerAoMul',
+        'u_shadowBiasN','u_shadowBiasDir','u_shadowSunFactor','u_shadowPointFactor','u_shadowSunMax','u_shadowPointEps','u_shadowNormalThresh',
+        'u_pbrEmissiveAlbedoMul','u_pbrEmissiveStrength','u_pbrF0','u_pbrAttenQuad','u_pbrGGXEps',
+        'u_renderFloorMul','u_renderCeilMul','u_renderWallDarken','u_renderEyeFactor',
+        'u_bobPixels',
+        'u_numLights',
+        'u_wallCount','u_floorCount','u_ceilCount',
+        'u_modifierMap','u_modifierMap2','u_modifiersEnabled',
+        'u_ssrDepthRange',
+      ];
+      ns.forEach(n => u[n] = gl.getUniformLocation(prog, n));
+      u.u_lightPos = []; u.u_lightColor = []; u.u_lightIntensity = []; u.u_lightRadius = [];
+      u.u_lightType = []; u.u_lightDir = []; u.u_lightConeInner = []; u.u_lightConeOuter = [];
+      u.u_lightPulseSpeed = []; u.u_lightPulseAmt = []; u.u_lightNoShadow = [];
+      u.u_lightFlickerSpeed = []; u.u_lightFlickerAmount = []; u.u_lightPhase = [];
+      for (let i=0;i<8;i++){
+        u.u_lightPos.push(gl.getUniformLocation(prog, `u_lightPos[${i}]`));
+        u.u_lightColor.push(gl.getUniformLocation(prog, `u_lightColor[${i}]`));
+        u.u_lightIntensity.push(gl.getUniformLocation(prog, `u_lightIntensity[${i}]`));
+        u.u_lightRadius.push(gl.getUniformLocation(prog, `u_lightRadius[${i}]`));
+        u.u_lightType.push(gl.getUniformLocation(prog, `u_lightType[${i}]`));
+        u.u_lightDir.push(gl.getUniformLocation(prog, `u_lightDir[${i}]`));
+        u.u_lightConeInner.push(gl.getUniformLocation(prog, `u_lightConeInner[${i}]`));
+        u.u_lightConeOuter.push(gl.getUniformLocation(prog, `u_lightConeOuter[${i}]`));
+        u.u_lightPulseSpeed.push(gl.getUniformLocation(prog, `u_lightPulseSpeed[${i}]`));
+        u.u_lightPulseAmt.push(gl.getUniformLocation(prog, `u_lightPulseAmt[${i}]`));
+        u.u_lightNoShadow.push(gl.getUniformLocation(prog, `u_lightNoShadow[${i}]`));
+        u.u_lightFlickerSpeed.push(gl.getUniformLocation(prog, `u_lightFlickerSpeed[${i}]`));
+        u.u_lightFlickerAmount.push(gl.getUniformLocation(prog, `u_lightFlickerAmount[${i}]`));
+        u.u_lightPhase.push(gl.getUniformLocation(prog, `u_lightPhase[${i}]`));
+      }
+      return u;
+    };
+
     gl.useProgram(this.quantProgram);
     this.uQuant.scene = gl.getUniformLocation(this.quantProgram, 'u_scene');
     this.uQuant.palette = gl.getUniformLocation(this.quantProgram, 'u_palette');
@@ -458,10 +523,33 @@ export class GPURenderer {
       u_wallAlbedo:1,u_wallNormal:2,u_wallHeight:3,u_wallRoughMetal:4,
       u_floorAlbedo:5,u_floorNormal:6,u_floorHeight:7,u_floorRoughMetal:8,
       u_ceilAlbedo:9,u_ceilNormal:10,u_ceilHeight:11,u_ceilRoughMetal:12,
-      u_modifierMap:14, u_modifierMap2:15 // noiseTex optional legacy, procedural now frees unit
+      u_modifierMap:14, u_modifierMap2:15
     };
-    // u_noiseTex kept at 13? Actually matMap is 13, so 14-15 for modifiers = 16 units total (0-15)
     Object.entries(arrayUnits).forEach(([name, unit]) => { if (ul[name]) gl.uniform1i(ul[name], unit); });
+
+    // Cache debug programs uniforms as well (separate, no branching)
+    if (this.debugMossProgram) {
+      gl.useProgram(this.debugMossProgram);
+      this.uLocDebugMoss = cacheRaycastUniforms(gl, this.debugMossProgram);
+      Object.entries(arrayUnits).forEach(([name, unit]) => { if (this.uLocDebugMoss[name]) gl.uniform1i(this.uLocDebugMoss[name], unit); });
+      gl.uniform1i(this.uLocDebugMoss.u_mapTex, 0);
+      if (this.uLocDebugMoss.u_matMap) gl.uniform1i(this.uLocDebugMoss.u_matMap, 13);
+    }
+    if (this.debugPuddleProgram) {
+      gl.useProgram(this.debugPuddleProgram);
+      this.uLocDebugPuddle = cacheRaycastUniforms(gl, this.debugPuddleProgram);
+      Object.entries(arrayUnits).forEach(([name, unit]) => { if (this.uLocDebugPuddle[name]) gl.uniform1i(this.uLocDebugPuddle[name], unit); });
+      gl.uniform1i(this.uLocDebugPuddle.u_mapTex, 0);
+      if (this.uLocDebugPuddle.u_matMap) gl.uniform1i(this.uLocDebugPuddle.u_matMap, 13);
+    }
+    if (this.debugCombinedProgram) {
+      gl.useProgram(this.debugCombinedProgram);
+      this.uLocDebugCombined = cacheRaycastUniforms(gl, this.debugCombinedProgram);
+      Object.entries(arrayUnits).forEach(([name, unit]) => { if (this.uLocDebugCombined[name]) gl.uniform1i(this.uLocDebugCombined[name], unit); });
+      gl.uniform1i(this.uLocDebugCombined.u_mapTex, 0);
+      if (this.uLocDebugCombined.u_matMap) gl.uniform1i(this.uLocDebugCombined.u_matMap, 13);
+    }
+    gl.useProgram(this.program);
 
     // Full UBO for modifiers – binding point 1 (192 bytes = 12 vec4)
     try {
@@ -688,7 +776,7 @@ export class GPURenderer {
   setFogEnabled(v) { this.fogEnabled = v ? 1 : 0; }
   setChamferEnabled(v) { this.chamferEnabled = v ? 1 : 0; }
   setCornerEnabled(v) { this.cornerEnabled = v ? 1 : 0; }
-  setPBRDebugMode(v) { this.pbrDebugMode = Math.max(0, Math.min(17, v | 0)); }
+  setPBRDebugMode(v) { this.pbrDebugMode = Math.max(0, Math.min(3, v | 0)); }
   setModifiersEnabled(v){ this.modifiersEnabled = v?1:0; }
   setSSREnabled(v){ this.ssrEnabled = v?1:0; }
   setSSRDebugMode(v){ this.ssrDebugMode = Math.max(0, Math.min(8, v|0)); }
@@ -746,7 +834,8 @@ export class GPURenderer {
     } catch (e) { console.warn('[toggleModifiers] regen failed', e); }
     return this.modifiersEnabled; 
   }
-  cyclePBRDebug() { this.pbrDebugMode = (this.pbrDebugMode + 1) % 18; return this.pbrDebugMode; }
+  // Cycle 0=main,1=moss raw,2=puddle raw,3=combined - swapped programs, no branching
+  cyclePBRDebug() { this.pbrDebugMode = (this.pbrDebugMode + 1) % 4; return this.pbrDebugMode; }
 
   updateConfig(partial) {
     if (!partial) return;
@@ -953,9 +1042,15 @@ export class GPURenderer {
     gl.viewport(0, 0, this.canvas.width, this.canvas.height);
     gl.clearColor(0, 0, 0, 1);
     if (isGBuffer) { try { gl.clearBufferfv(gl.COLOR, 0, [0,0,0,1]); gl.clearBufferfv(gl.COLOR, 1, [0.5,0.5,0,0]); } catch { gl.clear(gl.COLOR_BUFFER_BIT); } } else { gl.clear(gl.COLOR_BUFFER_BIT); }
-    gl.useProgram(this.program);
+    // Swap shaders for debug - separate programs, no branching in main (avoids ANGLE giga)
+    let curProg = this.program;
+    let curULoc = this.uLoc;
+    if (this.pbrDebugMode === 1 && this.debugMossProgram) { curProg = this.debugMossProgram; curULoc = this.uLocDebugMoss || this.uLoc; }
+    else if (this.pbrDebugMode === 2 && this.debugPuddleProgram) { curProg = this.debugPuddleProgram; curULoc = this.uLocDebugPuddle || this.uLoc; }
+    else if (this.pbrDebugMode === 3 && this.debugCombinedProgram) { curProg = this.debugCombinedProgram; curULoc = this.uLocDebugCombined || this.uLoc; }
+    gl.useProgram(curProg);
     gl.bindVertexArray(this.vao);
-    const ul = this.uLoc;
+    const ul = curULoc;
 
     const rawPos = player.getPosition();
     let camX = rawPos.x;
