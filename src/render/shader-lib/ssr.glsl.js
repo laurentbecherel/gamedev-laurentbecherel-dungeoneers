@@ -82,10 +82,8 @@ SSRResult traceScreenSpaceRaySSR(in vec2 startUV, in vec3 N, in vec3 V, in float
     vec3 sampledN = octaDecodeSSR(gSmpl.rg);
     // floor N = (0,0,1) => z~1, ceil N = (0,0,-1) => z~-1, wall N z~0
     // Reject floor re-hit only – keep walls and ceiling for reflection
+    // NOTE: rely on normal only, not uv.y, otherwise low forward wall (uv~0.45) gets rejected causing grey fallback band
     if (sampledN.z > 0.60) { tRay += tStep; tStep *= stride; continue; }
-    // Also reject if projection still in floor half (below horizon) to avoid floor showing
-    // We allow slightly below 0.5 for low wall, but not deep floor
-    if (uv.y < 0.48) { tRay += tStep; tStep *= stride; continue; }
     float sampledLin = sampledDepthNorm * maxDistance; // assume depthRange ~ maxDistance for thickness test simplification
     // Actually use proper depthRange via uniform? We'll approximate with maxDistance
     float depthDiff = fwDist - sampledLin;
@@ -118,8 +116,8 @@ SSRResult traceScreenSpaceRaySSR(in vec2 startUV, in vec3 N, in vec3 V, in float
       vec3 finalProj = worldToScreenUVSSR(finalW, camPos, eyeZ, playerAngle, planeLen, resolution, bobPixels, finalFd);
       vec4 finalG = texture(gNormalDepthTex, finalProj.xy);
       vec3 finalN = octaDecodeSSR(finalG.rg);
-      // Final must not be floor (allow wall + ceiling)
-      if (finalG.b > 0.001 && finalN.z <= 0.60 && finalProj.xy.y > 0.40) {
+      // Final must not be floor (allow wall + ceiling), no uv.y threshold – rely on normal
+      if (finalG.b > 0.001 && finalN.z <= 0.60) {
         res.hitUV = finalProj.xy;
         res.color = texture(sceneTex, finalProj.xy).rgb;
         res.rayLength = highT;
@@ -139,8 +137,8 @@ SSRResult traceScreenSpaceRaySSR(in vec2 startUV, in vec3 N, in vec3 V, in float
     float fDist;
     vec3 fProj = worldToScreenUVSSR(fallbackW, camPos, eyeZ, playerAngle, planeLen, resolution, bobPixels, fDist);
     vec2 fUV = clamp(fProj.xy, 0.0, 1.0);
-    // only if fUV is in upper half (walls), not floor again, and normal is wall
-    if (fUV.y > 0.40) { // allow walls + ceiling
+    // Fallback: any non-floor hit (wall or ceil) is ok, clamp uv, no Y threshold – normal does the work
+    {
       vec4 fG = texture(gNormalDepthTex, fUV);
       vec3 fN = octaDecodeSSR(fG.rg);
       if (fG.b > 0.001 && fN.z <= 0.60) { // not floor
