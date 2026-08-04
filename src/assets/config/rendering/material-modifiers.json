@@ -123,7 +123,7 @@
         "desc": "Tunable noise factor - natural organic patches"
       },
       "env": {
-        "floorBase": 0.02,
+        "floorBase": 0.01,
         "wallBase": 0.02,
         "wallEdgeBase": 0.32,
         "cornerBonus": 0.75,
@@ -132,12 +132,12 @@
         "ceilReduce": 1,
         "seamBoost": 0.71,
         "desc": "Environment/nearwall factor - corners, floor-wall seams, wall bases, room biome filtering",
-        "wallDistInner": 0.3,
-        "wallDistOuter": 1,
-        "floorDistInner": 0.46,
-        "floorDistOuter": 0.95,
-        "featherInner": 0.2,
-        "featherOuter": 0.8
+        "wallDistInner": 0.39,
+        "wallDistOuter": 0.88,
+        "floorDistInner": 0.67,
+        "floorDistOuter": 0.9,
+        "featherInner": 0.1,
+        "featherOuter": 0.3
       },
       "material": {
         "heightLow": 0,
