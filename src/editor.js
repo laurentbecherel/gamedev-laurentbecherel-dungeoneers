@@ -377,14 +377,14 @@ function genPaletteForPreview(style, data) {
     // NEW: 2 accent ramps (brown + green) + desaturated regulars + grayscale
     let accentRamps = data?.accentRamps;
     if (!accentRamps) {
-      const bSrc = data?.brownRamp || { from:[28,18,12], to:[225,175,120], count:32 };
-      const gSrc = data?.greenRamp || { from:[18,42,24], to:[155,200,145], count:32 };
+      const bSrc = data?.brownRamp || { from:[80,40,20], to:[200,100,50], count:48 };
+      const gSrc = data?.greenRamp || { from:[18,48,26], to:[125,185,105], count:32 };
       accentRamps = [
-        { id:'brown', from: bSrc.from||bSrc.start||[28,18,12], to: bSrc.to||bSrc.end||[225,175,120], count: bSrc.count??32 },
-        { id:'green', from: gSrc.from||gSrc.start||[18,42,24], to: gSrc.to||gSrc.end||[155,200,145], count: gSrc.count??32 }
+        { id:'brown', from: bSrc.from||bSrc.start||[80,40,20], to: bSrc.to||bSrc.end||[200,100,50], count: bSrc.count??48 },
+        { id:'green', from: gSrc.from||gSrc.start||[18,48,26], to: gSrc.to||gSrc.end||[125,185,105], count: gSrc.count??32 }
       ];
     }
-    const regularCfg = data?.regularColors || { count:128, saturation:0.42 };
+    const regularCfg = data?.regularColors || { count:112, saturation:0.42 };
     const grayCfg = data?.grayscale || { count:64, from:0, to:255, gamma:1 };
     let regularCount = regularCfg.count ?? 128;
     let grayCount = (data?.grayscale?.count ?? 64);
@@ -543,27 +543,27 @@ function buildPaletteEditor() {
   const sidePreviews = document.createElement('div');
   sidePreviews.className = 'palette-side-previews';
   sidePreviews.innerHTML = `
-    <div class="mini-preview"><div class="mini-title">Banding Gradient (simulated) — accent ramps show banding best</div><canvas id="banding-canvas" width="256" height="48" class="mini-canvas"></canvas><div class="field-hint">Top = smooth, Bottom = banded with current bandLevels (authentic)</div></div>
+    <div class="mini-preview"><div class="mini-title">Banding Gradient (simulated) — accent ramps show banding best</div><canvas id="banding-canvas" width="256" height="48" class="mini-canvas"></canvas><div class="field-hint">Top = smooth 48 brown + 32 green, Bottom = banded with current bandLevels (authentic)</div></div>
     <div class="mini-preview"><div class="mini-title">Light Levels / Colormap (×32 darkening)</div><canvas id="colormap-canvas" width="256" height="160" class="mini-canvas"></canvas><div class="field-hint">Each row is a light level darkening factor</div></div>
-    <div class="mini-preview"><div class="mini-title">Accent Ramps — brown + natural green (doom) — tweak below</div><canvas id="ramp-canvas" width="256" height="36" class="mini-canvas"></canvas><canvas id="ramp-canvas-green" width="256" height="36" class="mini-canvas" style="margin-top:6px"></canvas></div>
-    <div class="mini-preview"><div class="mini-title">Regular desaturated + grayscale sections</div><canvas id="regular-canvas" width="256" height="36" class="mini-canvas"></canvas><canvas id="gray-canvas" width="256" height="36" class="mini-canvas" style="margin-top:6px"></canvas><div class="field-hint">128 desaturated regulars + 64 gray gradient</div></div>
+    <div class="mini-preview"><div class="mini-title">Accent Ramps — 48 Doom brown (saturated) + natural green — tweak below</div><canvas id="ramp-canvas" width="256" height="36" class="mini-canvas"></canvas><canvas id="ramp-canvas-green" width="256" height="36" class="mini-canvas" style="margin-top:6px"></canvas></div>
+    <div class="mini-preview"><div class="mini-title">Regular desaturated + grayscale sections</div><canvas id="regular-canvas" width="256" height="36" class="mini-canvas"></canvas><canvas id="gray-canvas" width="256" height="36" class="mini-canvas" style="margin-top:6px"></canvas><div class="field-hint">112 desaturated regulars (not too saturated) + 64 gray gradient</div></div>
   `;
   previewTop.appendChild(sidePreviews);
 
-  // === Accent Ramps tweak section — 2 configurable colours ===
+  // === Accent Ramps tweak section — 2 configurable colours, keeping classic 48 brown ===
   const rampTweak = document.createElement('div');
   rampTweak.className = 'palette-tweak-section';
-  rampTweak.innerHTML = `<div class="palette-section-title"><i class="ph ph-sliders"></i> Tweak Palette — 2 Accent Colours (configurable per arch later, brown + natural green for now) + regular desat + gray</div>
-    <div class="field-hint">New layout: 32 brown + 32 green accent ramps with good gradients/banding, 128 desaturated regulars, 64 grayscale. Accent ramps can be overridden per level/architecture later; editor exposes them here.</div>`;
+  rampTweak.innerHTML = `<div class="palette-section-title"><i class="ph ph-sliders"></i> Tweak Palette — 2 Accents (48 Doom saturated brown/orange + natural green) + desat regulars + gray</div>
+    <div class="field-hint">New layout: 48 saturated brown/orange (classic Doom) + 32 natural green with good gradients/banding, 112 desaturated regulars, 64 grayscale. Accents configurable per arch/level later.</div>`;
 
   const ensureData = () => {
     if (!currentData.accentRamps) currentData.accentRamps = [
-      { id:'brown', from:[28,18,12], to:[225,175,120], count:32 },
-      { id:'green', from:[18,42,24], to:[155,200,145], count:32 }
+      { id:'brown', from:[80,40,20], to:[200,100,50], count:48 },
+      { id:'green', from:[18,48,26], to:[125,185,105], count:32 }
     ];
     if (!currentData.brownRamp) currentData.brownRamp = { from: currentData.accentRamps[0].from, to: currentData.accentRamps[0].to, count: currentData.accentRamps[0].count };
     if (!currentData.greenRamp) currentData.greenRamp = { from: currentData.accentRamps[1].from, to: currentData.accentRamps[1].to, count: currentData.accentRamps[1].count };
-    if (!currentData.regularColors) currentData.regularColors = { count:128, saturation:0.42, saturationVar:0.18, lightnessMin:0.32, lightnessMax:0.84 };
+    if (!currentData.regularColors) currentData.regularColors = { count:112, saturation:0.42, saturationVar:0.18, lightnessMin:0.32, lightnessMax:0.84 };
     if (!currentData.grayscale) currentData.grayscale = { count:64, from:0, to:255, gamma:1 };
   };
   ensureData();
@@ -598,12 +598,12 @@ function buildPaletteEditor() {
     }
   };
 
-  // Brown accent
+  // Brown accent – keep classic 48 saturated doom
   const brownSection = document.createElement('div'); brownSection.style.marginBottom='16px';
-  brownSection.innerHTML = `<div class="field-label" style="color:var(--accent)">Accent 1 — Brown (Doom Brown) — ${currentData.accentRamps[0].count} entries</div>`;
+  brownSection.innerHTML = `<div class="field-label" style="color:var(--accent)">Accent 1 — Brown (Doom 48 saturated orange/brown) — ${currentData.accentRamps[0].count} entries</div>`;
   const brownRow = document.createElement('div'); brownRow.className='palette-ramp-row';
-  brownRow.appendChild(makeColorFieldGeneric('Brown From (dark)', 'brownRamp.from', [28,18,12], ()=>syncAccentFromLegacy(0)));
-  brownRow.appendChild(makeColorFieldGeneric('Brown To (light)', 'brownRamp.to', [225,175,120], ()=>syncAccentFromLegacy(0)));
+  brownRow.appendChild(makeColorFieldGeneric('Brown From (dark, sat)', 'brownRamp.from', [80,40,20], ()=>syncAccentFromLegacy(0)));
+  brownRow.appendChild(makeColorFieldGeneric('Brown To (light orange)', 'brownRamp.to', [200,100,50], ()=>syncAccentFromLegacy(0)));
   brownSection.appendChild(brownRow);
   const brownCountGroup = document.createElement('div'); brownCountGroup.className='field-group'; brownCountGroup.style.marginTop='8px';
   brownCountGroup.innerHTML = `<label class="field-label">Brown Count — ${currentData.accentRamps[0].count}</label>`;
@@ -619,8 +619,8 @@ function buildPaletteEditor() {
   const greenSection = document.createElement('div'); greenSection.style.marginBottom='16px';
   greenSection.innerHTML = `<div class="field-label" style="color:#7fb069">Accent 2 — Natural Green — ${currentData.accentRamps[1].count} entries</div>`;
   const greenRow = document.createElement('div'); greenRow.className='palette-ramp-row';
-  greenRow.appendChild(makeColorFieldGeneric('Green From (dark forest)', 'greenRamp.from', [18,42,24], ()=>syncAccentFromLegacy(1)));
-  greenRow.appendChild(makeColorFieldGeneric('Green To (sage light)', 'greenRamp.to', [155,200,145], ()=>syncAccentFromLegacy(1)));
+  greenRow.appendChild(makeColorFieldGeneric('Green From (dark forest)', 'greenRamp.from', [18,48,26], ()=>syncAccentFromLegacy(1)));
+  greenRow.appendChild(makeColorFieldGeneric('Green To (natural sage)', 'greenRamp.to', [125,185,105], ()=>syncAccentFromLegacy(1)));
   greenSection.appendChild(greenRow);
   const greenCountGroup = document.createElement('div'); greenCountGroup.className='field-group'; greenCountGroup.style.marginTop='8px';
   greenCountGroup.innerHTML = `<label class="field-label">Green Count — ${currentData.accentRamps[1].count}</label>`;

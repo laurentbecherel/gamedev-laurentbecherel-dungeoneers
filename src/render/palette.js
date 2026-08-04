@@ -104,14 +104,14 @@ export function genPalette(style = 'doom', opts = null) {
     }
   } else {
     // === NEW LAYOUT: 2 accent ramps + desaturated regulars + grayscale ===
-    // Resolve accent ramps - 2 by default: doom brown + natural green, configurable per arch/level later
+    // Resolve accent ramps - 2 by default: classic Doom 48 saturated brown + natural green, configurable per arch/level later
     let accentRamps = o.accentRamps || null;
     if (!accentRamps) {
       const brownSrc = o.brownRamp || o.brownRampConfig || null;
       const greenSrc = o.greenRamp || o.greenRampConfig || null;
-      // defaults
-      const defBrown = { id: 'brown', from: [28, 18, 12], to: [225, 175, 120], count: 32 };
-      const defGreen = { id: 'green', from: [18, 42, 24], to: [155, 200, 145], count: 32 };
+      // defaults – keep same 48 brown as doom (more saturated brown/orange)
+      const defBrown = { id: 'brown', from: [80, 40, 20], to: [200, 100, 50], count: 48 };
+      const defGreen = { id: 'green', from: [18, 48, 26], to: [125, 185, 105], count: 32 };
       let b = brownSrc ? {
         id: brownSrc.id || 'brown',
         from: brownSrc.from || brownSrc.start || defBrown.from,
@@ -124,20 +124,18 @@ export function genPalette(style = 'doom', opts = null) {
         to: greenSrc.to || greenSrc.end || defGreen.to,
         count: Math.max(0, Math.min(96, greenSrc.count ?? defGreen.count))
       } : defGreen;
-      // If old palette.json had brownRamp.count 48, we clamp to 32 to keep 256 budget but respect legacy? Let user decide.
-      // For backwards compat: if accentRamps not provided but brownRamp has count 48, we keep it but adjust green to fit
       accentRamps = [b, g];
     }
-    // Ensure counts are ints and limit
+    // Ensure counts are ints and limit – default to keeping 48 brown
     accentRamps = accentRamps.map((r, idx) => ({
       id: r.id || (idx === 0 ? 'brown' : 'green'),
-      from: r.from || r.start || (idx === 0 ? [28, 18, 12] : [18, 42, 24]),
-      to: r.to || r.end || (idx === 0 ? [225, 175, 120] : [155, 200, 145]),
-      count: Math.max(0, Math.min(96, (r.count|0) || 32))
+      from: r.from || r.start || (idx === 0 ? [80, 40, 20] : [18, 48, 26]),
+      to: r.to || r.end || (idx === 0 ? [200, 100, 50] : [125, 185, 105]),
+      count: Math.max(0, Math.min(96, (r.count|0) || (idx===0 ? 48 : 32)))
     }));
-    const regularCfg = o.regularColors || o.regular || { count: 128, saturation: 0.42 };
+    const regularCfg = o.regularColors || o.regular || { count: 112, saturation: 0.42 };
     const grayCfg = o.grayscale || o.gray || { count: 64, from: 0, to: 255, gamma: 1.0 };
-    let regularCount = Math.max(16, Math.min(192, (regularCfg.count|0) || 128));
+    let regularCount = Math.max(16, Math.min(192, (regularCfg.count|0) || (regularCfg.count ? regularCfg.count|0 : 112)));
     let grayCount = Math.max(16, Math.min(128, (grayCfg.count|0) || (grayCfg.count === 0 ? 0 : 64)));
     // Adjust to fit 256 if sum mismatch
     const accentTotal = accentRamps.reduce((s, r) => s + r.count, 0);
