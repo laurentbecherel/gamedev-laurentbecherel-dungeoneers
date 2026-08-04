@@ -66,16 +66,16 @@ function fbm(x,y,seed,octaves=3){
 }
 
 export const DEFAULT_ROLE_WEIGHTS = {
-  entrance:{ moss:0.0, dust:0.0, water:0.0, puddle:0.75, blood:0.0, damaged:0.0 },
-  exit:{ moss:0.0, dust:0.0, water:0.0, puddle:0.75, blood:0.0, damaged:0.0 },
-  guardian:{ moss:0.0, dust:0.0, water:0.0, puddle:0.65, blood:0.0, damaged:0.0 },
-  treasure:{ moss:0.0, dust:0.0, water:0.0, puddle:0.70, blood:0.0, damaged:0.0 },
-  secret:{ moss:0.0, dust:0.0, water:0.0, puddle:0.70, blood:0.0, damaged:0.0 },
-  shrine:{ moss:0.0, dust:0.0, water:0.0, puddle:0.75, blood:0.0, damaged:0.0 },
-  hub:{ moss:0.0, dust:0.0, water:0.0, puddle:0.70, blood:0.0, damaged:0.0 },
-  armory:{ moss:0.0, dust:0.0, water:0.0, puddle:0.65, blood:0.0, damaged:0.0 },
-  hall:{ moss:0.0, dust:0.0, water:0.0, puddle:0.70, blood:0.0, damaged:0.0 },
-  corridor:{ moss:0.0, dust:0.0, water:0.0, puddle:0.60, blood:0.0, damaged:0.0 },
+  entrance:{ moss:0.32, dust:0.0, water:0.0, puddle:0.75, blood:0.0, damaged:0.0 },
+  exit:{ moss:0.18, dust:0.0, water:0.0, puddle:0.75, blood:0.0, damaged:0.0 },
+  guardian:{ moss:0.08, dust:0.0, water:0.0, puddle:0.65, blood:0.0, damaged:0.0 },
+  treasure:{ moss:0.14, dust:0.0, water:0.0, puddle:0.70, blood:0.0, damaged:0.0 },
+  secret:{ moss:0.40, dust:0.0, water:0.0, puddle:0.70, blood:0.0, damaged:0.0 },
+  shrine:{ moss:0.50, dust:0.0, water:0.0, puddle:0.75, blood:0.0, damaged:0.0 },
+  hub:{ moss:0.20, dust:0.0, water:0.0, puddle:0.70, blood:0.0, damaged:0.0 },
+  armory:{ moss:0.10, dust:0.0, water:0.0, puddle:0.65, blood:0.0, damaged:0.0 },
+  hall:{ moss:0.22, dust:0.0, water:0.0, puddle:0.70, blood:0.0, damaged:0.0 },
+  corridor:{ moss:0.15, dust:0.0, water:0.0, puddle:0.60, blood:0.0, damaged:0.0 },
 };
 
 export function generateModifierMap(dungeon, config) {
@@ -147,6 +147,7 @@ export function generateModifierMap(dungeon, config) {
     const nearWall = isNearWall(x,y) ? 1.2 : 1.0;
 
     const rolePuddle = rw.puddle ?? 0.65;
+    const roleMoss = rw.moss ?? 0.0;
     let puddleI = rolePuddle * shape * floorBoost * nearWall;
 
     const globalN = fbm(xc*globalNoiseScale, yc*globalNoiseScale, seed, 2);
@@ -155,7 +156,19 @@ export function generateModifierMap(dungeon, config) {
     if(!isFloor) puddleI *= 0.02;
     puddleI = Math.max(0, Math.min(1, puddleI));
 
-    data[i*4 + MOD_CHANNELS.MOSS] = 0;
+    // Moss: CPU-only FBM, cheap, fills R channel for debug visualization only
+    // Keep shader main PBR puddle-only for speed - R sampled only in PBR debug mode 1
+    const mossScale = 0.35;
+    const mossLarge = fbm(xc * mossScale, yc * mossScale, seed+333, 3);
+    let mt = (mossLarge - 0.30) / Math.max(0.0001, 0.24);
+    mt = Math.max(0, Math.min(1, mt));
+    mt = smooth(mt);
+    let mossShape = mt * (0.5 + 0.5 * medNoise);
+    const wallFactor = isFloor ? (isNearWall(x,y) ? 1.35 : 0.60) : 1.0;
+    let mossI = roleMoss * mossShape * wallFactor * (0.45 + 0.55 * globalN);
+    mossI = Math.max(0, Math.min(1, mossI));
+
+    data[i*4 + MOD_CHANNELS.MOSS] = Math.round(mossI*255);
     data[i*4 + MOD_CHANNELS.WATER] = 0;
     data[i*4 + MOD_CHANNELS.PUDDLE] = Math.round(puddleI*255);
     data[i*4 + MOD_CHANNELS.DUST] = 0;

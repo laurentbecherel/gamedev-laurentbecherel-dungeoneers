@@ -195,11 +195,8 @@ void applyModifiers(inout vec3 albedo, inout vec3 N, inout float rough, inout fl
   // mod2 unused in puddle-only but fetched for completeness (zeroed)
   vec4 mod2 = texture(u_modifierMap2, modUV);
 
-  float puddleCell = mod1.b; // B = puddle, guaranteed only channel with data in v14
-  // Other channels guaranteed zero via generator + zeroed UBO
-  // float mossCell = mod1.r; // forced 0
-  // float waterCell = mod1.g; // forced 0
-  // etc.
+  float mossCell = mod1.r; // R = moss - CPU baked final mask, 0 extra noise
+  float puddleCell = mod1.b; // B = puddle
 
   if (isFloorSurface < 0.5) {
     puddleCell *= 0.02; // no puddle on walls/ceilings
@@ -234,6 +231,17 @@ void applyModifiers(inout vec3 albedo, inout vec3 N, inout float rough, inout fl
   if (scaleLarge < 0.001) scaleLarge = 0.22;
   if (threshold < 0.001) threshold = 0.55;
   if (feather < 0.001) feather = 0.12;
+
+  // Ultra-minimal moss - raw R, 0 noise, 0 extra functions, 4 mix ops
+  // CPU baked mask already includes FBM + wall + damp, so shader just lumps
+  if (mossCell > 0.001) {
+    float mossMask = mossCell;
+    vec3 mossAlbedo = vec3(0.18, 0.42, 0.15);
+    albedo = mix(albedo, mossAlbedo, mossMask * 0.60);
+    rough = clamp(rough + 0.25 * mossMask, 0.0, 1.0);
+    metal = mix(metal, 0.0, mossMask * 0.65);
+    ao *= (1.0 - mossMask * 0.10);
+  }
 
   if (puddleCell > 0.001 && isFloorSurface > 0.5) {
     float puddleMask = computePuddleMaskTweakable(worldPos, matHeight, ao, puddleCell);
