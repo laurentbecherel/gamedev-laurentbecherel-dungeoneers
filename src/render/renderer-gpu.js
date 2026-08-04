@@ -775,11 +775,16 @@ export class GPURenderer {
 
   rebuildPalette() {
     const gl = this.gl;
-    const opts = this.paletteCfgFull ? {
-      brownRamp: this.paletteCfgFull.brownRamp,
-      customColors: this.paletteCfgFull.customColors || this.paletteCfgFull.paletteOverrides || this.paletteCfgFull.overrides,
-      cubeLevels: this.paletteCfgFull.cubeLevels || this.paletteCfgFull.levels
-    } : null;
+    const cfg = this.paletteCfgFull || {};
+    const opts = {
+      brownRamp: cfg.brownRamp,
+      greenRamp: cfg.greenRamp,
+      accentRamps: cfg.accentRamps,
+      regularColors: cfg.regularColors || cfg.regular,
+      grayscale: cfg.grayscale || cfg.gray,
+      customColors: cfg.customColors || cfg.paletteOverrides || cfg.overrides,
+      cubeLevels: cfg.cubeLevels || cfg.levels
+    };
     const pal = genPalette(this.paletteStyle, opts);
     const lut = buildRGBToPal(pal);
     gl.bindTexture(gl.TEXTURE_2D, this.paletteTex);

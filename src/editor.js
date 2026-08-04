@@ -320,47 +320,13 @@ function renderVisual() {
 
 // ===== PALETTE EDITOR COMPONENT =====
 const PALETTE_STYLES = {
-  doom: { id: 0, name: "Doom-like brown ramp + 216 colors", description: "First 48 entries brown gradient" },
-  smooth256: { id: 1, name: "Smooth 216 cube + gray", description: "6x6x6 color cube" },
+  doom: { id: 0, name: "Brown + Natural Green accents + desaturated + gray", description: "32 brown + 32 green accent ramps, 128 desaturated regulars, 64 gray" },
+  smooth256: { id: 1, name: "Smooth 216 cube + gray", description: "6x6x6 color cube (saturated)" },
   truecolor: { id: 2, name: "Truecolor bypass", description: "No quantization" },
   grayscale: { id: 3, name: "Grayscale", description: "Luma weights 0.299/0.587/0.114" },
   sepia: { id: 4, name: "Sepia", description: "Warm luma 1.2/0.9/0.6" }
 };
 
-function genPaletteForPreview(style, data) {
-  const PAL_SIZE = 256;
-  const pal = new Uint8Array(PAL_SIZE * 4);
-  function set(i, r, g, b) { pal[i * 4] = r; pal[i * 4 + 1] = g; pal[i * 4 + 2] = b; pal[i * 4 + 3] = 255; }
-  const br = data?.brownRamp || { from: [80,40,20], to: [200,100,50], count: 48 };
-  const levels = data?.cubeLevels || [0,51,102,153,204,255];
-  const custom = data?.customColors || {};
-
-  if (style === 'grayscale') { for (let i=0;i<256;i++) set(i,i,i,i); }
-  else if (style === 'sepia') { for (let i=0;i<256;i++){ const v=i; set(i, Math.min(255, v*1.2|0), Math.min(255, v*0.9|0), Math.min(255, v*0.6|0)); } }
-  else if (style === 'truecolor') {
-    // For preview, truecolor shows a smooth gradient + cube hint
-    for (let i=0;i<256;i++){ const r = (i * 2) % 256; const g = (i * 3) % 256; const b = (i * 5) % 256; set(i, r,g,b); }
-    // Actually truecolor bypass means no quant, show full hue gradient for preview
-    for (let i=0;i<256;i++){ const hue = (i/256)*360; const c = hslToRgb(hue/360, 0.8, 0.5); set(i, c[0], c[1], c[2]); }
-  } else {
-    let idx=0;
-    for (let r=0;r<6;r++) for (let g=0;g<6;g++) for (let b=0;b<6;b++){ if(idx>=216) break; set(idx, levels[r], levels[g], levels[b]); idx++; }
-    for (;idx<256;idx++){ const v = Math.floor((idx-216)*255/39); set(idx,v,v,v); }
-    let rf = br.from || br.start || [80,40,20];
-    let rt = br.to || br.end || [200,100,50];
-    let rc = br.count != null ? br.count : 48;
-    rc = Math.max(0, Math.min(96, rc|0));
-    for (let i=0;i<rc;i++){ const t = rc<=1?0:i/(rc-1); set(i, Math.floor(rf[0]+t*(rt[0]-rf[0])), Math.floor(rf[1]+t*(rt[1]-rf[1])), Math.floor(rf[2]+t*(rt[2]-rf[2]))); }
-  }
-  // custom overrides
-  if (custom && typeof custom === 'object') {
-    for (const [k,v] of Object.entries(custom)){
-      const idx = parseInt(k,10); if(isNaN(idx)||idx<0||idx>=256) continue;
-      if(Array.isArray(v)&&v.length>=3) set(idx, v[0]|0, v[1]|0, v[2]|0);
-    }
-  }
-  return pal;
-}
 function hslToRgb(h,s,l){
   let r,g,b;
   if(s===0){ r=g=b=l; } else {
@@ -369,6 +335,97 @@ function hslToRgb(h,s,l){
     r=hue2rgb(p,q,h+1/3); g=hue2rgb(p,q,h); b=hue2rgb(p,q,h-1/3);
   }
   return [Math.round(r*255), Math.round(g*255), Math.round(b*255)];
+}
+function lerpColorEditor(a,b,t){
+  return [Math.floor(a[0]+(b[0]-a[0])*t), Math.floor(a[1]+(b[1]-a[1])*t), Math.floor(a[2]+(b[2]-a[2])*t)];
+}
+function genDesaturatedPreview(count, opts){
+  const satBase = opts?.saturation ?? 0.42;
+  const satVar = opts?.saturationVar ?? 0.18;
+  const lMin = opts?.lightnessMin ?? 0.32;
+  const lMax = opts?.lightnessMax ?? 0.84;
+  const hShift = opts?.hueShift ?? 137.5;
+  const out=[];
+  for(let i=0;i<count;i++){
+    const h=(i*hShift)%360;
+    const hash1=((i*37)%100)/100;
+    const s=Math.max(0,Math.min(0.75, satBase + (hash1-0.5)*satVar*2));
+    const lT = count<=1?0.5:(i/(count-1));
+    const level=Math.floor(lT*8)/8;
+    const jitter=((i*13)%7)/7*0.06-0.03;
+    const l=Math.max(0.05,Math.min(0.95, lMin + level*(lMax-lMin)+jitter));
+    out.push(hslToRgb(h/360,s,l));
+  }
+  return out;
+}
+function genPaletteForPreview(style, data) {
+  const PAL_SIZE = 256;
+  const pal = new Uint8Array(PAL_SIZE * 4);
+  function set(i, r, g, b) { pal[i * 4] = r; pal[i * 4 + 1] = g; pal[i * 4 + 2] = b; pal[i * 4 + 3] = 255; }
+  const custom = data?.customColors || {};
+  const levels = data?.cubeLevels || [0,51,102,153,204,255];
+
+  if (style === 'grayscale') { for (let i=0;i<256;i++) set(i,i,i,i); }
+  else if (style === 'sepia') { for (let i=0;i<256;i++){ const v=i; set(i, Math.min(255, v*1.2|0), Math.min(255, v*0.9|0), Math.min(255, v*0.6|0)); } }
+  else if (style === 'truecolor') {
+    for (let i=0;i<256;i++){ const hue = (i/256)*360; const c = hslToRgb(hue/360, 0.8, 0.5); set(i, c[0], c[1], c[2]); }
+  } else if (style === 'smooth256') {
+    let idx=0;
+    for (let r=0;r<6;r++) for (let g=0;g<6;g++) for (let b=0;b<6;b++){ if(idx>=216) break; set(idx, levels[r], levels[g], levels[b]); idx++; }
+    for (;idx<256;idx++){ const v = Math.floor((idx-216)*255/39); set(idx,v,v,v); }
+  } else {
+    // NEW: 2 accent ramps (brown + green) + desaturated regulars + grayscale
+    let accentRamps = data?.accentRamps;
+    if (!accentRamps) {
+      const bSrc = data?.brownRamp || { from:[28,18,12], to:[225,175,120], count:32 };
+      const gSrc = data?.greenRamp || { from:[18,42,24], to:[155,200,145], count:32 };
+      accentRamps = [
+        { id:'brown', from: bSrc.from||bSrc.start||[28,18,12], to: bSrc.to||bSrc.end||[225,175,120], count: bSrc.count??32 },
+        { id:'green', from: gSrc.from||gSrc.start||[18,42,24], to: gSrc.to||gSrc.end||[155,200,145], count: gSrc.count??32 }
+      ];
+    }
+    const regularCfg = data?.regularColors || { count:128, saturation:0.42 };
+    const grayCfg = data?.grayscale || { count:64, from:0, to:255, gamma:1 };
+    let regularCount = regularCfg.count ?? 128;
+    let grayCount = (data?.grayscale?.count ?? 64);
+    const accentTotal = accentRamps.reduce((s,r)=>s+(r.count|0),0);
+    let remaining = PAL_SIZE - accentTotal;
+    if (remaining < 0) { regularCount=0; grayCount=PAL_SIZE-accentTotal; }
+    else {
+      const rgTotal = regularCount + grayCount;
+      if (rgTotal > remaining) { const f=remaining/rgTotal; regularCount=Math.floor(regularCount*f); grayCount=remaining-regularCount; }
+      else if (rgTotal < remaining) grayCount=remaining-regularCount;
+    }
+    let idx=0;
+    for (const ramp of accentRamps){
+      const from=ramp.from||ramp.start, to=ramp.to||ramp.end, cnt=ramp.count|0;
+      for(let j=0;j<cnt && idx<256;j++){
+        const t = cnt<=1?0:j/(cnt-1);
+        const col=lerpColorEditor(from,to,t);
+        set(idx,col[0],col[1],col[2]); idx++;
+      }
+    }
+    const regularColors = genDesaturatedPreview(regularCount, regularCfg);
+    for(let k=0;k<regularColors.length && idx < PAL_SIZE - grayCount;k++){
+      const c=regularColors[k]; set(idx,c[0],c[1],c[2]); idx++;
+    }
+    const gFrom = grayCfg.from ?? 0, gTo = grayCfg.to ?? 255, gGamma = grayCfg.gamma ?? 1;
+    const gCountFinal = PAL_SIZE - idx;
+    for(let j=0;j<gCountFinal;j++){
+      const t = gCountFinal<=1?0:j/(gCountFinal-1);
+      const tG = gGamma===1? t : Math.pow(t,1/gGamma);
+      const v = Math.floor(gFrom + tG*(gTo-gFrom));
+      set(idx,v,v,v); idx++;
+    }
+    while(idx<256){ set(idx,idx,idx,idx); idx++; }
+  }
+  if (custom && typeof custom === 'object') {
+    for (const [k,v] of Object.entries(custom)){
+      const idx = parseInt(k,10); if(isNaN(idx)||idx<0||idx>=256) continue;
+      if(Array.isArray(v)&&v.length>=3) set(idx, v[0]|0, v[1]|0, v[2]|0);
+    }
+  }
+  return pal;
 }
 function formatRgb(r,g,b){ return `rgb(${r},${g},${b})`; }
 
@@ -486,22 +543,32 @@ function buildPaletteEditor() {
   const sidePreviews = document.createElement('div');
   sidePreviews.className = 'palette-side-previews';
   sidePreviews.innerHTML = `
-    <div class="mini-preview"><div class="mini-title">Banding Gradient (simulated)</div><canvas id="banding-canvas" width="256" height="48" class="mini-canvas"></canvas><div class="field-hint">Top = smooth, Bottom = banded with current bandLevels (authentic)</div></div>
+    <div class="mini-preview"><div class="mini-title">Banding Gradient (simulated) — accent ramps show banding best</div><canvas id="banding-canvas" width="256" height="48" class="mini-canvas"></canvas><div class="field-hint">Top = smooth, Bottom = banded with current bandLevels (authentic)</div></div>
     <div class="mini-preview"><div class="mini-title">Light Levels / Colormap (×32 darkening)</div><canvas id="colormap-canvas" width="256" height="160" class="mini-canvas"></canvas><div class="field-hint">Each row is a light level darkening factor</div></div>
-    <div class="mini-preview"><div class="mini-title">Brown Ramp (doom only) — tweak below</div><canvas id="ramp-canvas" width="256" height="36" class="mini-canvas"></canvas></div>
+    <div class="mini-preview"><div class="mini-title">Accent Ramps — brown + natural green (doom) — tweak below</div><canvas id="ramp-canvas" width="256" height="36" class="mini-canvas"></canvas><canvas id="ramp-canvas-green" width="256" height="36" class="mini-canvas" style="margin-top:6px"></canvas></div>
+    <div class="mini-preview"><div class="mini-title">Regular desaturated + grayscale sections</div><canvas id="regular-canvas" width="256" height="36" class="mini-canvas"></canvas><canvas id="gray-canvas" width="256" height="36" class="mini-canvas" style="margin-top:6px"></canvas><div class="field-hint">128 desaturated regulars + 64 gray gradient</div></div>
   `;
   previewTop.appendChild(sidePreviews);
 
-  // === Brown Ramp tweak section ===
+  // === Accent Ramps tweak section — 2 configurable colours ===
   const rampTweak = document.createElement('div');
   rampTweak.className = 'palette-tweak-section';
-  rampTweak.innerHTML = `<div class="palette-section-title"><i class="ph ph-sliders"></i> Tweak Palette — Brown Ramp (doom style)</div>`;
-  const rampRow = document.createElement('div'); rampRow.className = 'palette-ramp-row';
+  rampTweak.innerHTML = `<div class="palette-section-title"><i class="ph ph-sliders"></i> Tweak Palette — 2 Accent Colours (configurable per arch later, brown + natural green for now) + regular desat + gray</div>
+    <div class="field-hint">New layout: 32 brown + 32 green accent ramps with good gradients/banding, 128 desaturated regulars, 64 grayscale. Accent ramps can be overridden per level/architecture later; editor exposes them here.</div>`;
 
-  const ensureRamp = () => { if(!currentData.brownRamp) currentData.brownRamp = { from:[80,40,20], to:[200,100,50], count:48 }; };
+  const ensureData = () => {
+    if (!currentData.accentRamps) currentData.accentRamps = [
+      { id:'brown', from:[28,18,12], to:[225,175,120], count:32 },
+      { id:'green', from:[18,42,24], to:[155,200,145], count:32 }
+    ];
+    if (!currentData.brownRamp) currentData.brownRamp = { from: currentData.accentRamps[0].from, to: currentData.accentRamps[0].to, count: currentData.accentRamps[0].count };
+    if (!currentData.greenRamp) currentData.greenRamp = { from: currentData.accentRamps[1].from, to: currentData.accentRamps[1].to, count: currentData.accentRamps[1].count };
+    if (!currentData.regularColors) currentData.regularColors = { count:128, saturation:0.42, saturationVar:0.18, lightnessMin:0.32, lightnessMax:0.84 };
+    if (!currentData.grayscale) currentData.grayscale = { count:64, from:0, to:255, gamma:1 };
+  };
+  ensureData();
 
-  const makeColorField = (label, path, def) => {
-    ensureRamp();
+  const makeColorFieldGeneric = (label, path, def, onChangeExtra) => {
     const g = document.createElement('div'); g.className='field-group'; g.style.flex='1';
     g.innerHTML = `<label class="field-label">${label}</label>`;
     const row = document.createElement('div'); row.style.display='flex'; row.style.gap='8px'; row.style.alignItems='center';
@@ -510,29 +577,93 @@ function buildPaletteEditor() {
     const col = document.createElement('input'); col.type='color'; col.value=toHex(cur); col.style.width='44px'; col.style.height='36px'; col.style.border='none'; col.style.borderRadius='6px'; col.style.cursor='pointer';
     const nums = document.createElement('div'); nums.style.display='flex'; nums.style.gap='4px'; nums.style.flex='1';
     const inputs = [0,1,2].map(i=>{ const inp=document.createElement('input'); inp.type='number'; inp.className='field-input'; inp.value=cur[i]; inp.min='0'; inp.max='255'; inp.step='1'; inp.style.flex='1'; return inp; });
-    const apply = (arr) => { setByPath(currentData, path, arr); col.value = toHex(arr); triggerLiveChange(); refreshPreviews(); };
-    col.oninput = () => { const m=col.value.match(/^#?([0-9a-f]{2})([0-9a-f]{2})([0-9a-f]{2})$/i); if(!m) return; const arr=[parseInt(m[1],16),parseInt(m[2],16),parseInt(m[3],16)]; inputs.forEach((inp,i)=>inp.value=arr[i]); setByPath(currentData, path, arr); triggerLiveChange(); refreshPreviews(); };
-    inputs.forEach((inp, idx) => inp.oninput = () => { const arr=inputs.map(x=>parseFloat(x.value)||0); col.value=toHex(arr); setByPath(currentData, path, arr); triggerLiveChange(); refreshPreviews(); });
+    col.oninput = () => { const m=col.value.match(/^#?([0-9a-f]{2})([0-9a-f]{2})([0-9a-f]{2})$/i); if(!m) return; const arr=[parseInt(m[1],16),parseInt(m[2],16),parseInt(m[3],16)]; inputs.forEach((inp,i)=>inp.value=arr[i]); setByPath(currentData, path, arr); if(onChangeExtra) onChangeExtra(); triggerLiveChange(); refreshPreviews(); };
+    inputs.forEach(inp => inp.oninput = () => { const arr=inputs.map(x=>parseFloat(x.value)||0); col.value=toHex(arr); setByPath(currentData, path, arr); if(onChangeExtra) onChangeExtra(); triggerLiveChange(); refreshPreviews(); });
     row.appendChild(col); inputs.forEach(i=>nums.appendChild(i)); row.appendChild(nums);
     g.appendChild(row); return g;
   };
 
-  rampRow.appendChild(makeColorField('Ramp From (start)', 'brownRamp.from', [80,40,20]));
-  rampRow.appendChild(makeColorField('Ramp To (end)', 'brownRamp.to', [200,100,50]));
-  rampTweak.appendChild(rampRow);
+  // Helper to sync brownRamp/greenRamp <-> accentRamps[0/1]
+  const syncAccentFromLegacy = (idx) => {
+    if (!currentData.accentRamps || !currentData.accentRamps[idx]) return;
+    if (idx===0 && currentData.brownRamp) {
+      currentData.accentRamps[0].from = currentData.brownRamp.from;
+      currentData.accentRamps[0].to = currentData.brownRamp.to;
+      currentData.accentRamps[0].count = currentData.brownRamp.count;
+    }
+    if (idx===1 && currentData.greenRamp) {
+      currentData.accentRamps[1].from = currentData.greenRamp.from;
+      currentData.accentRamps[1].to = currentData.greenRamp.to;
+      currentData.accentRamps[1].count = currentData.greenRamp.count;
+    }
+  };
 
-  // count slider
-  const countGroup = document.createElement('div'); countGroup.className='field-group'; countGroup.style.marginTop='12px';
-  const rc = currentData.brownRamp?.count ?? 48;
-  countGroup.innerHTML = `<label class="field-label">Ramp Count — how many of first entries are brown — ${rc}</label>`;
-  const countRow = document.createElement('div'); countRow.style.display='flex'; countRow.style.gap='8px'; countRow.style.alignItems='center';
-  const cNum = document.createElement('input'); cNum.type='number'; cNum.className='field-input'; cNum.value=rc; cNum.min='0'; cNum.max='96'; cNum.step='1'; cNum.style.flex='1';
-  const cSl = document.createElement('input'); cSl.type='range'; cSl.min='0'; cSl.max='96'; cSl.step='1'; cSl.value=String(rc); cSl.style.flex='2';
-  const syncCount = (v)=>{ const iv=Math.max(0,Math.min(96,Math.round(v))); ensureRamp(); setByPath(currentData,'brownRamp.count',iv); countGroup.querySelector('label').textContent=`Ramp Count — how many of first entries are brown — ${iv}`; triggerLiveChange(); refreshPreviews(); };
-  cNum.oninput=()=>{ cSl.value=cNum.value; syncCount(cNum.value); };
-  cSl.oninput=()=>{ cNum.value=cSl.value; syncCount(cSl.value); };
-  countRow.appendChild(cNum); countRow.appendChild(cSl); countGroup.appendChild(countRow);
-  rampTweak.appendChild(countGroup);
+  // Brown accent
+  const brownSection = document.createElement('div'); brownSection.style.marginBottom='16px';
+  brownSection.innerHTML = `<div class="field-label" style="color:var(--accent)">Accent 1 — Brown (Doom Brown) — ${currentData.accentRamps[0].count} entries</div>`;
+  const brownRow = document.createElement('div'); brownRow.className='palette-ramp-row';
+  brownRow.appendChild(makeColorFieldGeneric('Brown From (dark)', 'brownRamp.from', [28,18,12], ()=>syncAccentFromLegacy(0)));
+  brownRow.appendChild(makeColorFieldGeneric('Brown To (light)', 'brownRamp.to', [225,175,120], ()=>syncAccentFromLegacy(0)));
+  brownSection.appendChild(brownRow);
+  const brownCountGroup = document.createElement('div'); brownCountGroup.className='field-group'; brownCountGroup.style.marginTop='8px';
+  brownCountGroup.innerHTML = `<label class="field-label">Brown Count — ${currentData.accentRamps[0].count}</label>`;
+  const brownCountRow = document.createElement('div'); brownCountRow.style.display='flex'; brownCountRow.style.gap='8px'; brownCountRow.style.alignItems='center';
+  const bNum=document.createElement('input'); bNum.type='number'; bNum.className='field-input'; bNum.value=currentData.accentRamps[0].count; bNum.min='0'; bNum.max='64'; bNum.step='1'; bNum.style.flex='1';
+  const bSl=document.createElement('input'); bSl.type='range'; bSl.min='0'; bSl.max='64'; bSl.step='1'; bSl.value=String(currentData.accentRamps[0].count); bSl.style.flex='2';
+  const syncBrownCount = (v)=>{ const iv=Math.max(0,Math.min(64,Math.round(v))); setByPath(currentData,'brownRamp.count',iv); setByPath(currentData,'accentRamps.0.count',iv); brownCountGroup.querySelector('label').textContent=`Brown Count — ${iv}`; triggerLiveChange(); refreshPreviews(); };
+  bNum.oninput=()=>{ bSl.value=bNum.value; syncBrownCount(bNum.value); }; bSl.oninput=()=>{ bNum.value=bSl.value; syncBrownCount(bSl.value); };
+  brownCountRow.appendChild(bNum); brownCountRow.appendChild(bSl); brownCountGroup.appendChild(brownCountRow); brownSection.appendChild(brownCountGroup);
+  rampTweak.appendChild(brownSection);
+
+  // Green accent
+  const greenSection = document.createElement('div'); greenSection.style.marginBottom='16px';
+  greenSection.innerHTML = `<div class="field-label" style="color:#7fb069">Accent 2 — Natural Green — ${currentData.accentRamps[1].count} entries</div>`;
+  const greenRow = document.createElement('div'); greenRow.className='palette-ramp-row';
+  greenRow.appendChild(makeColorFieldGeneric('Green From (dark forest)', 'greenRamp.from', [18,42,24], ()=>syncAccentFromLegacy(1)));
+  greenRow.appendChild(makeColorFieldGeneric('Green To (sage light)', 'greenRamp.to', [155,200,145], ()=>syncAccentFromLegacy(1)));
+  greenSection.appendChild(greenRow);
+  const greenCountGroup = document.createElement('div'); greenCountGroup.className='field-group'; greenCountGroup.style.marginTop='8px';
+  greenCountGroup.innerHTML = `<label class="field-label">Green Count — ${currentData.accentRamps[1].count}</label>`;
+  const greenCountRow = document.createElement('div'); greenCountRow.style.display='flex'; greenCountRow.style.gap='8px'; greenCountRow.style.alignItems='center';
+  const gNum=document.createElement('input'); gNum.type='number'; gNum.className='field-input'; gNum.value=currentData.accentRamps[1].count; gNum.min='0'; gNum.max='64'; gNum.step='1'; gNum.style.flex='1';
+  const gSl=document.createElement('input'); gSl.type='range'; gSl.min='0'; gSl.max='64'; gSl.step='1'; gSl.value=String(currentData.accentRamps[1].count); gSl.style.flex='2';
+  const syncGreenCount = (v)=>{ const iv=Math.max(0,Math.min(64,Math.round(v))); setByPath(currentData,'greenRamp.count',iv); setByPath(currentData,'accentRamps.1.count',iv); greenCountGroup.querySelector('label').textContent=`Green Count — ${iv}`; triggerLiveChange(); refreshPreviews(); };
+  gNum.oninput=()=>{ gSl.value=gNum.value; syncGreenCount(gNum.value); }; gSl.oninput=()=>{ gNum.value=gSl.value; syncGreenCount(gSl.value); };
+  greenCountRow.appendChild(gNum); greenCountRow.appendChild(gSl); greenCountGroup.appendChild(greenCountRow); greenSection.appendChild(greenCountGroup);
+  rampTweak.appendChild(greenSection);
+
+  // Regular desaturated controls
+  const regSection = document.createElement('div'); regSection.style.marginBottom='16px';
+  regSection.innerHTML = `<div class="field-label">Regular Colours — Desaturated variations — count ${currentData.regularColors.count}, sat ${currentData.regularColors.saturation}</div><div class="field-hint">Not too saturated variations — golden-angle hue distribution with low saturation 0.25-0.6</div>`;
+  const regRow = document.createElement('div'); regRow.style.display='flex'; regRow.style.gap='12px'; regRow.style.flexWrap='wrap'; regRow.style.marginTop='8px';
+  const makeNumSlider = (label, path, min, max, step, def) => {
+    const gg=document.createElement('div'); gg.className='field-group'; gg.style.flex='1'; gg.style.minWidth='160px';
+    const cur = (()=>{ try{ const parts=path.split('.'); let cur=currentData; for(const p of parts) cur=cur?.[p]; return cur??def; }catch{return def; }})();
+    gg.innerHTML=`<label class="field-label">${label} — ${cur}</label>`;
+    const row=document.createElement('div'); row.style.display='flex'; row.style.gap='6px'; row.style.alignItems='center';
+    const num=document.createElement('input'); num.type='number'; num.className='field-input'; num.value=cur; num.min=String(min); num.max=String(max); num.step=String(step); num.style.flex='1';
+    const sl=document.createElement('input'); sl.type='range'; sl.min=String(min); sl.max=String(max); sl.step=String(step); sl.value=String(cur); sl.style.flex='1.5';
+    const sync=(v)=>{ setByPath(currentData, path, parseFloat(v)); gg.querySelector('label').textContent=`${label} — ${v}`; triggerLiveChange(); refreshPreviews(); };
+    num.oninput=()=>{ sl.value=num.value; sync(num.value); }; sl.oninput=()=>{ num.value=sl.value; sync(sl.value); };
+    row.appendChild(num); row.appendChild(sl); gg.appendChild(row); return gg;
+  };
+  regRow.appendChild(makeNumSlider('Regular Count', 'regularColors.count', 16, 192, 1, 128));
+  regRow.appendChild(makeNumSlider('Saturation', 'regularColors.saturation', 0, 1, 0.02, 0.42));
+  regRow.appendChild(makeNumSlider('Sat Var', 'regularColors.saturationVar', 0, 0.5, 0.02, 0.18));
+  regRow.appendChild(makeNumSlider('Light Min', 'regularColors.lightnessMin', 0, 0.6, 0.02, 0.32));
+  regRow.appendChild(makeNumSlider('Light Max', 'regularColors.lightnessMax', 0.4, 1, 0.02, 0.84));
+  regSection.appendChild(regRow);
+  rampTweak.appendChild(regSection);
+
+  // Gray controls
+  const graySection = document.createElement('div');
+  graySection.innerHTML = `<div class="field-label">Grayscale — nice gradient — count ${currentData.grayscale.count}</div><div class="field-hint">Smooth gray from black to white, linear or gamma-corrected</div>`;
+  const grayRow = document.createElement('div'); grayRow.style.display='flex'; grayRow.style.gap='12px'; grayRow.style.flexWrap='wrap'; grayRow.style.marginTop='8px';
+  grayRow.appendChild(makeNumSlider('Gray Count', 'grayscale.count', 16, 128, 1, 64));
+  grayRow.appendChild(makeNumSlider('Gray Gamma', 'grayscale.gamma', 0.2, 3, 0.1, 1));
+  graySection.appendChild(grayRow);
+  rampTweak.appendChild(graySection);
+
   root.appendChild(rampTweak);
 
   // === Custom overrides tweak ===
@@ -583,10 +714,15 @@ function buildPaletteEditor() {
       ctx.fillStyle = `rgb(${r},${g},${b})`;
       ctx.fillRect(col*cellW, row*cellH, cellW, cellH);
     }
-    // border
-    ctx.strokeStyle='rgba(0,0,0,0.2)'; ctx.lineWidth=0.5;
+    // border + section separators: first 32 brown, next 32 green, next 128 desat, last 64 gray
+    ctx.strokeStyle='rgba(0,0,0,0.25)'; ctx.lineWidth=0.5;
     for(let c=1;c<cols;c++){ ctx.beginPath(); ctx.moveTo(c*cellW,0); ctx.lineTo(c*cellW,H); ctx.stroke(); }
     for(let r=1;r<rows;r++){ ctx.beginPath(); ctx.moveTo(0,r*cellH); ctx.lineTo(W,r*cellH); ctx.stroke(); }
+    // accent section highlight
+    ctx.strokeStyle='rgba(201,168,76,0.5)'; ctx.lineWidth=1.5;
+    ctx.strokeRect(0,0,W,cellH*4); // 64 = 4 rows of accents
+    ctx.strokeStyle='rgba(127,176,105,0.5)';
+    ctx.strokeRect(0,cellH*2,W,cellH*2);
     return pal;
   }
   function drawBanding() {
@@ -595,28 +731,38 @@ function buildPaletteEditor() {
     const ctx = c.getContext('2d');
     const W=c.width, H=c.height;
     ctx.clearRect(0,0,W,H);
-    // smooth gradient top half
-    const grad = ctx.createLinearGradient(0,0,W,0);
-    grad.addColorStop(0,'black'); grad.addColorStop(0.2,'#8B4513'); grad.addColorStop(0.5,'#D2B48C'); grad.addColorStop(0.8,'#87CEEB'); grad.addColorStop(1,'white');
-    ctx.fillStyle=grad; ctx.fillRect(0,0,W,H/2);
-    // banded bottom half
+    const pal = genPaletteForPreview(sel.value, currentData);
+    // Use actual accent ramps for banding demo – brown + green + gray
     const levels = currentData.bandLevels || 32;
+    const showBanding = currentData.authentic;
+    // top = smooth brown+green gradient (first 64 colors)
     for(let x=0;x<W;x++){
-      const t = x/W;
-      let r = Math.floor(t*255);
-      const banded = currentData.authentic ? Math.floor(r/255*levels)/levels*255 : r;
-      ctx.fillStyle=`rgb(${banded|0},${banded|0},${banded|0})`;
-      // reuse hue from top? simplify: use grayscale banding visualization with color from gradient approx
-      // sample gradient color at x
-      const hueT = t;
-      const col = hueT<0.2 ? [139,69,19] : hueT<0.5 ? [210,180,140] : hueT<0.8 ? [135,206,235] : [255,255,255];
-      // apply banding to luma
-      const luma = 0.299*col[0]+0.587*col[1]+0.114*col[2];
-      const bl = currentData.authentic ? Math.floor(luma/255*levels)/levels*255 : luma;
-      const factor = luma>1 ? bl/luma : 1;
-      const rr = Math.min(255, col[0]*factor|0), gg = Math.min(255, col[1]*factor|0), bb = Math.min(255, col[2]*factor|0);
+      const idx = Math.floor((x/W)*64);
+      const r=pal[idx*4], g=pal[idx*4+1], b=pal[idx*4+2];
+      ctx.fillStyle=`rgb(${r},${g},${b})`;
+      ctx.fillRect(x,0,1,H/2);
+    }
+    // bottom = banded same but with bandLevels quantization
+    for(let x=0;x<W;x++){
+      const idx = Math.floor((x/W)*64);
+      const r=pal[idx*4], g=pal[idx*4+1], b=pal[idx*4+2];
+      let rr=r, gg=g, bb=b;
+      if (showBanding) {
+        const luma = 0.299*r+0.587*g+0.114*b;
+        const bl = Math.floor(luma/255*levels)/levels*255;
+        const factor = luma>1 ? bl/luma : 1;
+        rr = Math.min(255, r*factor|0); gg = Math.min(255, g*factor|0); bb = Math.min(255, b*factor|0);
+      }
       ctx.fillStyle=`rgb(${rr},${gg},${bb})`;
       ctx.fillRect(x,H/2,1,H/2);
+    }
+    // overlay tick marks for bands
+    if (showBanding) {
+      ctx.strokeStyle='rgba(0,0,0,0.35)'; ctx.lineWidth=1;
+      for(let i=1;i<levels;i++){
+        const x = (i/levels)*W;
+        ctx.beginPath(); ctx.moveTo(x,H/2); ctx.lineTo(x,H); ctx.stroke();
+      }
     }
   }
   function drawColormap(pal){
@@ -638,18 +784,44 @@ function buildPaletteEditor() {
     }
   }
   function drawRamp(pal){
+    // brown ramp
     const c = root.querySelector('#ramp-canvas');
-    if(!c) return;
-    const ctx = c.getContext('2d');
-    const W=c.width, H=c.height;
-    ctx.clearRect(0,0,W,H);
-    const rc = currentData.brownRamp?.count ?? 48;
-    if(rc<=0){ ctx.fillStyle='#222'; ctx.fillRect(0,0,W,H); ctx.fillStyle='#666'; ctx.font='11px JetBrains Mono'; ctx.fillText('Ramp disabled (count=0)', 8, H/2+3); return; }
-    for(let i=0;i<rc;i++){
-      const r=pal[i*4], g=pal[i*4+1], b=pal[i*4+2];
-      const x = (i/rc)*W;
-      ctx.fillStyle=`rgb(${r},${g},${b})`;
-      ctx.fillRect(x,0,W/rc+1,H);
+    if(c){
+      const ctx = c.getContext('2d'); const W=c.width, H=c.height; ctx.clearRect(0,0,W,H);
+      const rc = (currentData.accentRamps?.[0]?.count ?? currentData.brownRamp?.count ?? 32);
+      if(rc<=0){ ctx.fillStyle='#222'; ctx.fillRect(0,0,W,H); } else {
+        for(let i=0;i<rc;i++){ const r=pal[i*4], g=pal[i*4+1], b=pal[i*4+2]; const x=(i/rc)*W; ctx.fillStyle=`rgb(${r},${g},${b})`; ctx.fillRect(x,0,W/rc+1,H); }
+      }
+    }
+    // green ramp
+    const cg = root.querySelector('#ramp-canvas-green');
+    if(cg){
+      const ctx = cg.getContext('2d'); const W=cg.width, H=cg.height; ctx.clearRect(0,0,W,H);
+      const ramps = currentData.accentRamps || [];
+      const second = ramps[1] || currentData.greenRamp || { count:32 };
+      const rc = second.count ?? 32;
+      const startIdx = (currentData.accentRamps?.[0]?.count ?? currentData.brownRamp?.count ?? 32);
+      if(rc<=0){ ctx.fillStyle='#222'; ctx.fillRect(0,0,W,H); } else {
+        for(let i=0;i<rc;i++){ const idx=startIdx+i; if(idx>=256) break; const r=pal[idx*4], g=pal[idx*4+1], b=pal[idx*4+2]; const x=(i/rc)*W; ctx.fillStyle=`rgb(${r},${g},${b})`; ctx.fillRect(x,0,W/rc+1,H); }
+      }
+    }
+    // regular desaturated
+    const cr = root.querySelector('#regular-canvas');
+    if(cr){
+      const ctx=cr.getContext('2d'); const W=cr.width, H=cr.height; ctx.clearRect(0,0,W,H);
+      const accentTotal = (currentData.accentRamps||[]).reduce((s,r)=>s+(r.count|0),0) || 64;
+      const regCount = currentData.regularColors?.count ?? 128;
+      for(let i=0;i<regCount;i++){ const idx=accentTotal+i; if(idx>=256) break; const r=pal[idx*4], g=pal[idx*4+1], b=pal[idx*4+2]; const x=(i/regCount)*W; ctx.fillStyle=`rgb(${r},${g},${b})`; ctx.fillRect(x,0,W/regCount+1,H); }
+    }
+    // gray
+    const cg2 = root.querySelector('#gray-canvas');
+    if(cg2){
+      const ctx=cg2.getContext('2d'); const W=cg2.width, H=cg2.height; ctx.clearRect(0,0,W,H);
+      const accentTotal = (currentData.accentRamps||[]).reduce((s,r)=>s+(r.count|0),0) || 64;
+      const regCount = currentData.regularColors?.count ?? 128;
+      const grayStart = accentTotal+regCount;
+      const grayCount = 256 - grayStart;
+      for(let i=0;i<grayCount;i++){ const idx=grayStart+i; const r=pal[idx*4]; const x=(i/grayCount)*W; ctx.fillStyle=`rgb(${r},${r},${r})`; ctx.fillRect(x,0,W/grayCount+1,H); }
     }
   }
 
@@ -752,18 +924,20 @@ function buildForm(container, obj, path) {
       if (key.startsWith('_')) continue;
       if (key === 'docs' || key === 'ui' || key === 'ranges' || key === 'schema' || key === 'editor') continue;
       const val = obj[key]; const fp = path ? `${path}.${key}` : key;
-      // For palette config, brownRamp and customColors are managed by custom visual editor — show hint instead of duplicate nested form at top level
-      if (isPaletteConfig() && path === '' && (key === 'brownRamp' || key === 'customColors' || key === 'cubeLevels')) {
+      // For palette config, accent ramps etc are managed by custom visual editor — show hint but still allow nested editing
+      if (isPaletteConfig() && path === '' && (key === 'brownRamp' || key === 'greenRamp' || key === 'accentRamps' || key === 'regularColors' || key === 'customColors' || key === 'cubeLevels' || (key === 'grayscale' && typeof val === 'object' && ('count' in val || 'from' in val)))) {
         const fg = document.createElement('div'); fg.className='field-group';
-        const lbl = document.createElement('label'); lbl.className='field-label'; lbl.textContent = key.replace(/([A-Z])/g, ' $1').replace(/^./, s => s.toUpperCase()) + ' — managed above'; fg.appendChild(lbl);
-        const hint = document.createElement('div'); hint.className='field-hint'; hint.textContent = key === 'brownRamp' ? 'Tweak via color pickers in visual editor above.' : key === 'customColors' ? 'Overrides edited by clicking swatches above. Also editable below in raw nested list.' : 'Cube levels for smooth256/doom styles — edit below if needed.';
+        const lbl = document.createElement('label'); lbl.className='field-label'; lbl.textContent = key.replace(/([A-Z])/g, ' $1').replace(/^./, s => s.toUpperCase()) + ' — managed above (visual editor)'; fg.appendChild(lbl);
+        const hint = document.createElement('div'); hint.className='field-hint';
+        if (key === 'brownRamp') hint.textContent = 'Legacy brown ramp — synced to accentRamps[0]. Tweak via color pickers above.';
+        else if (key === 'greenRamp') hint.textContent = 'Second accent — natural green, synced to accentRamps[1]. Configurable per level/architecture later.';
+        else if (key === 'accentRamps') hint.textContent = '2 accent ramps with good banding: brown + natural green, 32+32 entries. Editable above, supports per-arch override later.';
+        else if (key === 'regularColors') hint.textContent = '128 desaturated regular colour variations — low saturation 0.25-0.6, golden-angle hue distribution.';
+        else if (key === 'grayscale') hint.textContent = '64 smooth grayscale gradient, gamma-correctable.';
+        else if (key === 'customColors') hint.textContent = 'Overrides edited by clicking swatches above.';
+        else hint.textContent = 'Cube levels for smooth256 style.';
         fg.appendChild(hint);
-        if (key !== 'brownRamp') {
-          const sub = document.createElement('div'); sub.className='nested-object'; buildForm(sub, val, fp); fg.appendChild(sub);
-        } else {
-          // for brownRamp we still want to show nested editing as fallback, but collapsed hint
-          const sub = document.createElement('div'); sub.className='nested-object'; buildForm(sub, val, fp); fg.appendChild(sub);
-        }
+        const sub = document.createElement('div'); sub.className='nested-object'; buildForm(sub, val, fp); fg.appendChild(sub);
         container.appendChild(fg);
         continue;
       }
