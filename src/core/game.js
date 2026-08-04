@@ -415,6 +415,11 @@ export class Game {
         this.cfg.torchColors = data.torchColors || this.cfg.torchColors;
         if (data.maxLights && this.renderer) this.renderer.maxLights = data.maxLights;
         if (this.renderer?.lightManager && typeof this.renderer.lightManager.setConfig === 'function') this.renderer.lightManager.setConfig(data);
+        // FIX: lighting.json contains player torch (dead-code bug) — propagate to player so live edits work
+        if (data.player && this.player && typeof this.player.setConfig === 'function') {
+          // this.cfg already has lighting updated, so getLightSource() will see new values
+          this.player.setConfig(this.cfg);
+        }
         break;
       }
       case 'sprites': {

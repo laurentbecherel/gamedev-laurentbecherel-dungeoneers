@@ -414,16 +414,37 @@ function buildForm(container, obj, path) {
         const hint = document.createElement("div"); hint.className = "field-hint"; hint.textContent = "Empty = null"; fg.appendChild(hint);
       } else if (Array.isArray(val) && val.length === 3 && val.every(n => typeof n === "number")) {
         const row = document.createElement("div"); row.style.display = "flex"; row.style.gap = "8px"; row.style.alignItems = "center";
-        const toHex = arr => "#" + arr.map(n => Math.max(0, Math.min(255, Math.round(n))).toString(16).padStart(2, "0")).join("");
-        const fromHex = hex => { const m = hex.match(/^#?([0-9a-f]{2})([0-9a-f]{2})([0-9a-f]{2})$/i); return m ? [parseInt(m[1], 16), parseInt(m[2], 16), parseInt(m[3], 16)] : val; };
+        const isNorm = val.every(n => n >= 0 && n <= 1.5);
+        const toHex = arr => "#" + arr.map(n => {
+          const v = isNorm ? n * 255 : n;
+          return Math.max(0, Math.min(255, Math.round(v))).toString(16).padStart(2, "0");
+        }).join("");
+        const fromHex = hex => {
+          const m = hex.match(/^#?([0-9a-f]{2})([0-9a-f]{2})([0-9a-f]{2})$/i);
+          if (!m) return val;
+          const rgb = [parseInt(m[1], 16), parseInt(m[2], 16), parseInt(m[3], 16)];
+          return isNorm ? rgb.map(v => +(v/255).toFixed(3)) : rgb;
+        };
         const col = document.createElement("input"); col.type = "color"; col.value = toHex(val); col.style.width = "44px"; col.style.height = "36px"; col.style.border = "none"; col.style.borderRadius = "6px"; col.style.cursor = "pointer";
         const nums = document.createElement("div"); nums.style.display = "flex"; nums.style.gap = "4px"; nums.style.flex = "1";
-        const inputs = [0, 1, 2].map(i => { const inp = document.createElement("input"); inp.type = "number"; inp.className = "field-input"; inp.value = val[i]; inp.min = "0"; inp.max = "255"; inp.style.width = "0"; inp.style.flex = "1"; return inp; });
-        const update = () => { const arr = inputs.map(inp => parseInt(inp.value) || 0); col.value = toHex(arr); setByPath(currentData, fp, arr); triggerLiveChange(); };
+        const inputs = [0, 1, 2].map(i => {
+          const inp = document.createElement("input");
+          inp.type = "number"; inp.className = "field-input"; inp.value = val[i];
+          if (isNorm) { inp.min = "0"; inp.max = "1"; inp.step = "0.01"; }
+          else { inp.min = "0"; inp.max = "255"; inp.step = "1"; }
+          inp.style.width = "0"; inp.style.flex = "1"; return inp;
+        });
+        const update = () => {
+          const arr = inputs.map(inp => parseFloat(inp.value) || 0);
+          col.value = toHex(arr); setByPath(currentData, fp, arr); triggerLiveChange();
+        };
         col.oninput = () => { const arr = fromHex(col.value); inputs.forEach((inp, i) => inp.value = arr[i]); setByPath(currentData, fp, arr); triggerLiveChange(); };
         inputs.forEach(inp => inp.oninput = update); row.appendChild(col); inputs.forEach(inp => nums.appendChild(inp)); row.appendChild(nums); fg.appendChild(row);
         const docForCol = getDocForPath(fp);
         if (docForCol) { const hint = document.createElement("div"); hint.className = "field-hint"; hint.textContent = docForCol; fg.appendChild(hint); }
+        else if (isNorm) {
+          const hint = document.createElement("div"); hint.className = "field-hint"; hint.textContent = "Normalized 0..1 (HDR friendly)"; fg.appendChild(hint);
+        }
       } else if (Array.isArray(val)) { const sub = document.createElement("div"); sub.className = "nested-array"; buildForm(sub, val, fp); fg.appendChild(sub);
       } else if (typeof val === "object") {
         if (key === 'note' || key === 'structure' || key === 'delegation') {

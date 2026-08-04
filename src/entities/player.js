@@ -428,18 +428,32 @@ export class Player {
 
   getLightSource() {
     const pc = this._resolvePlayerCfg();
-    const cfg = pc.light ?? {};
+    // Merge path: player.json light is primary, but lighting.json player is authoritative fallback / override
+    // This fixes dead-code bug where lighting.json player edits never took effect (user reported).
+    const lightFromPlayerJson = pc.light ?? {};
+    const lightFromLightingJson = this._cfg?.lighting?.player ?? {};
+    // Lighting overrides player json so that editor's PLAYER section (lighting/lighting.json) actually works.
+    const cfg = { ...lightFromPlayerJson, ...lightFromLightingJson };
+
     const h = pc.height ?? this.height ?? 0.5;
-    const lh = cfg.height ?? 0.45;
-    const col = cfg.color ?? [1, 0.9, 0.7];
+    const lh = cfg.height ?? lightFromPlayerJson.height ?? 0.45;
+    const col = cfg.color ?? lightFromPlayerJson.color ?? [1, 0.9, 0.7];
+    const intensity = cfg.intensity ?? lightFromPlayerJson.intensity ?? 1.8;
+    const radius = cfg.radius ?? lightFromPlayerJson.radius ?? 4.5;
+    const noShadow = cfg.noShadow ?? lightFromPlayerJson.noShadow ?? true;
+    const enabled = cfg.enabled ?? lightFromPlayerJson.enabled ?? true;
+
     // Light does not bob vertically — keeps torch steady while camera bobs via u_bobPixels
+    // If disabled, return 0 intensity so renderer still keeps slot but no contribution.
     return {
       x: this.x,
       y: this.y,
       z: h + lh,
       color: col,
-      intensity: cfg.intensity ?? 1.8,
-      radius: cfg.radius ?? 4.5,
+      intensity: enabled ? intensity : 0,
+      radius,
+      noShadow: !!noShadow,
+      enabled: !!enabled,
     };
   }
 

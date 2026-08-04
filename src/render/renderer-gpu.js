@@ -1483,7 +1483,9 @@ export class GPURenderer {
       color: playerLight.color,
       intensity: playerLight.intensity,
       radius: playerLight.radius,
-      type: 'point', typeId: 0, dir: [0,0,-1], coneInner:0.85, coneOuter:0.65, pulseSpeed:0, pulseAmount:0, noShadow:true, flickerSpeed:0, flickerAmount:0, phase:0,
+      type: 'point', typeId: 0, dir: [0,0,-1], coneInner:0.85, coneOuter:0.65, pulseSpeed:0, pulseAmount:0,
+      noShadow: playerLight.noShadow ?? true,
+      flickerSpeed:0, flickerAmount:0, phase:0,
     });
     for (let i = 0; i < envLights.length && lightList.length < this.maxLights; i++) {
       const L = envLights[i];
