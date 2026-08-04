@@ -5,8 +5,9 @@ vec3 octaDecodeSSR(vec2 enc){ vec2 f=enc*2.0-1.0; vec3 n=vec3(f.x,f.y,1.0-abs(f.
 
 // world -> screen UV for raycast cam - FIXED Y sign (was inverted, causing weird orientation)
 // forwardDist = dot(world-cam, dir), rightDist = dot(world-cam, right), cameraX = rightDist/forwardDist/planeLen, uvX = cameraX*0.5+0.5
-// uvY = 0.5 - (eyeZ - worldZ)/forwardDist * fovFactor *0.5 (was + before, inverted)
-vec3 worldToScreenUVSSR(vec3 worldPos, vec2 camPos, float eyeZ, float playerAngle, float planeLen, vec2 resolution, out float forwardDist){
+// uvY = 0.5 - (eyeZ - worldZ)/forwardDist * fovFactor *0.5 + bobPixels/resY (bob is screen-space vertical shift from renderer-gpu.js)
+// NOTE: bobPixels is same value used in main pass (u_bobPixels) — must be added so SSR samples sceneTex/gNormalDepth which are bobbed.
+vec3 worldToScreenUVSSR(vec3 worldPos, vec2 camPos, float eyeZ, float playerAngle, float planeLen, vec2 resolution, float bobPixels, out float forwardDist){
   float dx = worldPos.x - camPos.x;
   float dy = worldPos.y - camPos.y;
   float dirX = cos(playerAngle);
@@ -20,13 +21,16 @@ vec3 worldToScreenUVSSR(vec3 worldPos, vec2 camPos, float eyeZ, float playerAngl
   float uvX = cameraX * 0.5 + 0.5;
   float fovFactor = 1.0 / max(0.0001, planeLen);
   float yShift = (eyeZ - worldPos.z) / forwardDist * fovFactor * 0.5;
-  float uvY = 0.5 - yShift; // FIXED: was + before, now - so floor (z=0) is below horizon 0.5
+  // Base projection without bob:
+  float uvY_noBob = 0.5 - yShift;
+  // Main pass does: fragCoord = (1 - v_uv)*res.y + bobPixels => v_uv = uv_noBob + bobPixels/res.y
+  float uvY = uvY_noBob + bobPixels / max(1.0, resolution.y);
   return vec3(uvX, uvY, 0.0);
 }
 
 struct SSRResult{ vec3 color; float hit; float fade; float rayLength; vec2 hitUV; };
 
-SSRResult traceScreenSpaceRaySSR(in vec2 startUV, in vec3 N, in vec3 V, in float linearDepth, in float puddleMask, in float roughness, in sampler2D sceneTex, in sampler2D gNormalDepthTex, in sampler2D blueNoiseTex, in vec2 resolution, in int steps, in int binarySteps, in float maxDistance, in float thickness, in float stride, in float jitter, in float depthBias, in float zThicknessScale, in float maxRayAngle, in vec2 camPos, in float eyeZ, in float playerAngle, in float planeLen){
+SSRResult traceScreenSpaceRaySSR(in vec2 startUV, in vec3 N, in vec3 V, in float linearDepth, in float puddleMask, in float roughness, in sampler2D sceneTex, in sampler2D gNormalDepthTex, in sampler2D blueNoiseTex, in vec2 resolution, in int steps, in int binarySteps, in float maxDistance, in float thickness, in float stride, in float jitter, in float depthBias, in float zThicknessScale, in float maxRayAngle, in vec2 camPos, in float eyeZ, in float playerAngle, in float planeLen, in float bobPixels){
   SSRResult res; res.color=vec3(0.0); res.hit=0.0; res.fade=0.0; res.rayLength=0.0; res.hitUV=startUV;
   vec3 R = reflect(-V, N);
   // low roughness mirror should have minimal jitter
@@ -58,7 +62,7 @@ SSRResult traceScreenSpaceRaySSR(in vec2 startUV, in vec3 N, in vec3 V, in float
     if (tRay > maxDistance) break;
     vec3 reflectedWorld = worldPos + R * tRay;
     float fwDist;
-    vec3 proj = worldToScreenUVSSR(reflectedWorld, camPos, eyeZ, playerAngle, planeLen, resolution, fwDist);
+    vec3 proj = worldToScreenUVSSR(reflectedWorld, camPos, eyeZ, playerAngle, planeLen, resolution, bobPixels, fwDist);
     vec2 uv = proj.xy;
     if (uv.x < -0.15 || uv.x > 1.15 || uv.y < -0.15 || uv.y > 1.15) { tRay += tStep; tStep *= stride; continue; }
     float sampledDepthNorm = texture(gNormalDepthTex, uv).b;
@@ -80,7 +84,7 @@ SSRResult traceScreenSpaceRaySSR(in vec2 startUV, in vec3 N, in vec3 V, in float
         float midT = mix(lowT, highT, 0.5);
         vec3 midW = worldPos + R * midT;
         float midFd;
-        vec3 midProj = worldToScreenUVSSR(midW, camPos, eyeZ, playerAngle, planeLen, resolution, midFd);
+        vec3 midProj = worldToScreenUVSSR(midW, camPos, eyeZ, playerAngle, planeLen, resolution, bobPixels, midFd);
         float midDepthNorm = texture(gNormalDepthTex, midProj.xy).b;
         float midLin = midDepthNorm * maxDistance;
         float midDiff = midFd - midLin;
@@ -88,7 +92,7 @@ SSRResult traceScreenSpaceRaySSR(in vec2 startUV, in vec3 N, in vec3 V, in float
       }
       vec3 finalW = worldPos + R * highT;
       float finalFd;
-      vec3 finalProj = worldToScreenUVSSR(finalW, camPos, eyeZ, playerAngle, planeLen, resolution, finalFd);
+      vec3 finalProj = worldToScreenUVSSR(finalW, camPos, eyeZ, playerAngle, planeLen, resolution, bobPixels, finalFd);
       res.hitUV = finalProj.xy;
       res.color = texture(sceneTex, finalProj.xy).rgb;
       res.rayLength = highT;
@@ -102,7 +106,7 @@ SSRResult traceScreenSpaceRaySSR(in vec2 startUV, in vec3 N, in vec3 V, in float
     // fallback with proper projection - sample forward wall
     vec3 fallbackW = worldPos + R * (maxDistance * 0.5);
     float fDist;
-    vec3 fProj = worldToScreenUVSSR(fallbackW, camPos, eyeZ, playerAngle, planeLen, resolution, fDist);
+    vec3 fProj = worldToScreenUVSSR(fallbackW, camPos, eyeZ, playerAngle, planeLen, resolution, bobPixels, fDist);
     vec2 fUV = clamp(fProj.xy, 0.0, 1.0);
     // only if fUV is in upper half (walls), not floor again
     if (fUV.y > 0.52) {

@@ -711,6 +711,7 @@ uniform float u_ssrFresnelMin;
 uniform float u_ssrFresnelMax;
 uniform float u_ssrBlendStrength;
 uniform int u_ssrDebugMode;
+uniform float u_bobPixels;
 
 ${glslSSR}
 
@@ -757,7 +758,7 @@ void main(){
   int steps = u_ssrSteps > 0 ? u_ssrSteps : 32;
   int binarySteps = u_ssrBinarySteps >=0 ? u_ssrBinarySteps : 4;
   // proper world->screen projection fixes orientation weirdness you saw
-  SSRResult r = traceScreenSpaceRaySSR(v_uv, N, V, linearDepth, puddleMask, 0.04, u_sceneColor, u_gNormalDepth, u_blueNoise, u_resolution, steps, binarySteps, u_ssrMaxDistance, u_ssrThickness, u_ssrStride, u_ssrJitter, u_ssrDepthBias, u_ssrZThicknessScale, u_ssrMaxRayAngle, u_playerPos, 0.5, u_playerAngle, planeLen);
+  SSRResult r = traceScreenSpaceRaySSR(v_uv, N, V, linearDepth, puddleMask, 0.04, u_sceneColor, u_gNormalDepth, u_blueNoise, u_resolution, steps, binarySteps, u_ssrMaxDistance, u_ssrThickness, u_ssrStride, u_ssrJitter, u_ssrDepthBias, u_ssrZThicknessScale, u_ssrMaxRayAngle, u_playerPos, 0.5, u_playerAngle, planeLen, u_bobPixels);
   float edgeFade = 1.0 - smoothstep(u_ssrEdgeFadeStart, u_ssrEdgeFadeEnd, max(abs(r.hitUV.x - 0.5), abs(r.hitUV.y - 0.5)) * 2.0);
   float distFade = 1.0 - smoothstep(u_ssrDistanceFadeStart, u_ssrDistanceFadeEnd, r.rayLength);
   float fresnel = u_ssrFresnelMin + (u_ssrFresnelMax - u_ssrFresnelMin) * pow(1.0 - NdotV, u_ssrFresnelPower);

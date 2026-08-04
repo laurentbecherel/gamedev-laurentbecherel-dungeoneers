@@ -1452,7 +1452,7 @@ export class GPURenderer {
         gl.activeTexture(gl.TEXTURE2); gl.bindTexture(gl.TEXTURE_2D, this.blueNoiseTex);
         const ulSSR = this.uSSR;
         if (!ulSSR._inited) {
-          const names = ['u_sceneColor','u_gNormalDepth','u_blueNoise','u_resolution','u_playerPos','u_playerAngle','u_fov','u_time','u_ssrDepthRange','u_ssrEnabled','u_ssrMinPuddleMask','u_ssrNormalThreshold','u_ssrMaxGrazingAngle','u_ssrSteps','u_ssrBinarySteps','u_ssrMaxDistance','u_ssrThickness','u_ssrStride','u_ssrJitter','u_ssrDepthBias','u_ssrZThicknessScale','u_ssrMaxRayAngle','u_ssrEdgeFadeStart','u_ssrEdgeFadeEnd','u_ssrDistanceFadeStart','u_ssrDistanceFadeEnd','u_ssrFresnelPower','u_ssrFresnelMin','u_ssrFresnelMax','u_ssrBlendStrength','u_ssrDebugMode'];
+          const names = ['u_sceneColor','u_gNormalDepth','u_blueNoise','u_resolution','u_playerPos','u_playerAngle','u_fov','u_time','u_ssrDepthRange','u_ssrEnabled','u_ssrMinPuddleMask','u_ssrNormalThreshold','u_ssrMaxGrazingAngle','u_ssrSteps','u_ssrBinarySteps','u_ssrMaxDistance','u_ssrThickness','u_ssrStride','u_ssrJitter','u_ssrDepthBias','u_ssrZThicknessScale','u_ssrMaxRayAngle','u_ssrEdgeFadeStart','u_ssrEdgeFadeEnd','u_ssrDistanceFadeStart','u_ssrDistanceFadeEnd','u_ssrFresnelPower','u_ssrFresnelMin','u_ssrFresnelMax','u_ssrBlendStrength','u_ssrDebugMode','u_bobPixels'];
           names.forEach(n => ulSSR[n] = gl.getUniformLocation(this.ssrProgram, n));
           ulSSR._inited = true;
         }
@@ -1492,6 +1492,7 @@ export class GPURenderer {
         if (ulSSR.u_ssrFresnelMax) gl.uniform1f(ulSSR.u_ssrFresnelMax, ssrF.fresnelMax ?? 1.0);
         if (ulSSR.u_ssrBlendStrength) gl.uniform1f(ulSSR.u_ssrBlendStrength, ssrF.blendStrength ?? 1.0);
         if (ulSSR.u_ssrDebugMode) gl.uniform1i(ulSSR.u_ssrDebugMode, this.ssrDebugMode ?? ssrD.mode ?? 0);
+        if (ulSSR.u_bobPixels) gl.uniform1f(ulSSR.u_bobPixels, bobPixels);
         gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
         gl.bindVertexArray(null);
       }
