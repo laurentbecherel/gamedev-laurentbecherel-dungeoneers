@@ -507,6 +507,7 @@ export class GPURenderer {
     this.uQuant.lut = gl.getUniformLocation(this.quantProgram, 'u_lut');
     this.uQuant.authentic = gl.getUniformLocation(this.quantProgram, 'u_authentic');
     this.uQuant.style = gl.getUniformLocation(this.quantProgram, 'u_paletteStyle');
+    this.uQuant.pbrDebugMode = gl.getUniformLocation(this.quantProgram, 'u_pbrDebugMode');
     gl.uniform1i(this.uQuant.scene, 0);
     gl.uniform1i(this.uQuant.palette, 1);
     gl.uniform1i(this.uQuant.lut, 2);
@@ -1674,6 +1675,7 @@ export class GPURenderer {
       gl.uniform1i(this.uQuant.lut, 2);
       gl.uniform1i(this.uQuant.authentic, 0);
       gl.uniform1i(this.uQuant.style, 2);
+      if (this.uQuant.pbrDebugMode) gl.uniform1i(this.uQuant.pbrDebugMode, this.pbrDebugMode);
       gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
       gl.bindVertexArray(null);
     } else {
@@ -1691,6 +1693,7 @@ export class GPURenderer {
       gl.uniform1i(this.uQuant.authentic, this.authentic ? 1 : 0);
       const palMap = { doom: 0, smooth256: 1, truecolor: 2, grayscale: 3, sepia: 4 };
       gl.uniform1i(this.uQuant.style, palMap[this.paletteStyle] ?? 0);
+      if (this.uQuant.pbrDebugMode) gl.uniform1i(this.uQuant.pbrDebugMode, this.pbrDebugMode);
       gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
       gl.bindVertexArray(null);
     }

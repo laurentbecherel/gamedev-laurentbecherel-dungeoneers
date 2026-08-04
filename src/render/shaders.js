@@ -478,10 +478,12 @@ uniform sampler2D u_palette;
 uniform sampler2D u_lut;
 uniform int u_authentic;
 uniform int u_paletteStyle;
+uniform int u_pbrDebugMode;
 out vec4 outColor;
 void main(){
   vec4 sc = texture(u_scene, v_uv);
-  if (u_authentic == 0 || u_paletteStyle == 2) { outColor = sc; return; }
+  // Bypass quantization for PBR debug (moss/puddle bright masks) - keep BIG BLUE/PINK/GREEN unquantized
+  if (u_authentic == 0 || u_paletteStyle == 2 || u_pbrDebugMode != 0) { outColor = sc; return; }
   ivec2 lutCoord = ivec2(int(sc.r * 31.99) + int(sc.g * 31.99) * 32, int(sc.b * 31.99));
   float palIdx = float(texture(u_lut, (vec2(lutCoord) + 0.5) / vec2(1024.0, 32.0)).r * 255.0) / 255.0;
   vec3 palCol = texture(u_palette, vec2(palIdx + 0.5/256.0, 0.5)).rgb;
