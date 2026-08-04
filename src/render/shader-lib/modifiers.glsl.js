@@ -230,14 +230,29 @@ void applyModifiers(inout vec3 albedo, inout vec3 N, inout float rough, inout fl
   threshold = mix(threshold, 0.55, step(threshold, 0.001));
   feather = mix(feather, 0.12, step(feather, 0.001));
 
-  // Moss - raw R, 0 noise (CPU baked), cheap
+  // Moss - wall-aware, higher freq, still cheap (1 noise vs 9)
   float mossHas = step(0.001, mossCell);
-  float mossMask = mossCell * mossHas;
-  vec3 mossAlbedo = vec3(0.18, 0.42, 0.15);
-  albedo = mix(albedo, mossAlbedo, mossMask * 0.60 * mossHas);
-  rough = clamp(rough + 0.25 * mossMask * mossHas, 0.0, 1.0);
-  metal = mix(metal, 0.0, mossMask * 0.65 * mossHas);
-  ao *= (1.0 - mossMask * 0.10 * mossHas);
+  // Wall-aware coords: floor uses XY, walls use XZ/YZ with Z variation to avoid uniform vertical
+  float isFloor = step(0.5, isFloorSurface);
+  vec2 mossCoordFloor = worldPos.xy * 0.85; // higher scale = more variation
+  vec2 mossCoordWall = vec2((worldPos.x + worldPos.y) * 0.45, worldPos.z * 1.6);
+  vec2 mossCoord = mix(mossCoordWall, mossCoordFloor, isFloor);
+  // Ceiling vs floor: add offset to make ceiling different from floor even same XY
+  mossCoord += vec2(step(0.5, worldPos.z) * 7.3, 0.0); // ceiling z~1.15 vs floor 0
+  float mossVar = valueNoise2D(mossCoord);
+  float mossMask = mossCell * mossHas * (0.75 + 0.35 * mossVar);
+  // Extra detail clump via second noise (2 total vs 9) - cheap
+  float mossDetail = valueNoise2D(mossCoord * 2.1 + vec2(11.3, 23.7)) * 0.25;
+  mossMask *= (0.85 + mossDetail);
+  vec3 mossAlbedo = vec3(0.18, 0.42, 0.15) * (0.88 + 0.22 * mossVar);
+  albedo = mix(albedo, mossAlbedo, mossMask * 0.65 * mossHas);
+  rough = clamp(rough + 0.30 * mossMask * mossHas, 0.0, 1.0);
+  metal = mix(metal, 0.0, mossMask * 0.70 * mossHas);
+  ao *= (1.0 - mossMask * 0.12 * mossHas);
+  // Height fill: lumpy filling via normal bias to up, varies with Z for walls
+  vec3 mossUp = vec3(0.0, 0.0, 1.0);
+  float wallBias = mix(0.85, 0.55, isFloor);
+  N = normalize(mix(N, mossUp, mossMask * 0.30 * wallBias * mossHas));
 
   // Puddle - perfect organic noise restored (was perfect before moss)
   float floorHas = step(0.5, isFloorSurface);

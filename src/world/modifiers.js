@@ -156,17 +156,18 @@ export function generateModifierMap(dungeon, config) {
     if(!isFloor) puddleI *= 0.02;
     puddleI = Math.max(0, Math.min(1, puddleI));
 
-    // Moss: skip heavy FBM if roleMoss=0 for fast puddle-only
+    // Moss: higher freq + more octaves for variation, still CPU once
     let mossI = 0;
     if (roleMoss > 0.001) {
-      const mossScale = 0.35;
-      const mossLarge = fbm(xc * mossScale, yc * mossScale, seed+333, 3);
-      let mt = (mossLarge - 0.30) / Math.max(0.0001, 0.24);
+      const mossScale = 0.85; // was 0.35 - higher = more variation, smaller clumps
+      const mossLarge = fbm(xc * mossScale, yc * mossScale, seed+333, 4); // was 3 octaves -> 4
+      const mossDetail = fbm(xc * mossScale * 2.2 + 17.3, yc * mossScale * 2.2 + 31.7, seed+334, 2) * 0.35;
+      let mt = (mossLarge + mossDetail - 0.35) / Math.max(0.0001, 0.26);
       mt = Math.max(0, Math.min(1, mt));
       mt = smooth(mt);
-      let mossShape = mt * (0.5 + 0.5 * medNoise);
-      const wallFactor = isFloor ? (isNearWall(x,y) ? 1.35 : 0.60) : 1.0;
-      mossI = roleMoss * mossShape * wallFactor * (0.45 + 0.55 * globalN);
+      let mossShape = mt * (0.55 + 0.45 * medNoise);
+      const wallFactor = isFloor ? (isNearWall(x,y) ? 1.40 : 0.55) : 1.05;
+      mossI = roleMoss * mossShape * wallFactor * (0.40 + 0.60 * globalN);
       mossI = Math.max(0, Math.min(1, mossI));
     }
 
