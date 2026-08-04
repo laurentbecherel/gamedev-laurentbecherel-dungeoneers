@@ -391,7 +391,8 @@ void main() {
 
   vec2 modUVf = (u_playerPos + ray * perpDist) / u_mapSize;
   float puddleCellf = texture(u_modifierMap, modUVf).b;
-  float gMaskFloorPuddle = puddleCellf; // raw B, no computePuddleMaskTweakable
+  vec3 worldPosf = vec3(u_playerPos + ray * perpDist, 0.0);
+  float gMaskFloorPuddle = computePuddleMaskTweakable(worldPosf, 0.5, 1.0, puddleCellf);
 
   vec3 gNormalCeil = vec3(0.0, 0.0, -1.0);
   vec3 gNormalFloor = vec3(0.0, 0.0, 1.0);
@@ -406,7 +407,8 @@ void main() {
   vec2 fw = u_playerPos + ray * perpDist;
   vec2 modUVf2 = fw / u_mapSize;
   float pc = texture(u_modifierMap, modUVf2).b;
-  float gMaskFromFloor = pc * condFloor;
+  vec3 wp2 = vec3(fw, 0.0);
+  float gMaskFromFloor = computePuddleMaskTweakable(wp2, 0.5, 1.0, pc) * condFloor;
   float gMaskFromMid = gMaskFloorPuddle * condW1 * hitF;
 
   vec3 gNormalFromNoHit = mix(gNormalCeil, gNormalFloor, condFloor);

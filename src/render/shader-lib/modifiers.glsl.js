@@ -230,38 +230,49 @@ void applyModifiers(inout vec3 albedo, inout vec3 N, inout float rough, inout fl
   threshold = mix(threshold, 0.55, step(threshold, 0.001));
   feather = mix(feather, 0.12, step(feather, 0.001));
 
-  // Zero-branch moss + puddle - raw channels, multiply by 0 neutral
+  // Moss - raw R, 0 noise (CPU baked), cheap
   float mossHas = step(0.001, mossCell);
   float mossMask = mossCell * mossHas;
   vec3 mossAlbedo = vec3(0.18, 0.42, 0.15);
-  albedo = mix(albedo, mossAlbedo, mossMask * 0.60 * 0.85);
+  albedo = mix(albedo, mossAlbedo, mossMask * 0.60 * mossHas);
   rough = clamp(rough + 0.25 * mossMask * mossHas, 0.0, 1.0);
   metal = mix(metal, 0.0, mossMask * 0.65 * mossHas);
   ao *= (1.0 - mossMask * 0.10 * mossHas);
 
+  // Puddle - perfect organic noise restored (was perfect before moss)
   float floorHas = step(0.5, isFloorSurface);
   float puddleHas = step(0.001, puddleCell) * floorHas;
-  float puddleMask = puddleCell * puddleHas;
+  float puddleCellForMask = puddleCell * puddleHas;
+  float puddleMask = computePuddleMaskTweakable(worldPos, matHeight, ao, puddleCellForMask);
   float puddleHas2 = step(0.001, puddleMask);
   puddleMask *= puddleHas2;
 
-  // Minimal puddle - raw B, no valueNoise/fbm for speed, multiply by 0 neutral
   vec3 darkBaseCol = albedo * darkBase;
   vec3 puddleTint = mix(darkBaseCol, puddleAlbedo, tintMix);
   albedo = mix(albedo, puddleTint, puddleMask * colorStrength * puddleHas2);
 
+  float edge = puddleMask * (1.0 - puddleMask);
+  edge = smoothstep(edgeLow, edgeHigh, edge) * edgeFoam * puddleHas2;
+  albedo = mix(albedo, albedo + vec3(0.18, 0.175, 0.16) * edge, puddleHas2);
+
   float roughFeather = smoothstep(roughLow, roughHigh, puddleMask);
   rough = mix(rough, puddleRoughTarget, roughFeather * 0.97 * puddleHas2);
 
+  // Ripple for perfect puddle - uses valueNoise, was part of perfect look
   vec3 flatWater = vec3(0.0, 0.0, 1.0);
+  vec2 ripUV = worldPos.xy * rippleScale;
+  float r1 = valueNoise2D(ripUV);
+  float r2 = valueNoise2D(ripUV + vec2(13.5, 7.1));
+  vec3 rippleN = normalize(vec3((r1 - 0.5) * 0.25, (r2 - 0.5) * 0.25, 1.0));
   vec3 baseFlat = mix(N, flatWater, puddleMask * flatStrength * puddleHas2);
-  N = normalize(mix(N, baseFlat, puddleHas2));
+  float rippleMix = puddleMask * 0.28 * (0.5 + 0.5 * fbm2D_2(worldPos.xy * 0.52)) * puddleHas2;
+  N = normalize(mix(baseFlat, rippleN, rippleMix));
 
   metal = mix(metal, 0.0, puddleMask * metalMix * puddleHas2);
   ao *= (1.0 - puddleMask * aoMix * puddleHas2);
   float depressMask = puddleMask * floorDepress * puddleHas2;
-  ao *= 1.0 + depressMask * 0.6;
-  albedo *= 1.0 + depressMask * 0.15;
+  ao = mix(ao, ao * (1.0 + depressMask * 0.6), puddleHas2);
+  albedo = mix(albedo, albedo * (1.0 + depressMask * 0.15), puddleHas2);
 }
 
 void applyModifiers(inout vec3 albedo, inout vec3 N, inout float rough, inout float metal, inout float ao, in vec3 worldPos) {
