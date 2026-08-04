@@ -552,16 +552,27 @@ export class GPURenderer {
     gl.useProgram(this.program);
 
     // Full UBO for modifiers – binding point 1 (192 bytes = 12 vec4)
+    // Bind for main + all debug programs (they are copies of main, also use block)
+    const bindModsForProg = (prog) => {
+      try {
+        const idx = gl.getUniformBlockIndex(prog, 'ModifiersBlock');
+        if (idx !== gl.INVALID_INDEX && idx !== -1) {
+          bindUniformBlock(gl, prog, 'ModifiersBlock', 1);
+        }
+      } catch {}
+    };
     try {
       this.modifiersBlockBinding = 1;
       const blockIdx = gl.getUniformBlockIndex(this.program, 'ModifiersBlock');
       if (blockIdx !== gl.INVALID_INDEX && blockIdx !== -1) {
-        bindUniformBlock(gl, this.program, 'ModifiersBlock', this.modifiersBlockBinding);
+        bindModsForProg(this.program);
+        if (this.debugMossProgram) bindModsForProg(this.debugMossProgram);
+        if (this.debugPuddleProgram) bindModsForProg(this.debugPuddleProgram);
+        if (this.debugCombinedProgram) bindModsForProg(this.debugCombinedProgram);
         this.modifiersBlockIndex = blockIdx;
         this.modifiersUBO = createUniformBuffer(gl, 192, gl.DYNAMIC_DRAW);
         bindUniformBufferBase(gl, this.modifiersBlockBinding, this.modifiersUBO);
       } else {
-        // Fast path: shader uses individual uniforms (v11.2 instant ANGLE compile) – UBO not present, not an error
         this.modifiersBlockIndex = -1;
         this.modifiersUBO = null;
         console.log('[GPURenderer] ModifiersBlock not present – using fast individual uniforms path (instant compile)');
