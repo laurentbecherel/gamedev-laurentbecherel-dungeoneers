@@ -32,7 +32,13 @@ struct SSRResult{ vec3 color; float hit; float fade; float rayLength; vec2 hitUV
 
 SSRResult traceScreenSpaceRaySSR(in vec2 startUV, in vec3 N, in vec3 V, in float linearDepth, in float puddleMask, in float roughness, in sampler2D sceneTex, in sampler2D gNormalDepthTex, in sampler2D blueNoiseTex, in vec2 resolution, in int steps, in int binarySteps, in float maxDistance, in float thickness, in float stride, in float jitter, in float depthBias, in float zThicknessScale, in float maxRayAngle, in vec2 camPos, in float eyeZ, in float playerAngle, in float planeLen, in float bobPixels){
   SSRResult res; res.color=vec3(0.0); res.hit=0.0; res.fade=0.0; res.rayLength=0.0; res.hitUV=startUV;
-  vec3 R = reflect(-V, N);
+  // For puddles, use flat mirror normal for stable trace — rippled N causes white/grey flicker moving with ripples
+  vec3 traceN = N;
+  if (puddleMask > 0.05 && N.z > 0.3) {
+    // floor-like puddle: replace rippled normal with flat (0,0,1) to avoid ripple-driven miss/fallback toggle
+    traceN = vec3(0.0, 0.0, 1.0);
+  }
+  vec3 R = reflect(-V, traceN);
   // low roughness mirror should have minimal jitter
   float effectiveJitter = jitter * clamp(roughness * 4.0, 0.0, 1.0);
   if (abs(R.z) < 0.001) { R.z = 0.001; }
