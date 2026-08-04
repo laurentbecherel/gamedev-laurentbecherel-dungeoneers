@@ -43,11 +43,19 @@ vec3 debugFinalMossMask(in vec3 worldPos, in float matHeight, in float ao) {
   vec2 modUV = worldPos.xy / u_mapSize;
   vec4 mod1 = texture(u_modifierMap, modUV);
   float mossCell = mod1.r;
-  // For fast debug, use raw cell as mask (CPU baked already), no extra FBM
-  float mask = mossCell;
+  // Wall-aware variation: use Z for vertical, XY for floor, avoid uniform walls
+  float isFloorDbg = step(0.5, worldPos.z) > 0.5 ? 0.0 : 1.0; // approx floor z~0, wall z varies, ceil z>1
+  // For walls, add variation from worldPos.z and wallU via fract
+  float tunScale = modMossAlbedoRough.z > 0.001 ? modMossAlbedoRough.z : 0.85;
+  vec2 coordFloor = worldPos.xy * tunScale;
+  vec2 coordWall = vec2((worldPos.x + worldPos.y) * tunScale * 0.6, worldPos.z * tunScale * 1.8);
+  float isFloor = step(worldPos.z, 0.4); // floor low z, wall mid, ceil high
+  vec2 coord = mix(coordWall, coordFloor, isFloor);
+  float var = valueNoise2D(coord);
+  float mask = mossCell * (0.75 + 0.35 * var);
   float edge = mask * (1.0 - mask) * 4.0;
-  vec3 inside = vec3(0.18, 0.68, 0.18) * mask * 1.6; // BRIGHT GREEN
-  vec3 edgeCol = vec3(0.35, 1.0, 0.35) * edge * 0.9; // lighter green edge
+  vec3 inside = vec3(0.18, 0.68, 0.18) * mask * 1.6;
+  vec3 edgeCol = vec3(0.35, 1.0, 0.35) * edge * 0.9;
   vec3 bg = vec3(0.02, 0.02, 0.03);
   vec3 col = bg + inside + edgeCol;
   float high = step(0.5, mask);

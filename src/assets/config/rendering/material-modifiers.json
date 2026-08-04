@@ -111,9 +111,10 @@
       "heightAdd": 0.18,
       "normalStrength": 0.6,
       "colorStrength": 0.85,
-      "noiseScale": 0.35,
+      "noiseScale": 0.85,
       "threshold": 0.42,
-      "aoWeight": 0.7
+      "aoWeight": 0.7,
+      "octaves": 4
     },
     "damaged": {
       "enabled": false,

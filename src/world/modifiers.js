@@ -156,11 +156,13 @@ export function generateModifierMap(dungeon, config) {
     if(!isFloor) puddleI *= 0.02;
     puddleI = Math.max(0, Math.min(1, puddleI));
 
-    // Moss: higher freq + more octaves for variation, still CPU once
+    // Moss: higher freq + more octaves, tunable via material-modifiers.json moss.noiseScale
     let mossI = 0;
     if (roleMoss > 0.001) {
-      const mossScale = 0.85; // was 0.35 - higher = more variation, smaller clumps
-      const mossLarge = fbm(xc * mossScale, yc * mossScale, seed+333, 4); // was 3 octaves -> 4
+      const mm = modCfg.modifiers || {};
+      const mCfg = mm.moss || {};
+      const mossScale = mCfg.noiseScale ?? 0.85;
+      const mossLarge = fbm(xc * mossScale, yc * mossScale, seed+333, 4);
       const mossDetail = fbm(xc * mossScale * 2.2 + 17.3, yc * mossScale * 2.2 + 31.7, seed+334, 2) * 0.35;
       let mt = (mossLarge + mossDetail - 0.35) / Math.max(0.0001, 0.26);
       mt = Math.max(0, Math.min(1, mt));
