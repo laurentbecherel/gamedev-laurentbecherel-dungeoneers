@@ -90,6 +90,7 @@ export class GPURenderer {
     this.uComposite = {};
     this.ssrEnabled = 1;
     this.ssrDebugMode = 0;
+    this._ssrFileDebugMode = undefined;
     this._ssrCfgCache = null;
   }
 
@@ -693,7 +694,27 @@ export class GPURenderer {
   setSSRDebugMode(v){ this.ssrDebugMode = Math.max(0, Math.min(8, v|0)); }
   toggleSSR(){ this.ssrEnabled ^= 1; return this.ssrEnabled; }
   cycleSSRDebug(){ this.ssrDebugMode = (this.ssrDebugMode + 1) % 9; return this.ssrDebugMode; }
-  updateSSR(ssrCfg){ if(!ssrCfg) return; if(!this._cfgCache) this._cfgCache={}; this._cfgCache.ssr = ssrCfg; this._ssrCfgCache = ssrCfg; this.ssrEnabled = (ssrCfg.enabled!==false)?1:0; if(ssrCfg.debug && ssrCfg.debug.mode!==undefined) this.ssrDebugMode = ssrCfg.debug.mode|0; }
+  updateSSR(ssrCfg){
+    if(!ssrCfg) return;
+    if(!this._cfgCache) this._cfgCache={};
+    this._cfgCache.ssr = ssrCfg;
+    this._ssrCfgCache = ssrCfg;
+    this.ssrEnabled = (ssrCfg.enabled!==false)?1:0;
+    const fileMode = ssrCfg.debug && ssrCfg.debug.mode!==undefined ? ssrCfg.debug.mode|0 : 0;
+    // Preserve O-key debug toggle across live-edit tweaks:
+    // fileMode tracking: only overwrite ssrDebugMode when file's debug.mode actually changed.
+    // This prevents blur/mip edits (where debug.mode stays 0) from resetting an active O debug view.
+    if (this._ssrFileDebugMode === undefined) {
+      // first load - adopt file value
+      this.ssrDebugMode = fileMode;
+      this._ssrFileDebugMode = fileMode;
+    } else if (fileMode !== this._ssrFileDebugMode) {
+      // user explicitly edited debug.mode in JSON file - respect it
+      this.ssrDebugMode = fileMode;
+      this._ssrFileDebugMode = fileMode;
+    }
+    // else file mode unchanged -> keep current ssrDebugMode (preserve O toggle)
+  }
 
   toggleGridDebug() { this.gridDebug ^= 1; return this.gridDebug; }
   toggleLighting() { this.lightingEnabled ^= 1; return this.lightingEnabled; }
