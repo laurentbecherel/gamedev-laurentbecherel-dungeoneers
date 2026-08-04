@@ -154,7 +154,6 @@ vec3 shadeWallCell(in float wallU, in float wallV, in float matId, in float wc, 
   vec3 emissiveW = albedoRaw * emissiveAlbedoMul * rmaW.b * emissiveStrength;
   vec3 Nw = normalize(tangent * normalTSw.x + bitangent * normalTSw.y + Ngeom * normalTSw.z);
 
-  float cornerEn = float(hasCornerRound);
   float albBoost = u_cornerAlbedoBoost >= 0.0 ? u_cornerAlbedoBoost : 0.05;
   float roughMul = u_cornerRoughMul > 0.0 ? u_cornerRoughMul : 0.82;
   float aoMul = u_cornerAoMul > 0.0 ? u_cornerAoMul : 0.96;
