@@ -701,19 +701,18 @@ export class GPURenderer {
     this._ssrCfgCache = ssrCfg;
     this.ssrEnabled = (ssrCfg.enabled!==false)?1:0;
     const fileMode = ssrCfg.debug && ssrCfg.debug.mode!==undefined ? ssrCfg.debug.mode|0 : 0;
-    // Preserve O-key debug toggle across live-edit tweaks:
-    // fileMode tracking: only overwrite ssrDebugMode when file's debug.mode actually changed.
-    // This prevents blur/mip edits (where debug.mode stays 0) from resetting an active O debug view.
+    // Preserve O-key debug toggle across live-edit:
+    // After first load, NEVER overwrite ssrDebugMode from file.
+    // File's debug.mode is only used on initial page load; O key owns it afterwards.
+    // This fixes the bug where changing steps/blur/etc (file debug still 0) reset O view.
     if (this._ssrFileDebugMode === undefined) {
-      // first load - adopt file value
       this.ssrDebugMode = fileMode;
       this._ssrFileDebugMode = fileMode;
-    } else if (fileMode !== this._ssrFileDebugMode) {
-      // user explicitly edited debug.mode in JSON file - respect it
-      this.ssrDebugMode = fileMode;
+    } else {
+      // keep fileMode tracker up to date for potential future explicit reloads,
+      // but do NOT overwrite ssrDebugMode (preserve O toggle)
       this._ssrFileDebugMode = fileMode;
     }
-    // else file mode unchanged -> keep current ssrDebugMode (preserve O toggle)
   }
 
   toggleGridDebug() { this.gridDebug ^= 1; return this.gridDebug; }
