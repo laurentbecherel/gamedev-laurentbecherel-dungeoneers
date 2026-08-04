@@ -35,12 +35,11 @@ struct SSRResult{ vec3 color; float hit; float fade; float rayLength; vec2 hitUV
 
 SSRResult traceScreenSpaceRaySSR(in vec2 startUV, in vec3 N, in vec3 V, in float linearDepth, in float puddleMask, in float roughness, in sampler2D sceneTex, in sampler2D gNormalDepthTex, in sampler2D blueNoiseTex, in vec2 resolution, in int steps, in int binarySteps, in float maxDistance, in float thickness, in float stride, in float jitter, in float depthBias, in float zThicknessScale, in float maxRayAngle, in vec2 camPos, in float eyeZ, in float playerAngle, in float planeLen, in float bobPixels){
   SSRResult res; res.color=vec3(0.0); res.hit=0.0; res.fade=0.0; res.rayLength=0.0; res.hitUV=startUV;
-  // Use original GBuffer normal (with ripple) for squares, but dampen it for puddles to reduce flicker while keeping variation
-  // Flat mirror made reflection a single scanline → stretched columns. Keep some ripple.
+  // For puddles, use flat mirror normal for stable trace — rippled N causes white/grey flicker moving with ripples
   vec3 traceN = N;
   if (puddleMask > 0.05 && N.z > 0.3) {
-    // Blend rippled N toward flat (0,0,1) – 70% flat, 30% ripple keeps squares but stabilizes
-    traceN = normalize(mix(N, vec3(0.0,0.0,1.0), 0.7));
+    // floor-like puddle: replace rippled normal with flat (0,0,1) to avoid ripple-driven miss/fallback toggle
+    traceN = vec3(0.0, 0.0, 1.0);
   }
   vec3 R = reflect(-V, traceN);
   // low roughness mirror should have minimal jitter
@@ -83,8 +82,10 @@ SSRResult traceScreenSpaceRaySSR(in vec2 startUV, in vec3 N, in vec3 V, in float
     vec3 sampledN = octaDecodeSSR(gSmpl.rg);
     // floor N = (0,0,1) => z~1, ceil N = (0,0,-1) => z~-1, wall N z~0
     // Reject floor re-hit only – keep walls and ceiling for reflection
-    // NOTE: rely on normal only, not uv.y, otherwise low forward wall (uv~0.45) gets rejected causing grey fallback band
     if (sampledN.z > 0.60) { tRay += tStep; tStep *= stride; continue; }
+    // Also reject if projection still in floor half (below horizon) to avoid floor showing
+    // We allow slightly below 0.5 for low wall, but not deep floor
+    if (uv.y < 0.48) { tRay += tStep; tStep *= stride; continue; }
     float sampledLin = sampledDepthNorm * maxDistance; // assume depthRange ~ maxDistance for thickness test simplification
     // Actually use proper depthRange via uniform? We'll approximate with maxDistance
     float depthDiff = fwDist - sampledLin;
@@ -117,8 +118,8 @@ SSRResult traceScreenSpaceRaySSR(in vec2 startUV, in vec3 N, in vec3 V, in float
       vec3 finalProj = worldToScreenUVSSR(finalW, camPos, eyeZ, playerAngle, planeLen, resolution, bobPixels, finalFd);
       vec4 finalG = texture(gNormalDepthTex, finalProj.xy);
       vec3 finalN = octaDecodeSSR(finalG.rg);
-      // Final must not be floor (allow wall + ceiling), no uv.y threshold – rely on normal
-      if (finalG.b > 0.001 && finalN.z <= 0.60) {
+      // Final must not be floor (allow wall + ceiling)
+      if (finalG.b > 0.001 && finalN.z <= 0.60 && finalProj.xy.y > 0.40) {
         res.hitUV = finalProj.xy;
         res.color = texture(sceneTex, finalProj.xy).rgb;
         res.rayLength = highT;
@@ -133,16 +134,16 @@ SSRResult traceScreenSpaceRaySSR(in vec2 startUV, in vec3 N, in vec3 V, in float
   }
 
   if (res.hit < 0.5 && puddleMask > 0.02) {
-    // fallback with proper projection - sample forward wall, but DO NOT clamp (clamping causes stretched columns)
+    // fallback with proper projection - sample forward wall
     vec3 fallbackW = worldPos + R * (maxDistance * 0.5);
     float fDist;
     vec3 fProj = worldToScreenUVSSR(fallbackW, camPos, eyeZ, playerAngle, planeLen, resolution, bobPixels, fDist);
-    vec2 fUV = fProj.xy;
-    // Only accept if inside screen, otherwise leave as miss (avoids edge-column stretch)
-    if (fUV.x >= 0.0 && fUV.x <= 1.0 && fUV.y >= 0.0 && fUV.y <= 1.0) {
+    vec2 fUV = clamp(fProj.xy, 0.0, 1.0);
+    // only if fUV is in upper half (walls), not floor again, and normal is wall
+    if (fUV.y > 0.40) { // allow walls + ceiling
       vec4 fG = texture(gNormalDepthTex, fUV);
       vec3 fN = octaDecodeSSR(fG.rg);
-      if (fG.b > 0.001 && fN.z <= 0.60) { // not floor, wall or ceiling
+      if (fG.b > 0.001 && fN.z <= 0.60) { // not floor
         res.color = texture(sceneTex, fUV).rgb * 0.7;
         res.hit = 0.5;
         res.hitUV = fUV;
