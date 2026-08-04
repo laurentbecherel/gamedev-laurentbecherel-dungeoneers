@@ -4,7 +4,7 @@
   "_readme": "Screen Space Reflections - puddle-only, roughness-gated, sprite-aware. T1 live-edit via SSRBlock UBO binding=2.",
   "note": "v1 gated to puddles via modifierMap.b mask + roughTarget 0.04. 640x360 early-exit fullscreen pass.",
   "gating": {
-    "puddleOnly": false,
+    "puddleOnly": true,
     "requireModifiersEnabled": true,
     "minPuddleMask": 0.1,
     "roughnessThreshold": 1,

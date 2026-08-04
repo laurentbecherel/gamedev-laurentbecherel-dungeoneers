@@ -10,10 +10,10 @@
     "seed_note": "null = derived from master generator.seed via dungeon.seed"
   },
   "generator": {
-    "noiseScale": 0.22,
+    "noiseScale": 0.14,
     "puddleScaleLarge": 0.22,
     "puddleThreshold": 0.55,
-    "puddleFeather": 0.11,
+    "puddleFeather": 0.12,
     "puddleOctaves": 4,
     "debugPuddleBoost": 1.1,
     "roleWeights": {
