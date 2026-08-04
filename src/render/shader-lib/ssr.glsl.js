@@ -65,8 +65,18 @@ SSRResult traceScreenSpaceRaySSR(in vec2 startUV, in vec3 N, in vec3 V, in float
     vec3 proj = worldToScreenUVSSR(reflectedWorld, camPos, eyeZ, playerAngle, planeLen, resolution, bobPixels, fwDist);
     vec2 uv = proj.xy;
     if (uv.x < -0.15 || uv.x > 1.15 || uv.y < -0.15 || uv.y > 1.15) { tRay += tStep; tStep *= stride; continue; }
-    float sampledDepthNorm = texture(gNormalDepthTex, uv).b;
+    // Reject hits below horizon that are floor – puddle should only reflect walls/upper
+    // Also we decode sampled normal to ensure it's a wall, not floor re-hit
+    vec4 gSmpl = texture(gNormalDepthTex, uv);
+    float sampledDepthNorm = gSmpl.b;
     if (sampledDepthNorm < 0.001) { tRay += tStep; tStep *= stride; continue; }
+    vec3 sampledN = octaDecodeSSR(gSmpl.rg);
+    // floor N = (0,0,1) => z~1, ceil N = (0,0,-1) => z~-1, wall N z~0
+    // Reject floor/ceiling – only walls should be reflected
+    if (abs(sampledN.z) > 0.55) { tRay += tStep; tStep *= stride; continue; }
+    // Also reject if projection still in floor half (below horizon) to avoid floor showing
+    // We allow slightly below 0.5 for low wall, but not deep floor
+    if (uv.y < 0.48) { tRay += tStep; tStep *= stride; continue; }
     float sampledLin = sampledDepthNorm * maxDistance; // assume depthRange ~ maxDistance for thickness test simplification
     // Actually use proper depthRange via uniform? We'll approximate with maxDistance
     float depthDiff = fwDist - sampledLin;
@@ -85,18 +95,30 @@ SSRResult traceScreenSpaceRaySSR(in vec2 startUV, in vec3 N, in vec3 V, in float
         vec3 midW = worldPos + R * midT;
         float midFd;
         vec3 midProj = worldToScreenUVSSR(midW, camPos, eyeZ, playerAngle, planeLen, resolution, bobPixels, midFd);
-        float midDepthNorm = texture(gNormalDepthTex, midProj.xy).b;
+        vec4 midG = texture(gNormalDepthTex, midProj.xy);
+        float midDepthNorm = midG.b;
+        if (midDepthNorm < 0.001) { lowT = midT; continue; }
+        vec3 midN = octaDecodeSSR(midG.rg);
+        if (abs(midN.z) > 0.6) { lowT = midT; continue; }
         float midLin = midDepthNorm * maxDistance;
         float midDiff = midFd - midLin;
-        if (midDepthNorm > 0.001 && abs(midDiff) < curThickness) highT = midT; else lowT = midT;
+        if (abs(midDiff) < curThickness) highT = midT; else lowT = midT;
       }
       vec3 finalW = worldPos + R * highT;
       float finalFd;
       vec3 finalProj = worldToScreenUVSSR(finalW, camPos, eyeZ, playerAngle, planeLen, resolution, bobPixels, finalFd);
-      res.hitUV = finalProj.xy;
-      res.color = texture(sceneTex, finalProj.xy).rgb;
-      res.rayLength = highT;
-      break;
+      vec4 finalG = texture(gNormalDepthTex, finalProj.xy);
+      vec3 finalN = octaDecodeSSR(finalG.rg);
+      // Final must still be wall
+      if (finalG.b > 0.001 && abs(finalN.z) <= 0.6 && finalProj.xy.y > 0.48) {
+        res.hitUV = finalProj.xy;
+        res.color = texture(sceneTex, finalProj.xy).rgb;
+        res.rayLength = highT;
+      } else {
+        // binary refined to floor – discard hit
+        res.hit = 0.0;
+      }
+      if (res.hit > 0.5) break;
     }
     tRay += tStep;
     tStep *= stride;
@@ -108,12 +130,16 @@ SSRResult traceScreenSpaceRaySSR(in vec2 startUV, in vec3 N, in vec3 V, in float
     float fDist;
     vec3 fProj = worldToScreenUVSSR(fallbackW, camPos, eyeZ, playerAngle, planeLen, resolution, bobPixels, fDist);
     vec2 fUV = clamp(fProj.xy, 0.0, 1.0);
-    // only if fUV is in upper half (walls), not floor again
+    // only if fUV is in upper half (walls), not floor again, and normal is wall
     if (fUV.y > 0.52) {
-      res.color = texture(sceneTex, fUV).rgb * 0.7;
-      res.hit = 0.5;
-      res.hitUV = fUV;
-      res.rayLength = maxDistance * 0.5;
+      vec4 fG = texture(gNormalDepthTex, fUV);
+      vec3 fN = octaDecodeSSR(fG.rg);
+      if (fG.b > 0.001 && abs(fN.z) <= 0.6) {
+        res.color = texture(sceneTex, fUV).rgb * 0.7;
+        res.hit = 0.5;
+        res.hitUV = fUV;
+        res.rayLength = maxDistance * 0.5;
+      }
     }
   }
 
