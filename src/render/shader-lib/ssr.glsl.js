@@ -72,8 +72,8 @@ SSRResult traceScreenSpaceRaySSR(in vec2 startUV, in vec3 N, in vec3 V, in float
     if (sampledDepthNorm < 0.001) { tRay += tStep; tStep *= stride; continue; }
     vec3 sampledN = octaDecodeSSR(gSmpl.rg);
     // floor N = (0,0,1) => z~1, ceil N = (0,0,-1) => z~-1, wall N z~0
-    // Reject floor/ceiling – only walls should be reflected
-    if (abs(sampledN.z) > 0.55) { tRay += tStep; tStep *= stride; continue; }
+    // Reject floor re-hit only – keep walls and ceiling for reflection
+    if (sampledN.z > 0.60) { tRay += tStep; tStep *= stride; continue; }
     // Also reject if projection still in floor half (below horizon) to avoid floor showing
     // We allow slightly below 0.5 for low wall, but not deep floor
     if (uv.y < 0.48) { tRay += tStep; tStep *= stride; continue; }
@@ -99,7 +99,7 @@ SSRResult traceScreenSpaceRaySSR(in vec2 startUV, in vec3 N, in vec3 V, in float
         float midDepthNorm = midG.b;
         if (midDepthNorm < 0.001) { lowT = midT; continue; }
         vec3 midN = octaDecodeSSR(midG.rg);
-        if (abs(midN.z) > 0.6) { lowT = midT; continue; }
+        if (midN.z > 0.60) { lowT = midT; continue; } // floor only
         float midLin = midDepthNorm * maxDistance;
         float midDiff = midFd - midLin;
         if (abs(midDiff) < curThickness) highT = midT; else lowT = midT;
@@ -109,8 +109,8 @@ SSRResult traceScreenSpaceRaySSR(in vec2 startUV, in vec3 N, in vec3 V, in float
       vec3 finalProj = worldToScreenUVSSR(finalW, camPos, eyeZ, playerAngle, planeLen, resolution, bobPixels, finalFd);
       vec4 finalG = texture(gNormalDepthTex, finalProj.xy);
       vec3 finalN = octaDecodeSSR(finalG.rg);
-      // Final must still be wall
-      if (finalG.b > 0.001 && abs(finalN.z) <= 0.6 && finalProj.xy.y > 0.48) {
+      // Final must not be floor (allow wall + ceiling)
+      if (finalG.b > 0.001 && finalN.z <= 0.60 && finalProj.xy.y > 0.40) {
         res.hitUV = finalProj.xy;
         res.color = texture(sceneTex, finalProj.xy).rgb;
         res.rayLength = highT;
@@ -131,10 +131,10 @@ SSRResult traceScreenSpaceRaySSR(in vec2 startUV, in vec3 N, in vec3 V, in float
     vec3 fProj = worldToScreenUVSSR(fallbackW, camPos, eyeZ, playerAngle, planeLen, resolution, bobPixels, fDist);
     vec2 fUV = clamp(fProj.xy, 0.0, 1.0);
     // only if fUV is in upper half (walls), not floor again, and normal is wall
-    if (fUV.y > 0.52) {
+    if (fUV.y > 0.40) { // allow walls + ceiling
       vec4 fG = texture(gNormalDepthTex, fUV);
       vec3 fN = octaDecodeSSR(fG.rg);
-      if (fG.b > 0.001 && abs(fN.z) <= 0.6) {
+      if (fG.b > 0.001 && fN.z <= 0.60) { // not floor
         res.color = texture(sceneTex, fUV).rgb * 0.7;
         res.hit = 0.5;
         res.hitUV = fUV;
