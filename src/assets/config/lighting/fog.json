@@ -1,12 +1,12 @@
 {
   "version": 1,
   "enabled": true,
-  "base": 0.16,
+  "base": 0,
   "squared": 0.005,
   "color": [
-    0.2,
-    0.1,
-    0.1
+    0,
+    0,
+    0
   ],
   "formula": "fog = 1.0 / (1.0 + dist*base + dist*dist*squared); final *= fog + fogColor*(1-fog)",
   "note": "Exponential squared fog. base linear, squared quadratic. Increase both for denser fog.",

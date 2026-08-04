@@ -3,26 +3,131 @@
   "authentic": true,
   "paletteStyle": "doom",
   "bandLevels": 32,
-  "bandClamp": { "min": 8, "max": 64 },
+  "bandClamp": {
+    "min": 8,
+    "max": 64
+  },
   "accentRamps": [
-    { "id": "brown", "name": "Doom Brown (48 saturated)", "from": [80, 40, 20], "to": [200, 100, 50], "count": 48 },
-    { "id": "green", "name": "Natural Green", "from": [18, 48, 26], "to": [125, 185, 105], "count": 32 }
+    {
+      "id": "brown",
+      "name": "Doom Brown (48 saturated)",
+      "from": [
+        80,
+        40,
+        20
+      ],
+      "to": [
+        232,
+        133,
+        79
+      ],
+      "count": 48
+    },
+    {
+      "id": "green",
+      "name": "Natural Green",
+      "from": [
+        18,
+        48,
+        26
+      ],
+      "to": [
+        125,
+        185,
+        105
+      ],
+      "count": 32
+    }
   ],
-  "brownRamp": { "from": [80, 40, 20], "to": [200, 100, 50], "count": 48 },
-  "greenRamp": { "from": [18, 48, 26], "to": [125, 185, 105], "count": 32 },
-  "regularColors": { "count": 112, "saturation": 0.42, "saturationVar": 0.18, "lightnessMin": 0.32, "lightnessMax": 0.84, "hueShift": 137.5 },
-  "grayscale": { "count": 64, "from": 0, "to": 255, "gamma": 1.0 },
-  "cubeLevels": [0, 51, 102, 153, 204, 255],
+  "brownRamp": {
+    "from": [
+      80,
+      40,
+      20
+    ],
+    "to": [
+      232,
+      133,
+      79
+    ],
+    "count": 48
+  },
+  "greenRamp": {
+    "from": [
+      18,
+      48,
+      26
+    ],
+    "to": [
+      125,
+      185,
+      105
+    ],
+    "count": 32
+  },
+  "regularColors": {
+    "count": 112,
+    "saturation": 0.42,
+    "saturationVar": 0.18,
+    "lightnessMin": 0.32,
+    "lightnessMax": 0.8,
+    "hueShift": 137.5
+  },
+  "grayscale": {
+    "count": 64,
+    "from": 0,
+    "to": 255,
+    "gamma": 1
+  },
+  "cubeLevels": [
+    0,
+    51,
+    102,
+    153,
+    204,
+    255
+  ],
   "customColors": {},
   "styles": {
-    "doom": { "id": 0, "name": "48 Doom brown + green + desat + gray — more saturated Doom", "description": "48 saturated brown/orange + 32 natural green accent ramps with good banding, 112 desaturated regulars, 64 gray" },
-    "smooth256": { "id": 1, "name": "Smooth 216 cube + gray", "description": "6x6x6 color cube (saturated)" },
-    "truecolor": { "id": 2, "name": "Truecolor bypass", "description": "No quantization" },
-    "grayscale": { "id": 3, "name": "Grayscale", "description": "Luma weights 0.299/0.587/0.114" },
-    "sepia": { "id": 4, "name": "Sepia", "description": "Warm luma 1.2/0.9/0.6" }
+    "doom": {
+      "id": 0,
+      "name": "48 Doom brown + green + desat + gray — more saturated Doom",
+      "description": "48 saturated brown/orange + 32 natural green accent ramps with good banding, 112 desaturated regulars, 64 gray"
+    },
+    "smooth256": {
+      "id": 1,
+      "name": "Smooth 216 cube + gray",
+      "description": "6x6x6 color cube (saturated)"
+    },
+    "truecolor": {
+      "id": 2,
+      "name": "Truecolor bypass",
+      "description": "No quantization"
+    },
+    "grayscale": {
+      "id": 3,
+      "name": "Grayscale",
+      "description": "Luma weights 0.299/0.587/0.114"
+    },
+    "sepia": {
+      "id": 4,
+      "name": "Sepia",
+      "description": "Warm luma 1.2/0.9/0.6"
+    }
   },
-  "quantization": { "lutSize": { "r": 32, "g": 32, "b": 32 }, "paletteTexSize": 256, "note": "LUT encodes RGB 32^3 -> nearest palette index via brute search" },
-  "banding": { "enabled": true, "note": "When authentic=true, banding visible on accent ramps" },
+  "quantization": {
+    "lutSize": {
+      "r": 32,
+      "g": 32,
+      "b": 32
+    },
+    "paletteTexSize": 256,
+    "note": "LUT encodes RGB 32^3 -> nearest palette index via brute search"
+  },
+  "banding": {
+    "enabled": true,
+    "note": "When authentic=true, banding visible on accent ramps"
+  },
   "docs": {
     "paletteStyle": "Enum — doom is new 2-accents layout with classic 48 brown",
     "accentRamps.0.from": "Doom brown start — more saturated [80,40,20]",
@@ -33,14 +138,46 @@
   "ui": {
     "paletteStyle": {
       "type": "enum",
-      "options": ["doom", "smooth256", "truecolor", "grayscale", "sepia"],
-      "labels": { "doom": "Doom 48 brown+green", "smooth256": "Smooth 216 cube", "truecolor": "Truecolor bypass", "grayscale": "Grayscale", "sepia": "Sepia warm" },
+      "options": [
+        "doom",
+        "smooth256",
+        "truecolor",
+        "grayscale",
+        "sepia"
+      ],
+      "labels": {
+        "doom": "Doom 48 brown+green",
+        "smooth256": "Smooth 216 cube",
+        "truecolor": "Truecolor bypass",
+        "grayscale": "Grayscale",
+        "sepia": "Sepia warm"
+      },
       "desc": "Doom = 48 saturated brown/orange + green accents"
     },
-    "bandLevels": { "min": 2, "max": 128, "step": 1 },
-    "accentRamps.0.count": { "min": 0, "max": 96, "step": 1 },
-    "accentRamps.1.count": { "min": 0, "max": 96, "step": 1 },
-    "regularColors.count": { "min": 16, "max": 192, "step": 1 },
-    "grayscale.count": { "min": 16, "max": 128, "step": 1 }
+    "bandLevels": {
+      "min": 2,
+      "max": 128,
+      "step": 1
+    },
+    "accentRamps.0.count": {
+      "min": 0,
+      "max": 96,
+      "step": 1
+    },
+    "accentRamps.1.count": {
+      "min": 0,
+      "max": 96,
+      "step": 1
+    },
+    "regularColors.count": {
+      "min": 16,
+      "max": 192,
+      "step": 1
+    },
+    "grayscale.count": {
+      "min": 16,
+      "max": 128,
+      "step": 1
+    }
   }
 }
