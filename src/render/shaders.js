@@ -437,34 +437,113 @@ out vec2 v_uv;
 void main(){ v_uv = a_pos * 0.5 + 0.5; gl_Position = vec4(a_pos, 0.0, 1.0); }
 `;
 
-// Debug programs - separate shaders, swapped via useProgram, no branching in main (avoids ANGLE giga)
-// Moss debug - continuous 3D isotropic, truly continuous floor/wall/ceiling
-export const fsDebugMoss = fsSource.replace(
-  'outColor = vec4(finalColor,1.0);',
-  `vec3 dbgWPos;
-   float vN = fragCoord.y / u_resolution.y;
+// Debug programs - v15 moss decomposed into factors, swapped via useProgram (no branching in main)
+// Masks: noise (natural organic), nearwall/env (corners + floor-wall seams + room biome), material (AO/Height/Rough), combined
+// All moss masks use tunable UBO params from material-modifiers.json, no hard-coded magic (fallback defaults in glslModifiers)
+
+const dbgCommonWorldPos = `vec3 dbgWPos; float dbgIsFloor; float vN = fragCoord.y / u_resolution.y; vec2 dbgFloorWorld = u_playerPos + ray * perpDist;
    if (hit == 1) {
      float wV = gWallV_raw;
-     if (wV >= 0.0 && wV <= 1.0) {
-       dbgWPos = vec3(hitPos, (1.0 - wV) * 1.15);
+     if (wV >= 0.0 && wV <= 1.0) { dbgWPos = vec3(hitPos, (1.0 - wV) * 1.15); dbgIsFloor = 0.0; }
+     else { if (vN > 0.5) { dbgWPos = vec3(u_playerPos + ray * perpDist, 0.0); dbgIsFloor = 1.0; } else { dbgWPos = vec3(u_playerPos + ray * perpDist, 1.15); dbgIsFloor = 1.0; } }
+   } else { if (vN > 0.5) { dbgWPos = vec3(u_playerPos + ray * perpDist, 0.0); dbgIsFloor = 1.0; } else { dbgWPos = vec3(u_playerPos + ray * perpDist, 1.15); dbgIsFloor = 1.0; } }
+`;
+
+// Moss noise mask - natural 3D FBM shape
+export const fsDebugMossNoise = fsSource.replace(
+  'outColor = vec4(finalColor,1.0);',
+  dbgCommonWorldPos + `
+   vec3 dbgCol = debugMossNoiseMask(dbgWPos);
+   outColor = vec4(dbgCol, 1.0);
+  `
+);
+
+// Moss near-wall / env mask - corners, floor-to-wall seams, wall bases, plus room biome via modifierMap
+export const fsDebugMossEnv = fsSource.replace(
+  'outColor = vec4(finalColor,1.0);',
+  dbgCommonWorldPos + `
+   vec3 dbgCol = debugMossEnvMask(dbgWPos, dbgIsFloor);
+   // Multiply by biome for dungeon/room filtering visualization
+   float biome = mossBiomeMask(dbgWPos.xy);
+   float edge = biome * (1.0 - biome) * 0.6;
+   vec3 biomeTint = vec3(0.0, 0.2, 0.0) * biome;
+   // Show env * biome as combined env, but keep yellow base for pure env
+   float envRaw = mossEnvMask(dbgWPos, dbgIsFloor);
+   float combinedEnv = envRaw * mix(0.45, 1.0, biome);
+   vec3 colEnv = vec3(0.85, 0.75, 0.15) * combinedEnv * 1.15;
+   vec3 bg = vec3(0.02,0.02,0.03);
+   vec3 col = bg + colEnv + biomeTint + vec3(edge*0.3, edge*0.6, 0.0);
+   outColor = vec4(col, 1.0);
+  `
+);
+
+// Moss material influence mask - AO/Height/Rough combo, samples actual material textures
+export const fsDebugMossMaterial = fsSource.replace(
+  'outColor = vec4(finalColor,1.0);',
+  `vec3 dbgWPos; float dbgIsFloor; float vN = fragCoord.y / u_resolution.y; vec2 dbgFloorWorld = u_playerPos + ray * perpDist; float dbgWallU = 0.0; float dbgWallV = gWallV_raw;
+   if (hit == 1) {
+     float wV = gWallV_raw;
+     if (wV >= 0.0 && wV <= 1.0) { dbgWPos = vec3(hitPos, (1.0 - wV) * 1.15); dbgIsFloor = 0.0; float wU; if(side==0) wU = hitPos.y - floor(hitPos.y); else wU = hitPos.x - floor(hitPos.x); if((side==0 && ray.x>0.0) || (side==1 && ray.y<0.0)) wU = 1.0 - wU; dbgWallU = wU; dbgWallV = wV; }
+     else { if (vN > 0.5) { dbgWPos = vec3(u_playerPos + ray * perpDist, 0.0); dbgIsFloor = 1.0; } else { dbgWPos = vec3(u_playerPos + ray * perpDist, 1.15); dbgIsFloor = 1.0; } }
+   } else { if (vN > 0.5) { dbgWPos = vec3(u_playerPos + ray * perpDist, 0.0); dbgIsFloor = 1.0; } else { dbgWPos = vec3(u_playerPos + ray * perpDist, 1.15); dbgIsFloor = 1.0; } }
+   float dbgMatHeight = 0.5; float dbgAo = 0.85; float dbgRough = 0.7;
+   if (dbgIsFloor > 0.5) {
+     if (vN > 0.5) {
+       ivec2 fcCell = ivec2(floor(dbgFloorWorld));
+       float matId = fetchFloorMatId(fcCell);
+       float layer = clampLayer(matId, fc);
+       vec2 uv = fract(dbgFloorWorld);
+       dbgMatHeight = sampleFloorHeight(layer, uv);
+       vec4 rma = sampleFloorRMA(layer, uv);
+       dbgAo = rma.a; dbgRough = rma.r;
      } else {
-       if (vN > 0.5) dbgWPos = vec3(u_playerPos + ray * perpDist, 0.0);
-       else dbgWPos = vec3(u_playerPos + ray * perpDist, 1.15);
+       ivec2 ccCell = ivec2(floor(dbgFloorWorld));
+       float matId = fetchCeilMatId(ccCell);
+       float layer = clampLayer(matId, cc);
+       vec2 uv = fract(dbgFloorWorld);
+       dbgMatHeight = sampleCeilHeight(layer, uv);
+       vec4 rma = sampleCeilRMA(layer, uv);
+       dbgAo = rma.a; dbgRough = rma.r;
      }
    } else {
-     if (vN > 0.5) dbgWPos = vec3(u_playerPos + ray * perpDist, 0.0);
-     else dbgWPos = vec3(u_playerPos + ray * perpDist, 1.15);
+     float matId = max(1.0, cellType);
+     float layer = clampLayer(matId, wc);
+     vec2 uv = vec2(dbgWallU, clamp(dbgWallV,0.0,1.0));
+     dbgMatHeight = sampleWallHeight(layer, uv);
+     vec4 rma = sampleWallRMA(layer, uv);
+     dbgAo = rma.a; dbgRough = rma.r;
    }
-   float dbgScale = modMossAlbedoRough.z > 0.001 ? modMossAlbedoRough.z : 0.85;
-   float dbgThresh = modMossAlbedoRough.w > 0.001 ? modMossAlbedoRough.w : 0.42;
-   vec3 dbgPos = dbgWPos * dbgScale * 0.85 + vec3(2.7,5.4,8.1);
-   float dbgN3D = fbm3D_3(dbgPos);
-   float dbgNdet = valueNoise3D(dbgPos*2.2+vec3(11.3,23.7,4.7));
-   float dbgVar = dbgN3D*0.65 + dbgNdet*0.35;
-   float dbgMask = smoothstep(dbgThresh-0.12, dbgThresh+0.12, dbgVar);
-   vec3 dbgCol = vec3(0.18,0.68,0.18)*dbgMask*1.6;
-   outColor = vec4(dbgCol,1.0);`
+   vec3 dbgCol = debugMossMaterialMask(dbgMatHeight, dbgAo, dbgRough);
+   outColor = vec4(dbgCol, 1.0);
+  `
 );
+
+// Moss combined mask - final = biome * noise * env * material (tunable via JSON)
+export const fsDebugMossCombined = fsSource.replace(
+  'outColor = vec4(finalColor,1.0);',
+  `vec3 dbgWPos; float dbgIsFloor; float vN = fragCoord.y / u_resolution.y; vec2 dbgFloorWorld = u_playerPos + ray * perpDist; float dbgWallU = 0.0; float dbgWallV = gWallV_raw;
+   if (hit == 1) {
+     float wV = gWallV_raw;
+     if (wV >= 0.0 && wV <= 1.0) { dbgWPos = vec3(hitPos, (1.0 - wV) * 1.15); dbgIsFloor = 0.0; float wU; if(side==0) wU = hitPos.y - floor(hitPos.y); else wU = hitPos.x - floor(hitPos.x); if((side==0 && ray.x>0.0) || (side==1 && ray.y<0.0)) wU = 1.0 - wU; dbgWallU = wU; dbgWallV = wV; }
+     else { if (vN > 0.5) { dbgWPos = vec3(u_playerPos + ray * perpDist, 0.0); dbgIsFloor = 1.0; } else { dbgWPos = vec3(u_playerPos + ray * perpDist, 1.15); dbgIsFloor = 1.0; } }
+   } else { if (vN > 0.5) { dbgWPos = vec3(u_playerPos + ray * perpDist, 0.0); dbgIsFloor = 1.0; } else { dbgWPos = vec3(u_playerPos + ray * perpDist, 1.15); dbgIsFloor = 1.0; } }
+   float dbgMatHeight = 0.5; float dbgAo = 0.85; float dbgRough = 0.7;
+   if (dbgIsFloor > 0.5) {
+     if (vN > 0.5) {
+       ivec2 fcCell = ivec2(floor(dbgFloorWorld)); float matId = fetchFloorMatId(fcCell); float layer = clampLayer(matId, fc); vec2 uv = fract(dbgFloorWorld); dbgMatHeight = sampleFloorHeight(layer, uv); vec4 rma = sampleFloorRMA(layer, uv); dbgAo = rma.a; dbgRough = rma.r;
+     } else {
+       ivec2 ccCell = ivec2(floor(dbgFloorWorld)); float matId = fetchCeilMatId(ccCell); float layer = clampLayer(matId, cc); vec2 uv = fract(dbgFloorWorld); dbgMatHeight = sampleCeilHeight(layer, uv); vec4 rma = sampleCeilRMA(layer, uv); dbgAo = rma.a; dbgRough = rma.r;
+     }
+   } else {
+     float matId = max(1.0, cellType); float layer = clampLayer(matId, wc); vec2 uv = vec2(dbgWallU, clamp(dbgWallV,0.0,1.0)); dbgMatHeight = sampleWallHeight(layer, uv); vec4 rma = sampleWallRMA(layer, uv); dbgAo = rma.a; dbgRough = rma.r;
+   }
+   vec3 dbgCol = debugMossCombinedMask(dbgWPos, dbgMatHeight, dbgAo, dbgRough, dbgIsFloor);
+   outColor = vec4(dbgCol, 1.0);
+  `
+);
+
+// Legacy moss debug - alias to combined for backward compat
+export const fsDebugMoss = fsDebugMossCombined;
 
 export const fsDebugPuddle = fsSource.replace(
   'outColor = vec4(finalColor,1.0);',
@@ -489,6 +568,7 @@ export const fsDebugMossRaw = fsSource.replace(
    float mossCell = texture(u_modifierMap, dbgModUV).r;
    outColor = vec4(vec3(mossCell), 1.0);`
 );
+
 
 export const fsQuantize = `#version 300 es
 precision highp float;

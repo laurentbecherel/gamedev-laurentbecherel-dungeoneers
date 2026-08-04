@@ -6,7 +6,11 @@
       "id": 1,
       "name": "dungeon_brick",
       "type": "brick",
-      "base": [138, 58, 44],
+      "base": [
+        138,
+        58,
+        44
+      ],
       "roughness": 0.85,
       "metal": 0,
       "tag": "masonry",
@@ -14,16 +18,31 @@
       "architectureShape": "brick_bond",
       "tileScale": 1,
       "variationSeed": 101,
-      "emissiveColor": [0, 0, 0],
+      "emissiveColor": [
+        0,
+        0,
+        0
+      ],
       "emissiveStrength": 0,
-      "storyTags": ["dungeon"],
-      "proc": {"groutWidth": 1, "domeHeight": 0.28, "bevelStart": 0.42, "crackAmount": 0.6}
+      "storyTags": [
+        "dungeon"
+      ],
+      "proc": {
+        "groutWidth": 1,
+        "domeHeight": 0.28,
+        "bevelStart": 0.42,
+        "crackAmount": 0.6
+      }
     },
     {
       "id": 2,
       "name": "rough_stone",
       "type": "stone_block",
-      "base": [102, 100, 92],
+      "base": [
+        102,
+        100,
+        92
+      ],
       "roughness": 0.92,
       "metal": 0,
       "tag": "masonry",
@@ -31,10 +50,23 @@
       "architectureShape": "ashlar_rough",
       "tileScale": 1,
       "variationSeed": 102,
-      "emissiveColor": [0, 0, 0],
+      "emissiveColor": [
+        0,
+        0,
+        0
+      ],
       "emissiveStrength": 0,
-      "storyTags": ["dungeon", "cave"],
-      "proc": {"groutWidth": 2, "domeHeight": 0.32, "bevelDepth": 0.28, "crackAmount": 0.9, "blockSize": 10}
+      "storyTags": [
+        "dungeon",
+        "cave"
+      ],
+      "proc": {
+        "groutWidth": 2,
+        "domeHeight": 0.32,
+        "bevelDepth": 0.28,
+        "crackAmount": 0.9,
+        "blockSize": 10
+      }
     }
   ]
 }

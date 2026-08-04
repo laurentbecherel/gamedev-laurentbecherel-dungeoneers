@@ -1,7 +1,7 @@
 {
-  "version": 5,
+  "version": 6,
   "enabled": true,
-  "note": "v15 cleaned: only wired T1 params, docs, albedo /255 fix, cell feather fixes tile cut, lean reusable FBM",
+  "note": "v16 moss decomposed: noise (natural), env/nearwall (corners+seams+room biome), material (AO/Height/Rough combo), combined final. All tunable via JSON/UBO, no hard-coded magic.",
   "noise": {
     "size": 128,
     "seed": null,
@@ -107,15 +107,66 @@
         171,
         48
       ],
-      "roughAdd": 0.35,
-      "heightAdd": 0.18,
+      "roughAdd": 0.3,
+      "heightAdd": 0.2,
       "normalStrength": 0.6,
       "colorStrength": 1,
-      "noiseScale": 2.95,
-      "threshold": 0.46,
-      "feather": 0.16,
+      "noiseScale": 4,
+      "threshold": 0.6,
+      "feather": 0.22,
       "aoWeight": 0.82,
-      "octaves": 4
+      "octaves": 4,
+      "noise": {
+        "scale": 3,
+        "threshold": 0.1,
+        "feather": 0.5,
+        "desc": "Tunable noise factor - natural organic patches"
+      },
+      "env": {
+        "floorBase": 0.02,
+        "wallBase": 0.02,
+        "wallEdgeBase": 0.32,
+        "cornerBonus": 0.75,
+        "bottomLow": 0.1,
+        "bottomHigh": 0.74,
+        "ceilReduce": 1,
+        "seamBoost": 0.71,
+        "desc": "Environment/nearwall factor - corners, floor-wall seams, wall bases, room biome filtering",
+        "wallDistInner": 0.3,
+        "wallDistOuter": 1,
+        "floorDistInner": 0.46,
+        "floorDistOuter": 0.95,
+        "featherInner": 0.2,
+        "featherOuter": 0.8
+      },
+      "material": {
+        "heightLow": 0,
+        "heightHigh": 0.5,
+        "aoLow": 0,
+        "aoHigh": 0.4,
+        "roughLow": 0.6,
+        "roughHigh": 0.96,
+        "base": 0.1,
+        "feather": 0.2,
+        "desc": "Material influence - low height (grout), low AO (crevice/AO high occlusion), high roughness porous"
+      },
+      "final": {
+        "biomeBase": 0.6,
+        "envBase": 0.6,
+        "matBase": 0.6,
+        "boost": 1,
+        "desc": "Combined final tuning - base mixes prevent zeroing, boost visibility",
+        "noiseWeight": 1,
+        "envWeight": 1,
+        "matWeight": 1,
+        "biomeWeight": 1,
+        "combine": 0.8,
+        "contrast": 2.05,
+        "brightness": 0,
+        "minThreshold": 0,
+        "maxThreshold": 1,
+        "power": 1
+      }
     },
     "damaged": {
       "enabled": false,
@@ -216,25 +267,229 @@
   "docs": {
     "moss": {
       "noiseScale": {
-        "desc": "Moss noise frequency. Higher = smaller patches, more detailed. 0.2 large blobs, 5+ tiny speckles. Tweak live.",
+        "desc": "3D noise frequency for natural patches. Higher=smaller detailed moss islands. Tunable live via UBO slot0.z",
         "min": 0,
         "max": 20,
         "step": 0.05
       },
       "threshold": {
-        "desc": "Moss coverage threshold 0-1. Lower=more moss, higher=sparser. 0.42 balanced.",
+        "desc": "Coverage threshold where noise becomes moss. Lower=more moss, higher=sparser. Live via slot0.w",
         "min": 0,
         "max": 1,
         "step": 0.01
       },
       "feather": {
-        "desc": "Softness of moss edge 0-0.5. Higher=softer transition.",
+        "desc": "Softness of noise edge. Higher=softer organic transition. Live via mossMatRough.w (slot12.w)",
         "min": 0,
         "max": 0.5,
         "step": 0.01
       },
       "colorStrength": "0-1 moss tint strength over base albedo.",
-      "roughAdd": "0-1 additional roughness from moss."
+      "roughAdd": "0-1 additional roughness from moss.",
+      "env": {
+        "floorBase": {
+          "desc": "Base env for floor away from walls (0.0-1.0). Lower= strongly favors seams, higher=more even. Live slot2.x",
+          "min": 0,
+          "max": 1,
+          "step": 0.01
+        },
+        "wallBase": {
+          "desc": "Base env for wall top away from floor (0.0-1.0). Lower=wall moss only at bottom base seam",
+          "min": 0,
+          "max": 1,
+          "step": 0.01
+        },
+        "wallEdgeBase": {
+          "desc": "Base for wall vertical edges away from corners (0.0-1.0). Lower=favors corners",
+          "min": 0,
+          "max": 1,
+          "step": 0.01
+        },
+        "cornerBonus": {
+          "desc": "Extra boost when orthogonal wall neighbours form corner (0.0-1.0). Higher=corner emphasis",
+          "min": 0,
+          "max": 1,
+          "step": 0.01
+        },
+        "bottomLow": {
+          "desc": "World Z low for wall bottom bias: below this=1.0 moss, above interpolates. 0.08 base seam",
+          "min": -1,
+          "max": 1,
+          "step": 0.01
+        },
+        "bottomHigh": {
+          "desc": "World Z high for wall bottom bias: above this=wallBase. 0.85 top fade",
+          "min": 0,
+          "max": 2,
+          "step": 0.01
+        },
+        "ceilReduce": {
+          "desc": "Ceiling reduction factor for env",
+          "min": 0,
+          "max": 1,
+          "step": 0.01
+        },
+        "seamBoost": {
+          "desc": "Extra boost for floor near-wall seam",
+          "min": 0,
+          "max": 1,
+          "step": 0.01
+        },
+        "wallDistInner": {
+          "desc": "Feather inner for wall env: below this env*biome =0 after smoothstep. 0.0 = no extra gating",
+          "min": 0,
+          "max": 1,
+          "step": 0.01
+        },
+        "wallDistOuter": {
+          "desc": "Feather outer for wall env: above this env=1. 1.0 = full range",
+          "min": 0,
+          "max": 1,
+          "step": 0.01
+        },
+        "floorDistInner": {
+          "desc": "Feather inner for floor env",
+          "min": 0,
+          "max": 1,
+          "step": 0.01
+        },
+        "floorDistOuter": {
+          "desc": "Feather outer for floor env",
+          "min": 0,
+          "max": 1,
+          "step": 0.01
+        }
+      },
+      "material": {
+        "heightLow": {
+          "desc": "Height texture low threshold: below this=definitely groove/low -> moss. 0.16 grout",
+          "min": 0,
+          "max": 1,
+          "step": 0.01
+        },
+        "heightHigh": {
+          "desc": "Height high threshold: above this=not groove. 0.55 face",
+          "min": 0,
+          "max": 1,
+          "step": 0.01
+        },
+        "aoLow": {
+          "desc": "AO texture low threshold: below this=crevice/occluded (AO high mental model). 0.58",
+          "min": 0,
+          "max": 1,
+          "step": 0.01
+        },
+        "aoHigh": {
+          "desc": "AO high threshold: above this=exposed. 0.90",
+          "min": 0,
+          "max": 1,
+          "step": 0.01
+        },
+        "roughLow": {
+          "desc": "Roughness low threshold: below this=not porous. 0.52",
+          "min": 0,
+          "max": 1,
+          "step": 0.01
+        },
+        "roughHigh": {
+          "desc": "Roughness high threshold: above this=rough porous -> moss. 0.88",
+          "min": 0,
+          "max": 1,
+          "step": 0.01
+        },
+        "base": {
+          "desc": "Base mix when material hidden (0.0-1.0). Lower=strong material gating, higher=softer",
+          "min": 0,
+          "max": 1,
+          "step": 0.01
+        }
+      },
+      "final": {
+        "biomeBase": {
+          "desc": "Base for room biome (dungeon-level filtering). Lower=more rooms get moss, higher=strong filtering",
+          "min": 0,
+          "max": 1,
+          "step": 0.01
+        },
+        "envBase": {
+          "desc": "Base for env factor in final. Lower=env strongly gates, higher=softer. 0.32",
+          "min": 0,
+          "max": 1,
+          "step": 0.01
+        },
+        "matBase": {
+          "desc": "Base for material factor in final. Lower=material strongly gates (only grooves), higher=more even",
+          "min": 0,
+          "max": 1,
+          "step": 0.01
+        },
+        "boost": {
+          "desc": "Overall final boost multiplier. 1.0 subtle, 1.28 visible, 1.5 strong",
+          "min": 0,
+          "max": 3,
+          "step": 0.01
+        },
+        "noiseWeight": {
+          "desc": "Weight of noise factor in final mask 0..2. 0=ignore noise, 1=normal. Tune multiply/add/max influence",
+          "min": 0,
+          "max": 2,
+          "step": 0.05
+        },
+        "envWeight": {
+          "desc": "Weight of env/nearwall factor (corners+seams+biome) 0..2",
+          "min": 0,
+          "max": 2,
+          "step": 0.05
+        },
+        "matWeight": {
+          "desc": "Weight of material factor (AO/Height/Rough) 0..2",
+          "min": 0,
+          "max": 2,
+          "step": 0.05
+        },
+        "biomeWeight": {
+          "desc": "Weight of biome (room/dungeon filtering) 0..2. 0=moss everywhere ignoring rooms",
+          "min": 0,
+          "max": 2,
+          "step": 0.05
+        },
+        "combine": {
+          "desc": "Final combine mode: 0=max (permissive, any factor = moss), 0.5=weighted average (soft blend), 1=multiply (restrictive, needs all factors). Old behavior was 1=multiply with base mixes",
+          "min": 0,
+          "max": 1,
+          "step": 0.01
+        },
+        "contrast": {
+          "desc": "Global contrast after combine: 1=normal, <1 flat, >1 more contrast",
+          "min": 0,
+          "max": 4,
+          "step": 0.05
+        },
+        "brightness": {
+          "desc": "Global brightness offset after combine: -1..1 added",
+          "min": -1,
+          "max": 1,
+          "step": 0.01
+        },
+        "minThreshold": {
+          "desc": "Final remap low: values below this become 0. Allows killing low tail",
+          "min": -1,
+          "max": 1,
+          "step": 0.01
+        },
+        "maxThreshold": {
+          "desc": "Final remap high: above this become 1",
+          "min": 0,
+          "max": 2,
+          "step": 0.01
+        },
+        "power": {
+          "desc": "Gamma/power: 1=linear, 0.5=brighter mids, 2=darker mids",
+          "min": 0.1,
+          "max": 4,
+          "step": 0.05
+        }
+      }
     },
     "puddle": {
       "albedo": "0-255 RGB base puddle color. Dark (10,40,80) for water. Mixed with darkBase. Now auto /255.",
@@ -279,7 +534,7 @@
       "floorDepress": "-0.5..0.5 height depression where puddle (negative lowers floor). Now wired live, was dead before.",
       "seed_note": "Omitted - all noise/puddle seeds derived from master gameplay/generator.json seed via hash. One master seed = deterministic refresh."
     },
-    "system": "All are T1 live-edit via UBO ModifiersBlock (binding=1). No regen. heightAdd/aoWeight/noiseScale/normalStrength/roughAdd were dead legacy and removed."
+    "system": "All moss+puddle are T1 live-edit via UBO ModifiersBlock 16 vec4 (256B) binding=1. Moss decomposed: noiseScale/threshold/feather live, env FloorBase/WallBase/WallEdgeBase/CornerBonus/BottomLow/BottomHigh/CeilReduce/SeamBoost live, material HeightLow/HeightHigh/AOLow/AOHigh/RoughLow/RoughHigh/Base live, final BiomeBase/EnvBase/MatBase/Boost live. No hard-coded magic."
   },
   "ui": {
     "moss": {
@@ -297,6 +552,171 @@
         "min": 0,
         "max": 0.5,
         "step": 0.01
+      },
+      "env.floorBase": {
+        "min": 0,
+        "max": 1,
+        "step": 0.01
+      },
+      "env.wallBase": {
+        "min": 0,
+        "max": 1,
+        "step": 0.01
+      },
+      "env.wallEdgeBase": {
+        "min": 0,
+        "max": 1,
+        "step": 0.01
+      },
+      "env.cornerBonus": {
+        "min": 0,
+        "max": 1,
+        "step": 0.01
+      },
+      "env.bottomLow": {
+        "min": -1,
+        "max": 1,
+        "step": 0.01
+      },
+      "env.bottomHigh": {
+        "min": 0,
+        "max": 2,
+        "step": 0.01
+      },
+      "env.ceilReduce": {
+        "min": 0,
+        "max": 1,
+        "step": 0.01
+      },
+      "env.seamBoost": {
+        "min": 0,
+        "max": 1,
+        "step": 0.01
+      },
+      "material.heightLow": {
+        "min": 0,
+        "max": 1,
+        "step": 0.01
+      },
+      "material.heightHigh": {
+        "min": 0,
+        "max": 1,
+        "step": 0.01
+      },
+      "material.aoLow": {
+        "min": 0,
+        "max": 1,
+        "step": 0.01
+      },
+      "material.aoHigh": {
+        "min": 0,
+        "max": 1,
+        "step": 0.01
+      },
+      "material.roughLow": {
+        "min": 0,
+        "max": 1,
+        "step": 0.01
+      },
+      "material.roughHigh": {
+        "min": 0,
+        "max": 1,
+        "step": 0.01
+      },
+      "material.base": {
+        "min": 0,
+        "max": 1,
+        "step": 0.01
+      },
+      "final.biomeBase": {
+        "min": 0,
+        "max": 1,
+        "step": 0.01
+      },
+      "final.envBase": {
+        "min": 0,
+        "max": 1,
+        "step": 0.01
+      },
+      "final.matBase": {
+        "min": 0,
+        "max": 1,
+        "step": 0.01
+      },
+      "final.boost": {
+        "min": 0,
+        "max": 3,
+        "step": 0.01
+      },
+      "env.wallDistInner": {
+        "min": 0,
+        "max": 1,
+        "step": 0.01
+      },
+      "env.wallDistOuter": {
+        "min": 0,
+        "max": 1,
+        "step": 0.01
+      },
+      "env.floorDistInner": {
+        "min": 0,
+        "max": 1,
+        "step": 0.01
+      },
+      "env.floorDistOuter": {
+        "min": 0,
+        "max": 1,
+        "step": 0.01
+      },
+      "final.noiseWeight": {
+        "min": 0,
+        "max": 2,
+        "step": 0.05
+      },
+      "final.envWeight": {
+        "min": 0,
+        "max": 2,
+        "step": 0.05
+      },
+      "final.matWeight": {
+        "min": 0,
+        "max": 2,
+        "step": 0.05
+      },
+      "final.biomeWeight": {
+        "min": 0,
+        "max": 2,
+        "step": 0.05
+      },
+      "final.combine": {
+        "min": 0,
+        "max": 1,
+        "step": 0.01
+      },
+      "final.contrast": {
+        "min": 0,
+        "max": 4,
+        "step": 0.05
+      },
+      "final.brightness": {
+        "min": -1,
+        "max": 1,
+        "step": 0.01
+      },
+      "final.minThreshold": {
+        "min": -1,
+        "max": 1,
+        "step": 0.01
+      },
+      "final.maxThreshold": {
+        "min": 0,
+        "max": 2,
+        "step": 0.01
+      },
+      "final.power": {
+        "min": 0.1,
+        "max": 4,
+        "step": 0.05
       }
     },
     "puddle": {

@@ -106,16 +106,73 @@ export function generateModifierMap(dungeon, config) {
     }
   }
 
+  function isWallCell(x,y){
+    if(x<0||y<0||x>=w||y>=h) return true;
+    const gi = y*w+x;
+    return dungeon.grid ? dungeon.grid[gi] !== 0 : false;
+  }
   function isNearWall(x,y){
     for(let dy=-1; dy<=1; dy++) for(let dx=-1; dx<=1; dx++){
       if(dx===0 && dy===0) continue;
-      const nx=x+dx, ny=y+dy;
-      if(nx<0||ny<0||nx>=w||ny>=h) return true;
-      const gi = ny*w+nx;
-      if(dungeon.grid && dungeon.grid[gi] !== 0) return true;
+      if(isWallCell(x+dx,y+dy)) return true;
     }
     return false;
   }
+
+  // --- Pre-bake wall distance field for moss env (smooth, feathered) ---
+  // Computes distance to nearest wall within radius 4, plus corner boost, then blur for feather
+  const maxWallDist = 4.0;
+  const wallProxRaw = new Float32Array(size);
+  const cornerRaw = new Float32Array(size);
+  for(let y=0;y<h;y++) for(let x=0;x<w;x++){
+    const i=y*w+x;
+    let minD = maxWallDist + 1.0;
+    // 9x9 search radius 4
+    for(let dy=-4; dy<=4; dy++){
+      for(let dx=-4; dx<=4; dx++){
+        const nx=x+dx, ny=y+dy;
+        if(isWallCell(nx,ny)){
+          const d = Math.sqrt(dx*dx + dy*dy);
+          if(d < minD) minD = d;
+        }
+      }
+    }
+    // prox 1 near wall, 0 far
+    let prox = 1.0 - Math.min(minD / maxWallDist, 1.0);
+    // make falloff smoother: smoothstep cubic
+    prox = smooth(prox);
+    wallProxRaw[i] = prox;
+
+    // corner detection: orthogonal pairs
+    let cornerCount = 0;
+    if(isWallCell(x, y-1) && isWallCell(x-1, y)) cornerCount++;
+    if(isWallCell(x, y-1) && isWallCell(x+1, y)) cornerCount++;
+    if(isWallCell(x, y+1) && isWallCell(x-1, y)) cornerCount++;
+    if(isWallCell(x, y+1) && isWallCell(x+1, y)) cornerCount++;
+    cornerRaw[i] = cornerCount / 4.0; // 0..1
+  }
+  // blur passes for feathering hard cell edges
+  function blurField(src){
+    const dst = new Float32Array(size);
+    for(let y=0;y<h;y++) for(let x=0;x<w;x++){
+      let sum=0, cnt=0;
+      for(let dy=-1; dy<=1; dy++) for(let dx=-1; dx<=1; dx++){
+        const nx=x+dx, ny=y+dy;
+        if(nx<0||ny<0||nx>=w||ny>=h) continue;
+        sum += src[ny*w+nx];
+        cnt++;
+      }
+      dst[y*w+x] = cnt ? sum / cnt : 0;
+    }
+    return dst;
+  }
+  let envField = new Float32Array(size);
+  for(let i=0;i<size;i++){
+    // base wall proximity + corner boost (tunable: corner up to +0.35)
+    envField[i] = Math.min(1.0, wallProxRaw[i] * 1.12 + cornerRaw[i] * 0.35);
+  }
+  envField = blurField(envField);
+  envField = blurField(envField); // second pass extra feather
 
   for(let y=0;y<h;y++) for(let x=0;x<w;x++){
     const i=y*w+x;
@@ -124,7 +181,6 @@ export function generateModifierMap(dungeon, config) {
     const role = (ri>=0 ? dungeon.rooms[ri]?.role : null) || (isFloor ? 'corridor' : 'hall');
     const rw = roleWeights[role] || roleWeights['corridor'];
 
-    // Domain-warped FBM for organic cloud mask (map-based) - sample at texel centers (x+0.5) for LINEAR alignment
     const xc = x + 0.5;
     const yc = y + 0.5;
     const wx = xc * 0.12, wy = yc * 0.12;
@@ -156,37 +212,21 @@ export function generateModifierMap(dungeon, config) {
     if(!isFloor) puddleI *= 0.02;
     puddleI = Math.max(0, Math.min(1, puddleI));
 
-    // Moss: thresholded sparse coverage like puddle, fixes full-coverage bug
     let mossI = 0;
     if (roleMoss > 0.001) {
-      const mm = modCfg.modifiers || {};
-      const mCfg = mm.moss || {};
-      const mossScale = mCfg.noiseScale ?? 2.2;
-      const mossThreshold = mCfg.threshold ?? 0.42;
-      const mossFeather = mCfg.feather ?? 0.12;
-      // higher freq detail for organic edges
-      const mossLarge = fbm(xc * mossScale, yc * mossScale, seed+333, 4);
-      const mossDetailRaw = fbm(xc * mossScale * 2.0 + 19.1, yc * mossScale * 2.0 + 33.7, seed+334, 3);
-      const mossSmall = fbm(xc * 0.55, yc * 0.55, seed+99+1, 2); // reuse for extra wobble
-
-      const low = mossThreshold - mossFeather;
-      const high = mossThreshold + mossFeather;
-      let t = (mossLarge - low) / Math.max(0.0001, high - low);
-      t = Math.max(0, Math.min(1, t));
-      t = smooth(t);
-      // puddle-style: large defines blob, detail modulates inside but preserves zero outside
-      let mossShape = t * (0.55 + 0.45 * mossDetailRaw) * (0.75 + 0.25 * mossSmall);
-      mossShape = Math.max(0, Math.min(1, mossShape));
-      // Wall factor now weak 1.1/0.9 so noise breaks vertical streaks, not dominates
-      const wallFactor = isFloor ? (isNearWall(x,y) ? 1.10 : 0.90) : 1.0;
-      mossI = roleMoss * mossShape * wallFactor * (0.50 + 0.50 * globalN);
+      const biomeNoise = fbm(xc * 0.18, yc * 0.18, seed+333, 2);
+      const largeNoiseM = fbm(xc * 0.07, yc * 0.07, seed+335, 2);
+      const wallFactor = isFloor ? (isNearWall(x,y) ? 1.18 : 0.82) : 1.0;
+      mossI = roleMoss * (0.45 + 0.55*biomeNoise) * (0.40 + 0.60*largeNoiseM) * wallFactor * (0.50 + 0.50*globalN);
       mossI = Math.max(0, Math.min(1, mossI));
     }
+
+    const envI = envField[i]; // smooth 0..1 wall proximity + corners, feathered via blur + LINEAR tex filtering
 
     data[i*4 + MOD_CHANNELS.MOSS] = Math.round(mossI*255);
     data[i*4 + MOD_CHANNELS.WATER] = 0;
     data[i*4 + MOD_CHANNELS.PUDDLE] = Math.round(puddleI*255);
-    data[i*4 + MOD_CHANNELS.DUST] = 0;
+    data[i*4 + MOD_CHANNELS.DUST] = Math.round(envI*255);
     data2[i*4 + MOD2_CHANNELS.DAMAGED] = 0;
     data2[i*4 + MOD2_CHANNELS.BLOOD] = 0;
   }

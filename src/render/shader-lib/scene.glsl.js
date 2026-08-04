@@ -1,6 +1,4 @@
-
-// Scene rendering helpers - v14 puddle precise debug bright mask
-
+// Scene rendering helpers - v15 moss decomposed debug
 export const glslScene = `
 // Grid debug colors
 vec3 getGridColor(in vec2 world, in bool isCeil) {
@@ -23,7 +21,7 @@ vec3 debugModifiersViz(in ivec2 cell, in int mode) {
   return vec3(0.0);
 }
 
-// Bright mask visualization - BIG BLUE / PINK as requested, not dark PBR
+// Puddle mask visualization - unchanged
 vec3 debugFinalPuddleMask(in vec3 worldPos, in float matHeight, in float ao) {
   vec2 modUV = worldPos.xy / u_mapSize;
   vec4 mod1 = texture(u_modifierMap, modUV);
@@ -39,25 +37,58 @@ vec3 debugFinalPuddleMask(in vec3 worldPos, in float matHeight, in float ao) {
   return clamp(col, 0.0, 1.0);
 }
 
+// Moss decomposed debug - v15 uses new pipeline helpers from modifiers.glsl
+// Legacy entry (combined) kept for compatibility
 vec3 debugFinalMossMask(in vec3 worldPos, in float matHeight, in float ao) {
-  float tunScale = modMossAlbedoRough.z > 0.001 ? modMossAlbedoRough.z : 0.85;
-  float mossThresh = modMossAlbedoRough.w > 0.001 ? modMossAlbedoRough.w : 0.42;
-  float mossFeather = 0.12;
-  // Pure continuous 3D isotropic
-  vec3 mossPos = worldPos * tunScale * 0.85 + vec3(2.7, 5.4, 8.1);
-  float n3D = fbm3D_3(mossPos);
-  float n3DDet = valueNoise3D(mossPos * 2.2 + vec3(11.3, 23.7, 4.7));
-  float varCombined = n3D * 0.65 + n3DDet * 0.35;
-  float low = mossThresh - mossFeather;
-  float high = mossThresh + mossFeather;
-  float shape = smoothstep(low, high, varCombined);
-  float mask = shape; // pure continuous, no cell discontinuity
-  float edge = mask * (1.0 - mask) * 4.0;
-  vec3 inside = vec3(0.18, 0.68, 0.18) * mask * 1.6;
+  // For legacy we now compute final mask with dummy rough=0.7 and isFloor based on Z
+  float isFloor = step(worldPos.z, 0.6); // floor if low Z
+  // Need rough - sample approx 0.7 if not provided
+  float rough = 0.7;
+  float finalM = mossFinalMask(worldPos, matHeight, ao, rough, isFloor);
+  float edge = finalM * (1.0 - finalM) * 4.0;
+  vec3 inside = vec3(0.18, 0.68, 0.18) * finalM * 1.6;
   vec3 edgeCol = vec3(0.35, 1.0, 0.35) * edge * 0.9;
   vec3 bg = vec3(0.02, 0.02, 0.03);
+  return clamp(bg + inside + edgeCol, 0.0, 1.0);
+}
+
+// New decomposed debug functions - wrappers around modifier colored helpers
+vec3 debugMossNoiseMask(in vec3 worldPos) {
+  float m = mossNoiseShape(worldPos);
+  float raw = mossNoiseRaw(worldPos);
+  float edge = m * (1.0 - m) * 3.5;
+  vec3 inside = vec3(0.18, 0.68, 0.18) * m * (0.85 + 0.35*raw) * 1.6;
+  vec3 edgeCol = vec3(0.40, 1.0, 0.42) * edge * 0.85;
+  vec3 bg = vec3(0.02,0.02,0.03);
+  return clamp(bg + inside + edgeCol, 0.0, 1.0);
+}
+
+vec3 debugMossEnvMask(in vec3 worldPos, in float isFloorSurface) {
+  float e = mossEnvMask(worldPos, isFloorSurface);
+  float edge = e * (1.0 - e) * 2.5;
+  vec3 inside = vec3(0.85, 0.75, 0.15) * e * 1.2; // yellow for env
+  vec3 edgeCol = vec3(1.0, 0.95, 0.45) * edge * 0.6;
+  vec3 bg = vec3(0.02,0.02,0.03);
   vec3 col = bg + inside + edgeCol;
   return clamp(col, 0.0, 1.0);
+}
+
+vec3 debugMossMaterialMask(in float matHeight, in float ao, in float rough) {
+  vec3 c = debugMossMaterialCol(matHeight, ao, rough);
+  float m = mossMaterialMask(matHeight, ao, rough);
+  float edge = m * (1.0 - m) * 3.0;
+  vec3 edgeCol = vec3(1.0, 0.85, 0.35) * edge * 0.55;
+  vec3 bg = vec3(0.02,0.02,0.03);
+  return clamp(bg + c + edgeCol, 0.0, 1.0);
+}
+
+vec3 debugMossCombinedMask(in vec3 worldPos, in float matHeight, in float ao, in float rough, in float isFloorSurface) {
+  vec3 c = debugMossCombinedCol(worldPos, matHeight, ao, rough, isFloorSurface);
+  float f = mossFinalMask(worldPos, matHeight, ao, rough, isFloorSurface);
+  float edge = f * (1.0 - f) * 4.0;
+  vec3 edgeCol = vec3(0.35, 1.0, 0.35) * edge * 0.9;
+  vec3 bg = vec3(0.02,0.02,0.03);
+  return clamp(bg + c + edgeCol, 0.0, 1.0);
 }
 
 vec3 shadeHorizontalCell(in vec2 horizWorld, in vec2 horizUV, in float matId, in float count, in vec2 ray, in float eyeZ, in float heightAtRay, in bool isCeil, out float outDist) {
@@ -71,11 +102,7 @@ vec3 shadeHorizontalCell(in vec2 horizWorld, in vec2 horizUV, in float matId, in
   vec2 poFloor = pomOffsetArray(u_floorHeight, uv, layer, viewDirFloor, u_pomFloor, u_pomSteps);
   vec2 po = mix(poFloor, poCeil, isCeilF);
   uv = mix(uv, uv + po, pomEn);
-  vec3 albedoRaw;
-  vec3 normalRaw;
-  float heightVal;
-  vec4 rma;
-  vec3 Nw;
+  vec3 albedoRaw; vec3 normalRaw; float heightVal; vec4 rma; vec3 Nw;
   if (isCeil) {
     albedoRaw = sampleCeilAlbedo(layer, uv);
     normalRaw = sampleCeilNormalRaw(layer, uv);
@@ -106,8 +133,6 @@ vec3 shadeHorizontalCell(in vec2 horizWorld, in vec2 horizUV, in float matId, in
     applyFloorBaseboard(horizWorld, N, ao, albedo, rma);
     applyGridFloor(horizWorld, N, ao, albedo, rma);
   }
-  // For moss: floor and ceiling both horizontal → same handling (continuous 3D), not 0 vs 1
-  // Puddle will filter by worldPos.z, so keep horizontal flag 1 for both
   float isFloorSurface = 1.0;
   applyModifiers(albedo, N, rma.r, rma.g, ao, vec3(horizWorld, heightAtRay), heightVal, isFloorSurface);
   vec3 worldPos = vec3(horizWorld, heightAtRay);
@@ -128,7 +153,6 @@ vec3 shadeWallCell(in float wallU, in float wallV, in float matId, in float wc, 
   vec2 uv = vec2(wallU, wallV);
   vec3 bitangent = vec3(0.0, 0.0, 1.0);
   float sideEq0 = step(float(side), 0.5);
-  float sideEq1 = 1.0 - sideEq0;
   float rayXpos = step(0.0, ray.x);
   float rayYneg = step(ray.y, 0.0);
   vec3 NgeomFlat0 = vec3(float(-stepDir.x), 0.0, 0.0);
@@ -189,8 +213,6 @@ vec3 shadeWallCell(in float wallU, in float wallV, in float matId, in float wc, 
   applyWallCeilTrim(wallV, Ngeom, Nw, albedoRaw, rmaW);
   float noCorner = 1.0 - cornerEn;
   float vertEn = noCorner * float(u_chamferEnabled);
-  // apply vertical edge with valid factor already inside, but gate by noCorner
-  // we call with branchless version that uses en internally, extra gate via mix
   vec3 NwBefore = Nw; vec3 albedoBefore = albedoRaw; vec4 rmaBefore = rmaW;
   applyWallVerticalEdge(wallU, side, Ngeom, Nw, albedoRaw, rmaW);
   Nw = mix(NwBefore, Nw, vertEn);
@@ -201,7 +223,6 @@ vec3 shadeWallCell(in float wallU, in float wallV, in float matId, in float wc, 
 
   vec3 color = pbrShade(albedoRaw, Nw, rmaW.r, rmaW.g, rmaW.a, emissiveW, worldPos, viewDir);
   float sideY = step(0.5, float(side));
-  // side==1 -> darken
   float wallDarken = u_renderWallDarken > 0.0 ? u_renderWallDarken : 0.85;
   color = mix(color, color * wallDarken, sideY);
   return color;

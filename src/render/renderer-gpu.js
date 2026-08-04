@@ -8,7 +8,7 @@
 // - Live-edit T1 instant uniforms + T2 material array rebuild + T3 regen banner
 
 import { createProgram, createProgramAsync, createTexture, createTexture2DArray, isTexture2DArraySupported, createUniformBuffer, updateUniformBuffer, bindUniformBlock, bindUniformBufferBase } from './gl-utils.js';
-import { vsSource, fsSource, vsQuantize, fsQuantize, vsUI, fsUI, MAX_LIGHTS, vsSpriteSrc, fsSpritePBRSrc, vsSSR, fsSSR, vsComposite, fsComposite, fsDebugMoss, fsDebugPuddle, fsDebugCombined, fsDebugMossRaw } from './shaders.js';
+import { vsSource, fsSource, vsQuantize, fsQuantize, vsUI, fsUI, MAX_LIGHTS, vsSpriteSrc, fsSpritePBRSrc, vsSSR, fsSSR, vsComposite, fsComposite, fsDebugMoss, fsDebugMossNoise, fsDebugMossEnv, fsDebugMossMaterial, fsDebugMossCombined, fsDebugPuddle, fsDebugCombined, fsDebugMossRaw } from './shaders.js';
 import { uploadMapTexture, updateMapTexture } from './map-upload.js';
 import { generateMaterialArrayData, generateMaterialAtlases } from '../world/materials.js';
 import { getAsset } from '../config/config.js';
@@ -102,14 +102,18 @@ export class GPURenderer {
     const compileAsync = (vs, fs) => {
       try { return createProgramAsync(gl, vs, fs).catch(()=>null); } catch { return Promise.resolve(null); }
     };
-    // Start all in parallel - main now has NO debug branching (fast), debug are separate programs
-    const [pMain, pQuant, pUI, pSSR, pComp, pDbgMoss, pDbgPuddle, pDbgCombined] = await Promise.all([
+    // Start all in parallel - main has NO debug branching (fast), debug are separate programs
+    // v15 moss decomposed: noise, nearwall/env, material, combined, plus puddle, plus combined R+B
+    const [pMain, pQuant, pUI, pSSR, pComp, pDbgMossNoise, pDbgMossEnv, pDbgMossMat, pDbgMossCombined, pDbgPuddle, pDbgCombined] = await Promise.all([
       compileAsync(vsSource, fsSource),
       compileAsync(vsQuantize, fsQuantize),
       compileAsync(vsUI, fsUI),
       compileAsync(vsSSR, fsSSR),
       compileAsync(vsComposite, fsComposite),
-      compileAsync(vsSource, fsDebugMoss),
+      compileAsync(vsSource, fsDebugMossNoise),
+      compileAsync(vsSource, fsDebugMossEnv),
+      compileAsync(vsSource, fsDebugMossMaterial),
+      compileAsync(vsSource, fsDebugMossCombined),
       compileAsync(vsSource, fsDebugPuddle),
       compileAsync(vsSource, fsDebugCombined)
     ]);
@@ -123,12 +127,21 @@ export class GPURenderer {
     if (!this.ssrProgram) console.warn('SSR compile failed');
     this.compositeProgram = pComp || createProgram(gl, vsComposite, fsComposite);
     if (!this.compositeProgram) console.warn('Composite compile failed');
-    // Debug programs - swapped via useProgram, not uniform branching (avoids ANGLE giga)
-    this.debugMossProgram = pDbgMoss || createProgram(gl, vsSource, fsDebugMoss);
+    // Debug programs - swapped via useProgram, not uniform branching
+    this.debugMossNoiseProgram = pDbgMossNoise || createProgram(gl, vsSource, fsDebugMossNoise);
+    this.debugMossEnvProgram = pDbgMossEnv || createProgram(gl, vsSource, fsDebugMossEnv);
+    this.debugMossMaterialProgram = pDbgMossMat || createProgram(gl, vsSource, fsDebugMossMaterial);
+    this.debugMossCombinedProgram = pDbgMossCombined || createProgram(gl, vsSource, fsDebugMossCombined);
+    this.debugMossProgram = this.debugMossCombinedProgram || pDbgMossCombined; // legacy alias
     this.debugPuddleProgram = pDbgPuddle || createProgram(gl, vsSource, fsDebugPuddle);
     this.debugCombinedProgram = pDbgCombined || createProgram(gl, vsSource, fsDebugCombined);
-    if (!this.debugMossProgram) console.warn('Debug moss compile failed');
-    // Cache UL for debug programs (reuse same uniform layout)
+    if (!this.debugMossCombinedProgram) console.warn('Debug moss combined compile failed');
+    if (!this.debugMossNoiseProgram) console.warn('Debug moss noise compile failed');
+    // Cache UL for debug programs
+    this.uLocDebugMossNoise = null;
+    this.uLocDebugMossEnv = null;
+    this.uLocDebugMossMaterial = null;
+    this.uLocDebugMossCombined = null;
     this.uLocDebugMoss = null;
     this.uLocDebugPuddle = null;
     this.uLocDebugCombined = null;
@@ -529,31 +542,21 @@ export class GPURenderer {
     Object.entries(arrayUnits).forEach(([name, unit]) => { if (ul[name]) gl.uniform1i(ul[name], unit); });
 
     // Cache debug programs uniforms as well (separate, no branching)
-    if (this.debugMossProgram) {
-      gl.useProgram(this.debugMossProgram);
-      this.uLocDebugMoss = cacheRaycastUniforms(gl, this.debugMossProgram);
-      Object.entries(arrayUnits).forEach(([name, unit]) => { if (this.uLocDebugMoss[name]) gl.uniform1i(this.uLocDebugMoss[name], unit); });
-      gl.uniform1i(this.uLocDebugMoss.u_mapTex, 0);
-      if (this.uLocDebugMoss.u_matMap) gl.uniform1i(this.uLocDebugMoss.u_matMap, 13);
-    }
-    if (this.debugPuddleProgram) {
-      gl.useProgram(this.debugPuddleProgram);
-      this.uLocDebugPuddle = cacheRaycastUniforms(gl, this.debugPuddleProgram);
-      Object.entries(arrayUnits).forEach(([name, unit]) => { if (this.uLocDebugPuddle[name]) gl.uniform1i(this.uLocDebugPuddle[name], unit); });
-      gl.uniform1i(this.uLocDebugPuddle.u_mapTex, 0);
-      if (this.uLocDebugPuddle.u_matMap) gl.uniform1i(this.uLocDebugPuddle.u_matMap, 13);
-    }
-    if (this.debugCombinedProgram) {
-      gl.useProgram(this.debugCombinedProgram);
-      this.uLocDebugCombined = cacheRaycastUniforms(gl, this.debugCombinedProgram);
-      Object.entries(arrayUnits).forEach(([name, unit]) => { if (this.uLocDebugCombined[name]) gl.uniform1i(this.uLocDebugCombined[name], unit); });
-      gl.uniform1i(this.uLocDebugCombined.u_mapTex, 0);
-      if (this.uLocDebugCombined.u_matMap) gl.uniform1i(this.uLocDebugCombined.u_matMap, 13);
-    }
+    const bindArrayUnits = (uLoc) => {
+      Object.entries(arrayUnits).forEach(([name, unit]) => { if (uLoc && uLoc[name]) gl.uniform1i(uLoc[name], unit); });
+      if (uLoc && uLoc.u_mapTex) gl.uniform1i(uLoc.u_mapTex, 0);
+      if (uLoc && uLoc.u_matMap) gl.uniform1i(uLoc.u_matMap, 13);
+    };
+    if (this.debugMossNoiseProgram) { gl.useProgram(this.debugMossNoiseProgram); this.uLocDebugMossNoise = cacheRaycastUniforms(gl, this.debugMossNoiseProgram); bindArrayUnits(this.uLocDebugMossNoise); }
+    if (this.debugMossEnvProgram) { gl.useProgram(this.debugMossEnvProgram); this.uLocDebugMossEnv = cacheRaycastUniforms(gl, this.debugMossEnvProgram); bindArrayUnits(this.uLocDebugMossEnv); }
+    if (this.debugMossMaterialProgram) { gl.useProgram(this.debugMossMaterialProgram); this.uLocDebugMossMaterial = cacheRaycastUniforms(gl, this.debugMossMaterialProgram); bindArrayUnits(this.uLocDebugMossMaterial); }
+    if (this.debugMossCombinedProgram) { gl.useProgram(this.debugMossCombinedProgram); this.uLocDebugMossCombined = cacheRaycastUniforms(gl, this.debugMossCombinedProgram); bindArrayUnits(this.uLocDebugMossCombined); this.uLocDebugMoss = this.uLocDebugMossCombined; }
+    if (this.debugMossProgram && this.debugMossProgram !== this.debugMossCombinedProgram) { gl.useProgram(this.debugMossProgram); this.uLocDebugMoss = cacheRaycastUniforms(gl, this.debugMossProgram); bindArrayUnits(this.uLocDebugMoss); }
+    if (this.debugPuddleProgram) { gl.useProgram(this.debugPuddleProgram); this.uLocDebugPuddle = cacheRaycastUniforms(gl, this.debugPuddleProgram); bindArrayUnits(this.uLocDebugPuddle); }
+    if (this.debugCombinedProgram) { gl.useProgram(this.debugCombinedProgram); this.uLocDebugCombined = cacheRaycastUniforms(gl, this.debugCombinedProgram); bindArrayUnits(this.uLocDebugCombined); }
     gl.useProgram(this.program);
 
-    // Full UBO for modifiers – binding point 1 (192 bytes = 12 vec4)
-    // Bind for main + all debug programs (they are copies of main, also use block)
+    // Full UBO for modifiers – binding point 1 (256 bytes = 16 vec4) v15 moss decomposed
     const bindModsForProg = (prog) => {
       try {
         const idx = gl.getUniformBlockIndex(prog, 'ModifiersBlock');
@@ -567,22 +570,25 @@ export class GPURenderer {
       const blockIdx = gl.getUniformBlockIndex(this.program, 'ModifiersBlock');
       if (blockIdx !== gl.INVALID_INDEX && blockIdx !== -1) {
         bindModsForProg(this.program);
+        if (this.debugMossNoiseProgram) bindModsForProg(this.debugMossNoiseProgram);
+        if (this.debugMossEnvProgram) bindModsForProg(this.debugMossEnvProgram);
+        if (this.debugMossMaterialProgram) bindModsForProg(this.debugMossMaterialProgram);
+        if (this.debugMossCombinedProgram) bindModsForProg(this.debugMossCombinedProgram);
         if (this.debugMossProgram) bindModsForProg(this.debugMossProgram);
         if (this.debugPuddleProgram) bindModsForProg(this.debugPuddleProgram);
         if (this.debugCombinedProgram) bindModsForProg(this.debugCombinedProgram);
         this.modifiersBlockIndex = blockIdx;
-        this.modifiersUBO = createUniformBuffer(gl, 192, gl.DYNAMIC_DRAW);
+        this.modifiersUBO = createUniformBuffer(gl, 320, gl.DYNAMIC_DRAW);
         bindUniformBufferBase(gl, this.modifiersBlockBinding, this.modifiersUBO);
       } else {
         this.modifiersBlockIndex = -1;
         this.modifiersUBO = null;
-        console.log('[GPURenderer] ModifiersBlock not present – using fast individual uniforms path (instant compile)');
+        console.log('[GPURenderer] ModifiersBlock not present – using fast individual uniforms path');
       }
       const maxUnits = gl.getParameter(gl.MAX_TEXTURE_IMAGE_UNITS);
       if (maxUnits < 16) {
-        console.warn('[GPURenderer] MAX_TEXTURE_IMAGE_UNITS=' + maxUnits + ' <16, material arrays may fallback; need >=16 (WebGL2 minimum, usually 32).');
+        console.warn('[GPURenderer] MAX_TEXTURE_IMAGE_UNITS=' + maxUnits + ' <16, material arrays may fallback; need >=16.');
       }
-      // v11 uses 16 units total: 0 map, 1-12 arrays, 13 matMap, 14 mod1, 15 mod2 (noise procedural, no unit) – fits 16
     } catch (e) {
       console.warn('[GPURenderer] UBO setup failed', e);
     }
@@ -788,7 +794,7 @@ export class GPURenderer {
   setFogEnabled(v) { this.fogEnabled = v ? 1 : 0; }
   setChamferEnabled(v) { this.chamferEnabled = v ? 1 : 0; }
   setCornerEnabled(v) { this.cornerEnabled = v ? 1 : 0; }
-  setPBRDebugMode(v) { this.pbrDebugMode = Math.max(0, Math.min(3, v | 0)); }
+  setPBRDebugMode(v) { this.pbrDebugMode = Math.max(0, Math.min(6, v | 0)); }
   setModifiersEnabled(v){ this.modifiersEnabled = v?1:0; }
   setSSREnabled(v){ this.ssrEnabled = v?1:0; }
   setSSRDebugMode(v){ this.ssrDebugMode = Math.max(0, Math.min(8, v|0)); }
@@ -846,8 +852,8 @@ export class GPURenderer {
     } catch (e) { console.warn('[toggleModifiers] regen failed', e); }
     return this.modifiersEnabled; 
   }
-  // Cycle 0=main,1=moss raw,2=puddle raw,3=combined - swapped programs, no branching
-  cyclePBRDebug() { this.pbrDebugMode = (this.pbrDebugMode + 1) % 4; return this.pbrDebugMode; }
+  // Cycle v15: 0=Normal,1=Moss noise,2=Moss nearwall/env,3=Moss material,4=Moss combined,5=Puddle,6=Moss R + Puddle B
+  cyclePBRDebug() { this.pbrDebugMode = (this.pbrDebugMode + 1) % 7; return this.pbrDebugMode; }
 
   updateConfig(partial) {
     if (!partial) return;
@@ -1054,12 +1060,17 @@ export class GPURenderer {
     gl.viewport(0, 0, this.canvas.width, this.canvas.height);
     gl.clearColor(0, 0, 0, 1);
     if (isGBuffer) { try { gl.clearBufferfv(gl.COLOR, 0, [0,0,0,1]); gl.clearBufferfv(gl.COLOR, 1, [0.5,0.5,0,0]); } catch { gl.clear(gl.COLOR_BUFFER_BIT); } } else { gl.clear(gl.COLOR_BUFFER_BIT); }
-    // Swap shaders for debug - separate programs, no branching in main (avoids ANGLE giga)
+    // Swap shaders for debug - v15 moss decomposed: 0 Normal,1 noise,2 nearwall/env,3 material,4 combined,5 puddle,6 R+B
     let curProg = this.program;
     let curULoc = this.uLoc;
-    if (this.pbrDebugMode === 1 && this.debugMossProgram) { curProg = this.debugMossProgram; curULoc = this.uLocDebugMoss || this.uLoc; }
-    else if (this.pbrDebugMode === 2 && this.debugPuddleProgram) { curProg = this.debugPuddleProgram; curULoc = this.uLocDebugPuddle || this.uLoc; }
-    else if (this.pbrDebugMode === 3 && this.debugCombinedProgram) { curProg = this.debugCombinedProgram; curULoc = this.uLocDebugCombined || this.uLoc; }
+    if (this.pbrDebugMode === 1 && this.debugMossNoiseProgram) { curProg = this.debugMossNoiseProgram; curULoc = this.uLocDebugMossNoise || this.uLoc; }
+    else if (this.pbrDebugMode === 2 && this.debugMossEnvProgram) { curProg = this.debugMossEnvProgram; curULoc = this.uLocDebugMossEnv || this.uLoc; }
+    else if (this.pbrDebugMode === 3 && this.debugMossMaterialProgram) { curProg = this.debugMossMaterialProgram; curULoc = this.uLocDebugMossMaterial || this.uLoc; }
+    else if (this.pbrDebugMode === 4 && this.debugMossCombinedProgram) { curProg = this.debugMossCombinedProgram; curULoc = this.uLocDebugMossCombined || this.uLoc; }
+    else if (this.pbrDebugMode === 5 && this.debugPuddleProgram) { curProg = this.debugPuddleProgram; curULoc = this.uLocDebugPuddle || this.uLoc; }
+    else if (this.pbrDebugMode === 6 && this.debugCombinedProgram) { curProg = this.debugCombinedProgram; curULoc = this.uLocDebugCombined || this.uLoc; }
+    // legacy fallback: old mode1 stored as debugMossProgram (combined)
+    else if (this.pbrDebugMode === 1 && this.debugMossProgram) { curProg = this.debugMossProgram; curULoc = this.uLocDebugMoss || this.uLoc; }
     gl.useProgram(curProg);
     gl.bindVertexArray(this.vao);
     const ul = curULoc;
@@ -1141,10 +1152,9 @@ export class GPURenderer {
       const dust = { albedo:[0,0,0], roughAdd:0, colorStrength:0, noiseScale:0, threshold:0, aoWeight:0 };
       const damaged = { albedo:[0,0,0], roughAdd:0, colorStrength:0, noiseScale:0, threshold:0 };
       if (this.modifiersUBO && this.modifiersBlockIndex !== -1) {
-        const buf = new Float32Array(48);
+        const buf = new Float32Array(80); // 20 vec4 = 320 bytes v17 moss final weights+combine
         function normalizeAlbedo(arr, fallback) {
           const a = arr || fallback;
-          // if values look like 0-255 (>1.0), convert to 0-1 to avoid saturation
           if (a[0] > 1.0 || a[1] > 1.0 || a[2] > 1.0) {
             return [a[0]/255.0, a[1]/255.0, a[2]/255.0];
           }
@@ -1152,31 +1162,52 @@ export class GPURenderer {
         }
         function setVec4(off, xyz, w) { buf[off]=xyz[0]; buf[off+1]=xyz[1]; buf[off+2]=xyz[2]; buf[off+3]=w; }
         function setVec4Full(off, x,y,z,w){ buf[off]=x; buf[off+1]=y; buf[off+2]=z; buf[off+3]=w; }
-        // 0 repurposed: x=floorDepress y=masterSeed z=mossNoiseScale w=mossThreshold (tunable)
-        setVec4Full(0, puddle.floorDepress ?? -0.08, dungeon.seed ?? 1337, moss.noiseScale ?? 0.85, moss.threshold ?? 0.42);
-        // 1 grout thresholds
+        // Moss env / material config extraction (tunable via JSON, no hard-coded magic in shader)
+        const mossEnv = moss.env || {}; // floorBase, wallBase, wallEdgeBase, cornerBonus, bottomLow, bottomHigh, ceilReduce, seamBoost
+        const mossMat = moss.material || {}; // heightLow, heightHigh, aoLow, aoHigh, roughLow, roughHigh, base, feather (optional)
+        const mossFinal = moss.final || {}; // biomeBase, envBase, matBase, boost
+        const mossNoiseCfg = moss.noise || {}; // feather overrides?
+
+        // 0: x=floorDepress y=seed z=mossNoiseScale w=mossThreshold - support both top-level and moss.noise.* grouping
+        setVec4Full(0, puddle.floorDepress ?? -0.08, dungeon.seed ?? 1337, moss.noiseScale ?? mossNoiseCfg.scale ?? 2.95, moss.threshold ?? mossNoiseCfg.threshold ?? 0.46);
+        // 1: grout thresholds for puddle
         setVec4Full(4, puddle.heightGroutLow ?? 0.12, puddle.heightGroutHigh ?? 0.48, puddle.aoGroutLow ?? 0.72, puddle.aoGroutHigh ?? 0.95);
-        // 2 water zeroed
-        setVec4(8, [0,0,0], 0);
-        // 3 world low + boost + darkBase
+        // 2: mossEnv1 - floorBase, wallBase, wallEdgeBase, cornerBonus
+        setVec4Full(8, mossEnv.floorBase ?? 0.20, mossEnv.wallBase ?? 0.28, mossEnv.wallEdgeBase ?? 0.55, mossEnv.cornerBonus ?? 0.38);
+        // 3: world low + boost + darkBase (puddle)
         setVec4Full(12, puddle.worldLowHigh ?? 0.25, puddle.worldLowLow ?? -0.35, puddle.maskBoost ?? 1.4, puddle.darkBaseFactor ?? 0.35);
-        // 4 puddle albedo + roughTarget - normalized 0-255->0-1 to prevent saturation
+        // 4: puddle albedo + roughTarget
         setVec4(16, normalizeAlbedo(puddle.albedo, [0.10,0.14,0.19]), puddle.roughTarget ?? 0.04);
-        // 5 puddle main: colorStrength, scaleLarge, threshold, feather
+        // 5: puddle main
         setVec4Full(20, puddle.colorStrength ?? 0.92, puddle.noiseScaleLarge ?? 0.22, puddle.threshold ?? 0.55, puddle.feather ?? 0.12);
-        // 6 repurposed: puddle cell feather (was blood albedo zeroed, blood disabled via texture channel 0)
-        // x=cellFeatherLow y=cellFeatherHigh z=cellEpsilon w=unused - tweakable, avoids hard tile cut
+        // 6: puddle cell feather
         setVec4Full(24, puddle.cellFeatherLow ?? 0.0, puddle.cellFeatherHigh ?? 0.28, puddle.cellEpsilon ?? 0.0005, 0.0);
-        // 7 ripple, edgeFoam, heightInfluence, aoMix
+        // 7: ripple, edgeFoam, heightInfluence, aoMix
         setVec4Full(28, puddle.rippleScale ?? 3.0, puddle.edgeFoam ?? 0.25, puddle.heightInfluence ?? 0.85, puddle.aoMix ?? 0.20);
-        // 8 dust zeroed
-        setVec4(32, [0,0,0], 0);
-        // 9 tintMix, grooveMin, edgeLow, edgeHigh
+        // 8: mossEnv2 - bottomLow, bottomHigh, ceilReduce, seamBoost
+        setVec4Full(32, mossEnv.bottomLow ?? 0.08, mossEnv.bottomHigh ?? 0.85, mossEnv.ceilReduce ?? 0.45, mossEnv.seamBoost ?? 0.35);
+        // 9: tintMix, grooveMin, edgeLow, edgeHigh (puddle)
         setVec4Full(36, puddle.tintMix ?? 0.60, puddle.grooveMin ?? 0.30, puddle.edgeLow ?? 0.0, puddle.edgeHigh ?? 0.15);
-        // 10 damaged zeroed
-        setVec4(40, [0,0,0], 0);
-        // 11 roughLow, roughHigh, flatStrength, metalMix
+        // 10: mossMat1 - heightLow, heightHigh, aoLow, aoHigh
+        setVec4Full(40, mossMat.heightLow ?? 0.16, mossMat.heightHigh ?? 0.55, mossMat.aoLow ?? 0.58, mossMat.aoHigh ?? 0.90);
+        // 11: roughLow, roughHigh, flatStrength, metalMix (puddle)
         setVec4Full(44, puddle.roughFeatherLow ?? 0.0, puddle.roughFeatherHigh ?? 0.65, puddle.flatStrength ?? 0.88, puddle.metalMix ?? 0.85);
+        // 12: mossMat2 - roughLow, roughHigh, matBase, feather (noise feather)
+        setVec4Full(48, mossMat.roughLow ?? 0.52, mossMat.roughHigh ?? 0.88, mossMat.base ?? 0.28, mossMat.feather ?? mossNoiseCfg.feather ?? moss.feather ?? 0.16);
+        // 13: mossFinal - biomeBase, envBase, matFinalBase, finalBoost
+        setVec4Full(52, mossFinal.biomeBase ?? 0.42, mossFinal.envBase ?? 0.32, mossFinal.matBase ?? 0.38, mossFinal.boost ?? 1.28);
+        // 14: mossEnv extra feather - wallDistInner, wallDistOuter, floorDistInner, floorDistOuter
+        setVec4Full(56, mossEnv.wallDistInner ?? 0.0, mossEnv.wallDistOuter ?? 1.0, mossEnv.floorDistInner ?? 0.0, mossEnv.floorDistOuter ?? 1.0);
+        // 15: moss material weights - heightWeight, aoWeight, roughWeight, combineMode (0=max,0.5=add,1=mul)
+        setVec4Full(60, mossMat.heightWeight ?? 1.0, mossMat.aoWeight ?? 0.8, mossMat.roughWeight ?? 0.6, mossMat.combine ?? 0.35);
+        // 16: moss final weights - noiseWeight, envWeight, matWeight, biomeWeight
+        setVec4Full(64, mossFinal.noiseWeight ?? 1.0, mossFinal.envWeight ?? 1.0, mossFinal.matWeight ?? 1.0, mossFinal.biomeWeight ?? 1.0);
+        // 17: moss final combine - combineModeFinal (0=max,0.5=add,1=mul)
+        setVec4Full(68, mossFinal.combine ?? 1.0, 0, 0, 0);
+        // 18: global contrast, brightness, minThreshold, maxThreshold
+        setVec4Full(72, mossFinal.contrast ?? 1.0, mossFinal.brightness ?? 0.0, mossFinal.minThreshold ?? 0.0, mossFinal.maxThreshold ?? 1.0);
+        // 19: power + reserved
+        setVec4Full(76, mossFinal.power ?? 1.0, 0, 0, 0);
         updateUniformBuffer(gl, this.modifiersUBO, buf);
         bindUniformBufferBase(gl, this.modifiersBlockBinding, this.modifiersUBO);
       } else {
