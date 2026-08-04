@@ -41,7 +41,7 @@ function getUiEntry(fullPath) {
           if (cur && typeof cur === 'object' && p in cur) cur = cur[p];
           else { ok = false; break; }
         }
-        if (ok && cur && typeof cur === 'object' && ('min' in cur || 'max' in cur || 'desc' in cur || 'description' in cur)) {
+        if (ok && cur && typeof cur === 'object' && ('min' in cur || 'max' in cur || 'desc' in cur || 'description' in cur || 'type' in cur || 'options' in cur || 'labels' in cur)) {
           return cur;
         }
       }
@@ -305,7 +305,417 @@ function render() {
   if (tabR) tabR.onclick = () => { syncFromUI(); mode = "raw"; render(); };
   if (mode === "visual") renderVisual(); else renderRaw();
 }
-function renderVisual() { const c = $("tab-content"); if (!c) return; c.innerHTML = ""; if (!currentData) return; const f = document.createElement("div"); f.className = "form-root"; buildForm(f, currentData, ""); c.appendChild(f); }
+function isPaletteConfig() {
+  return current && current.name === 'palette' && current.category && current.category.includes('rendering');
+}
+
+function renderVisual() {
+  const c = $("tab-content"); if (!c) return; c.innerHTML = ""; if (!currentData) return;
+  if (isPaletteConfig()) {
+    const custom = buildPaletteEditor();
+    c.appendChild(custom);
+  }
+  const f = document.createElement("div"); f.className = "form-root"; buildForm(f, currentData, ""); c.appendChild(f);
+}
+
+// ===== PALETTE EDITOR COMPONENT =====
+const PALETTE_STYLES = {
+  doom: { id: 0, name: "Doom-like brown ramp + 216 colors", description: "First 48 entries brown gradient" },
+  smooth256: { id: 1, name: "Smooth 216 cube + gray", description: "6x6x6 color cube" },
+  truecolor: { id: 2, name: "Truecolor bypass", description: "No quantization" },
+  grayscale: { id: 3, name: "Grayscale", description: "Luma weights 0.299/0.587/0.114" },
+  sepia: { id: 4, name: "Sepia", description: "Warm luma 1.2/0.9/0.6" }
+};
+
+function genPaletteForPreview(style, data) {
+  const PAL_SIZE = 256;
+  const pal = new Uint8Array(PAL_SIZE * 4);
+  function set(i, r, g, b) { pal[i * 4] = r; pal[i * 4 + 1] = g; pal[i * 4 + 2] = b; pal[i * 4 + 3] = 255; }
+  const br = data?.brownRamp || { from: [80,40,20], to: [200,100,50], count: 48 };
+  const levels = data?.cubeLevels || [0,51,102,153,204,255];
+  const custom = data?.customColors || {};
+
+  if (style === 'grayscale') { for (let i=0;i<256;i++) set(i,i,i,i); }
+  else if (style === 'sepia') { for (let i=0;i<256;i++){ const v=i; set(i, Math.min(255, v*1.2|0), Math.min(255, v*0.9|0), Math.min(255, v*0.6|0)); } }
+  else if (style === 'truecolor') {
+    // For preview, truecolor shows a smooth gradient + cube hint
+    for (let i=0;i<256;i++){ const r = (i * 2) % 256; const g = (i * 3) % 256; const b = (i * 5) % 256; set(i, r,g,b); }
+    // Actually truecolor bypass means no quant, show full hue gradient for preview
+    for (let i=0;i<256;i++){ const hue = (i/256)*360; const c = hslToRgb(hue/360, 0.8, 0.5); set(i, c[0], c[1], c[2]); }
+  } else {
+    let idx=0;
+    for (let r=0;r<6;r++) for (let g=0;g<6;g++) for (let b=0;b<6;b++){ if(idx>=216) break; set(idx, levels[r], levels[g], levels[b]); idx++; }
+    for (;idx<256;idx++){ const v = Math.floor((idx-216)*255/39); set(idx,v,v,v); }
+    let rf = br.from || br.start || [80,40,20];
+    let rt = br.to || br.end || [200,100,50];
+    let rc = br.count != null ? br.count : 48;
+    rc = Math.max(0, Math.min(96, rc|0));
+    for (let i=0;i<rc;i++){ const t = rc<=1?0:i/(rc-1); set(i, Math.floor(rf[0]+t*(rt[0]-rf[0])), Math.floor(rf[1]+t*(rt[1]-rf[1])), Math.floor(rf[2]+t*(rt[2]-rf[2]))); }
+  }
+  // custom overrides
+  if (custom && typeof custom === 'object') {
+    for (const [k,v] of Object.entries(custom)){
+      const idx = parseInt(k,10); if(isNaN(idx)||idx<0||idx>=256) continue;
+      if(Array.isArray(v)&&v.length>=3) set(idx, v[0]|0, v[1]|0, v[2]|0);
+    }
+  }
+  return pal;
+}
+function hslToRgb(h,s,l){
+  let r,g,b;
+  if(s===0){ r=g=b=l; } else {
+    const hue2rgb=(p,q,t)=>{ if(t<0) t+=1; if(t>1) t-=1; if(t<1/6) return p+(q-p)*6*t; if(t<1/2) return q; if(t<2/3) return p+(q-p)*(2/3-t)*6; return p; };
+    const q = l<0.5 ? l*(1+s) : l+s-l*s; const p=2*l-q;
+    r=hue2rgb(p,q,h+1/3); g=hue2rgb(p,q,h); b=hue2rgb(p,q,h-1/3);
+  }
+  return [Math.round(r*255), Math.round(g*255), Math.round(b*255)];
+}
+function formatRgb(r,g,b){ return `rgb(${r},${g},${b})`; }
+
+function buildPaletteEditor() {
+  const root = document.createElement('div');
+  root.className = 'palette-editor-root';
+  const styleKeys = Object.keys(currentData.styles || PALETTE_STYLES);
+  const currentStyle = currentData.paletteStyle || 'doom';
+
+  // === Header ===
+  const header = document.createElement('div');
+  header.className = 'palette-header';
+  header.innerHTML = `
+    <div class="palette-title"><i class="ph ph-palette" style="font-size:20px"></i> Palette Editor — Visual Preview & Tweaks</div>
+    <div class="field-hint">Choose a style (enum dropdown), see the 256 colors live, tweak ramp / banding / overrides. Live Edit pushes to Game tab.</div>
+  `;
+  root.appendChild(header);
+
+  // === Top controls grid ===
+  const controlsGrid = document.createElement('div');
+  controlsGrid.className = 'palette-controls-grid';
+  root.appendChild(controlsGrid);
+
+  // Enum dropdown for paletteStyle
+  const styleField = document.createElement('div');
+  styleField.className = 'field-group palette-field';
+  styleField.innerHTML = `<label class="field-label">Palette Style — ENUM<select></select> (selector)</label>`;
+  const sel = document.createElement('select');
+  sel.className = 'field-input field-select';
+  sel.style.marginTop = '6px';
+  styleKeys.forEach(k => {
+    const opt = document.createElement('option');
+    opt.value = k;
+    const meta = (currentData.styles && currentData.styles[k]) || PALETTE_STYLES[k] || { name:k };
+    const label = (currentData.ui?.paletteStyle?.labels && currentData.ui.paletteStyle.labels[k]) || meta.name || k;
+    opt.textContent = `${k} — ${label}`;
+    if (k === currentStyle) opt.selected = true;
+    sel.appendChild(opt);
+  });
+  const descBox = document.createElement('div');
+  descBox.className = 'field-hint palette-style-desc';
+  const updateDesc = () => {
+    const k = sel.value;
+    const meta = (currentData.styles && currentData.styles[k]) || PALETTE_STYLES[k] || {};
+    descBox.textContent = `${meta.name || ''} — ${meta.description || ''} (id=${meta.id ?? '?'})`;
+  };
+  updateDesc();
+  styleField.appendChild(sel);
+  styleField.appendChild(descBox);
+  controlsGrid.appendChild(styleField);
+
+  // Authentic toggle
+  const authField = document.createElement('div');
+  authField.className = 'field-group palette-field';
+  authField.innerHTML = `<label class="field-label">Authentic Retro Mode</label>`;
+  const tog = document.createElement('label'); tog.className = 'toggle';
+  tog.innerHTML = `<input type="checkbox" ${currentData.authentic ? 'checked' : ''}><span class="toggle-slider"></span><span style="margin-left:8px;font-size:13px;color:var(--text-dim)">${currentData.authentic ? 'enabled — quantization + banding' : 'disabled'}</span>`;
+  const chk = tog.querySelector('input');
+  chk.onchange = e => {
+    setByPath(currentData, 'authentic', e.target.checked);
+    tog.querySelector('span:last-child').textContent = e.target.checked ? 'enabled — quantization + banding' : 'disabled';
+    triggerLiveChange();
+    refreshPreviews();
+  };
+  authField.appendChild(tog);
+  controlsGrid.appendChild(authField);
+
+  // BandLevels slider
+  const bandField = document.createElement('div');
+  bandField.className = 'field-group palette-field';
+  const bandMin = currentData.bandClamp?.min ?? 8;
+  const bandMax = currentData.bandClamp?.max ?? 64;
+  bandField.innerHTML = `<label class="field-label">Band Levels — ${bandMin}..${bandMax} — ${currentData.bandLevels}</label>`;
+  const bandRow = document.createElement('div'); bandRow.style.display='flex'; bandRow.style.gap='8px'; bandRow.style.alignItems='center';
+  const bandNum = document.createElement('input'); bandNum.type='number'; bandNum.className='field-input'; bandNum.value=currentData.bandLevels; bandNum.min=String(bandMin); bandNum.max=String(bandMax); bandNum.step='1'; bandNum.style.flex='1';
+  const bandSl = document.createElement('input'); bandSl.type='range'; bandSl.min=String(bandMin); bandSl.max=String(Math.max(bandMax,128)); bandSl.step='1'; bandSl.value=String(currentData.bandLevels); bandSl.style.flex='2';
+  const syncBand = (v) => {
+    const iv = Math.round(v);
+    setByPath(currentData,'bandLevels',iv);
+    bandField.querySelector('label').textContent = `Band Levels — ${currentData.bandClamp?.min ?? 8}..${currentData.bandClamp?.max ?? 64} — ${iv}`;
+    triggerLiveChange();
+    refreshPreviews();
+  };
+  bandNum.oninput = () => { bandSl.value = bandNum.value; syncBand(bandNum.value); };
+  bandSl.oninput = () => { bandNum.value = bandSl.value; syncBand(bandSl.value); };
+  bandRow.appendChild(bandNum); bandRow.appendChild(bandSl);
+  bandField.appendChild(bandRow);
+  controlsGrid.appendChild(bandField);
+
+  // === Preview Section ===
+  const previewWrap = document.createElement('div');
+  previewWrap.className = 'palette-preview-wrap';
+  previewWrap.innerHTML = `
+    <div class="palette-section-title"><i class="ph ph-eye"></i> Chosen Palette Preview — 256 colors</div>
+  `;
+  root.appendChild(previewWrap);
+
+  const previewTop = document.createElement('div');
+  previewTop.className = 'palette-preview-top';
+  previewWrap.appendChild(previewTop);
+
+  const gridContainer = document.createElement('div');
+  gridContainer.className = 'palette-grid-container';
+  const canvas = document.createElement('canvas');
+  canvas.width = 512; canvas.height = 512;
+  canvas.className = 'palette-canvas-grid';
+  canvas.title = 'Click a swatch to tweak it. Hover shows RGB.';
+  gridContainer.appendChild(canvas);
+  const hoverInfo = document.createElement('div');
+  hoverInfo.className = 'palette-hover-info';
+  hoverInfo.textContent = 'Hover a swatch — click to edit override';
+  gridContainer.appendChild(hoverInfo);
+  previewTop.appendChild(gridContainer);
+
+  const sidePreviews = document.createElement('div');
+  sidePreviews.className = 'palette-side-previews';
+  sidePreviews.innerHTML = `
+    <div class="mini-preview"><div class="mini-title">Banding Gradient (simulated)</div><canvas id="banding-canvas" width="256" height="48" class="mini-canvas"></canvas><div class="field-hint">Top = smooth, Bottom = banded with current bandLevels (authentic)</div></div>
+    <div class="mini-preview"><div class="mini-title">Light Levels / Colormap (×32 darkening)</div><canvas id="colormap-canvas" width="256" height="160" class="mini-canvas"></canvas><div class="field-hint">Each row is a light level darkening factor</div></div>
+    <div class="mini-preview"><div class="mini-title">Brown Ramp (doom only) — tweak below</div><canvas id="ramp-canvas" width="256" height="36" class="mini-canvas"></canvas></div>
+  `;
+  previewTop.appendChild(sidePreviews);
+
+  // === Brown Ramp tweak section ===
+  const rampTweak = document.createElement('div');
+  rampTweak.className = 'palette-tweak-section';
+  rampTweak.innerHTML = `<div class="palette-section-title"><i class="ph ph-sliders"></i> Tweak Palette — Brown Ramp (doom style)</div>`;
+  const rampRow = document.createElement('div'); rampRow.className = 'palette-ramp-row';
+
+  const ensureRamp = () => { if(!currentData.brownRamp) currentData.brownRamp = { from:[80,40,20], to:[200,100,50], count:48 }; };
+
+  const makeColorField = (label, path, def) => {
+    ensureRamp();
+    const g = document.createElement('div'); g.className='field-group'; g.style.flex='1';
+    g.innerHTML = `<label class="field-label">${label}</label>`;
+    const row = document.createElement('div'); row.style.display='flex'; row.style.gap='8px'; row.style.alignItems='center';
+    const cur = (()=>{ try{ const parts=path.split('.'); let cur=currentData; for(const p of parts) cur=cur?.[p]; return cur||def; }catch{return def; }})();
+    const toHex = arr => '#' + arr.map(n=>Math.max(0,Math.min(255,Math.round(n))).toString(16).padStart(2,'0')).join('');
+    const col = document.createElement('input'); col.type='color'; col.value=toHex(cur); col.style.width='44px'; col.style.height='36px'; col.style.border='none'; col.style.borderRadius='6px'; col.style.cursor='pointer';
+    const nums = document.createElement('div'); nums.style.display='flex'; nums.style.gap='4px'; nums.style.flex='1';
+    const inputs = [0,1,2].map(i=>{ const inp=document.createElement('input'); inp.type='number'; inp.className='field-input'; inp.value=cur[i]; inp.min='0'; inp.max='255'; inp.step='1'; inp.style.flex='1'; return inp; });
+    const apply = (arr) => { setByPath(currentData, path, arr); col.value = toHex(arr); triggerLiveChange(); refreshPreviews(); };
+    col.oninput = () => { const m=col.value.match(/^#?([0-9a-f]{2})([0-9a-f]{2})([0-9a-f]{2})$/i); if(!m) return; const arr=[parseInt(m[1],16),parseInt(m[2],16),parseInt(m[3],16)]; inputs.forEach((inp,i)=>inp.value=arr[i]); setByPath(currentData, path, arr); triggerLiveChange(); refreshPreviews(); };
+    inputs.forEach((inp, idx) => inp.oninput = () => { const arr=inputs.map(x=>parseFloat(x.value)||0); col.value=toHex(arr); setByPath(currentData, path, arr); triggerLiveChange(); refreshPreviews(); });
+    row.appendChild(col); inputs.forEach(i=>nums.appendChild(i)); row.appendChild(nums);
+    g.appendChild(row); return g;
+  };
+
+  rampRow.appendChild(makeColorField('Ramp From (start)', 'brownRamp.from', [80,40,20]));
+  rampRow.appendChild(makeColorField('Ramp To (end)', 'brownRamp.to', [200,100,50]));
+  rampTweak.appendChild(rampRow);
+
+  // count slider
+  const countGroup = document.createElement('div'); countGroup.className='field-group'; countGroup.style.marginTop='12px';
+  const rc = currentData.brownRamp?.count ?? 48;
+  countGroup.innerHTML = `<label class="field-label">Ramp Count — how many of first entries are brown — ${rc}</label>`;
+  const countRow = document.createElement('div'); countRow.style.display='flex'; countRow.style.gap='8px'; countRow.style.alignItems='center';
+  const cNum = document.createElement('input'); cNum.type='number'; cNum.className='field-input'; cNum.value=rc; cNum.min='0'; cNum.max='96'; cNum.step='1'; cNum.style.flex='1';
+  const cSl = document.createElement('input'); cSl.type='range'; cSl.min='0'; cSl.max='96'; cSl.step='1'; cSl.value=String(rc); cSl.style.flex='2';
+  const syncCount = (v)=>{ const iv=Math.max(0,Math.min(96,Math.round(v))); ensureRamp(); setByPath(currentData,'brownRamp.count',iv); countGroup.querySelector('label').textContent=`Ramp Count — how many of first entries are brown — ${iv}`; triggerLiveChange(); refreshPreviews(); };
+  cNum.oninput=()=>{ cSl.value=cNum.value; syncCount(cNum.value); };
+  cSl.oninput=()=>{ cNum.value=cSl.value; syncCount(cSl.value); };
+  countRow.appendChild(cNum); countRow.appendChild(cSl); countGroup.appendChild(countRow);
+  rampTweak.appendChild(countGroup);
+  root.appendChild(rampTweak);
+
+  // === Custom overrides tweak ===
+  const overRoot = document.createElement('div');
+  overRoot.className = 'palette-tweak-section';
+  overRoot.innerHTML = `<div class="palette-section-title"><i class="ph ph-paint-brush"></i> Tweak Individual Colors — Overrides</div><div class="field-hint">Click any swatch in the grid to edit. Overrides stored in customColors map (index → [R,G,B]). Clear individual or all.</div>`;
+  const overActions = document.createElement('div'); overActions.style.display='flex'; overActions.style.gap='8px'; overActions.style.margin='10px 0';
+  const clearBtn = document.createElement('button'); clearBtn.className='btn btn-sm btn-secondary'; clearBtn.textContent='Clear All Overrides';
+  clearBtn.onclick = ()=>{ setByPath(currentData,'customColors',{}); triggerLiveChange(); refreshPreviews(); status('Overrides cleared','ok'); };
+  const exportBtn = document.createElement('button'); exportBtn.className='btn btn-sm btn-secondary'; exportBtn.textContent='Export overrides JSON';
+  exportBtn.onclick = ()=>{ const ta = document.createElement('textarea'); ta.className='json-editor'; ta.style.minHeight='100px'; ta.value=JSON.stringify(currentData.customColors||{},null,2); ta.readOnly=true; overRoot.appendChild(ta); ta.select(); };
+  overActions.appendChild(clearBtn); overActions.appendChild(exportBtn);
+  overRoot.appendChild(overActions);
+  const overList = document.createElement('div'); overList.className='palette-overrides-list';
+  overRoot.appendChild(overList);
+  root.appendChild(overRoot);
+
+  // === Refresh logic ===
+  function refreshOverList(){
+    overList.innerHTML = '';
+    const cc = currentData.customColors || {};
+    const keys = Object.keys(cc).sort((a,b)=>parseInt(a)-parseInt(b));
+    if(keys.length===0){ overList.innerHTML='<div class="field-hint">No overrides yet — click a swatch above to add one.</div>'; return; }
+    keys.forEach(k=>{
+      const v = cc[k];
+      const row = document.createElement('div'); row.className='override-row';
+      const sw = document.createElement('div'); sw.className='override-swatch'; sw.style.background=`rgb(${v[0]},${v[1]},${v[2]})`;
+      const label = document.createElement('span'); label.textContent=`#${k} → [${v.join(', ')}]`;
+      label.style.fontFamily='var(--font-mono)'; label.style.fontSize='12px'; label.style.flex='1';
+      const edit = document.createElement('input'); edit.type='color'; edit.value='#'+v.map(n=>Math.max(0,Math.min(255,n|0)).toString(16).padStart(2,'0')).join(''); edit.style.width='28px'; edit.style.height='22px';
+      edit.oninput=()=>{ const m=edit.value.match(/^#?([0-9a-f]{2})([0-9a-f]{2})([0-9a-f]{2})$/i); const arr=[parseInt(m[1],16),parseInt(m[2],16),parseInt(m[3],16)]; currentData.customColors[k]=arr; sw.style.background=`rgb(${arr.join(',')})`; label.textContent=`#${k} → [${arr.join(', ')}]`; triggerLiveChange(); refreshPreviews(false); };
+      const del = document.createElement('button'); del.className='btn-icon'; del.textContent='✕'; del.onclick=()=>{ delete currentData.customColors[k]; triggerLiveChange(); refreshOverList(); refreshPreviews(false); };
+      row.appendChild(sw); row.appendChild(label); row.appendChild(edit); row.appendChild(del);
+      overList.appendChild(row);
+    });
+  }
+
+  function drawGrid() {
+    const pal = genPaletteForPreview(sel.value, currentData);
+    const ctx = canvas.getContext('2d');
+    const W = canvas.width, H = canvas.height;
+    const cols = 16, rows = 16;
+    const cellW = W/cols, cellH = H/rows;
+    ctx.clearRect(0,0,W,H);
+    for(let i=0;i<256;i++){
+      const r = pal[i*4], g = pal[i*4+1], b = pal[i*4+2];
+      const col = i%cols, row = (i/cols)|0;
+      ctx.fillStyle = `rgb(${r},${g},${b})`;
+      ctx.fillRect(col*cellW, row*cellH, cellW, cellH);
+    }
+    // border
+    ctx.strokeStyle='rgba(0,0,0,0.2)'; ctx.lineWidth=0.5;
+    for(let c=1;c<cols;c++){ ctx.beginPath(); ctx.moveTo(c*cellW,0); ctx.lineTo(c*cellW,H); ctx.stroke(); }
+    for(let r=1;r<rows;r++){ ctx.beginPath(); ctx.moveTo(0,r*cellH); ctx.lineTo(W,r*cellH); ctx.stroke(); }
+    return pal;
+  }
+  function drawBanding() {
+    const c = root.querySelector('#banding-canvas');
+    if(!c) return;
+    const ctx = c.getContext('2d');
+    const W=c.width, H=c.height;
+    ctx.clearRect(0,0,W,H);
+    // smooth gradient top half
+    const grad = ctx.createLinearGradient(0,0,W,0);
+    grad.addColorStop(0,'black'); grad.addColorStop(0.2,'#8B4513'); grad.addColorStop(0.5,'#D2B48C'); grad.addColorStop(0.8,'#87CEEB'); grad.addColorStop(1,'white');
+    ctx.fillStyle=grad; ctx.fillRect(0,0,W,H/2);
+    // banded bottom half
+    const levels = currentData.bandLevels || 32;
+    for(let x=0;x<W;x++){
+      const t = x/W;
+      let r = Math.floor(t*255);
+      const banded = currentData.authentic ? Math.floor(r/255*levels)/levels*255 : r;
+      ctx.fillStyle=`rgb(${banded|0},${banded|0},${banded|0})`;
+      // reuse hue from top? simplify: use grayscale banding visualization with color from gradient approx
+      // sample gradient color at x
+      const hueT = t;
+      const col = hueT<0.2 ? [139,69,19] : hueT<0.5 ? [210,180,140] : hueT<0.8 ? [135,206,235] : [255,255,255];
+      // apply banding to luma
+      const luma = 0.299*col[0]+0.587*col[1]+0.114*col[2];
+      const bl = currentData.authentic ? Math.floor(luma/255*levels)/levels*255 : luma;
+      const factor = luma>1 ? bl/luma : 1;
+      const rr = Math.min(255, col[0]*factor|0), gg = Math.min(255, col[1]*factor|0), bb = Math.min(255, col[2]*factor|0);
+      ctx.fillStyle=`rgb(${rr},${gg},${bb})`;
+      ctx.fillRect(x,H/2,1,H/2);
+    }
+  }
+  function drawColormap(pal){
+    const c = root.querySelector('#colormap-canvas');
+    if(!c) return;
+    const ctx = c.getContext('2d');
+    const W=c.width, H=c.height;
+    const levels = 8;
+    const rowH = H/levels;
+    ctx.clearRect(0,0,W,H);
+    for(let l=0;l<levels;l++){
+      const factor = 1 - l/(levels-0.5);
+      for(let i=0;i<256;i++){
+        const r = (pal[i*4]*factor)|0, g=(pal[i*4+1]*factor)|0, b=(pal[i*4+2]*factor)|0;
+        const x = (i/256)*W;
+        ctx.fillStyle=`rgb(${r},${g},${b})`;
+        ctx.fillRect(x, l*rowH, W/256+1, rowH);
+      }
+    }
+  }
+  function drawRamp(pal){
+    const c = root.querySelector('#ramp-canvas');
+    if(!c) return;
+    const ctx = c.getContext('2d');
+    const W=c.width, H=c.height;
+    ctx.clearRect(0,0,W,H);
+    const rc = currentData.brownRamp?.count ?? 48;
+    if(rc<=0){ ctx.fillStyle='#222'; ctx.fillRect(0,0,W,H); ctx.fillStyle='#666'; ctx.font='11px JetBrains Mono'; ctx.fillText('Ramp disabled (count=0)', 8, H/2+3); return; }
+    for(let i=0;i<rc;i++){
+      const r=pal[i*4], g=pal[i*4+1], b=pal[i*4+2];
+      const x = (i/rc)*W;
+      ctx.fillStyle=`rgb(${r},${g},${b})`;
+      ctx.fillRect(x,0,W/rc+1,H);
+    }
+  }
+
+  function refreshPreviews(includeList=true){
+    const pal = drawGrid();
+    drawBanding();
+    drawColormap(pal);
+    drawRamp(pal);
+    if(includeList) refreshOverList();
+  }
+
+  // Interactions
+  sel.onchange = () => {
+    setByPath(currentData,'paletteStyle',sel.value);
+    updateDesc();
+    triggerLiveChange();
+    refreshPreviews();
+  };
+
+  // hover & click on grid
+  let lastPal = null;
+  function getPal(){ return lastPal = genPaletteForPreview(sel.value, currentData); }
+  canvas.addEventListener('mousemove', e=>{
+    const rect = canvas.getBoundingClientRect();
+    const x = (e.clientX-rect.left)/rect.width * canvas.width;
+    const y = (e.clientY-rect.top)/rect.height * canvas.height;
+    const col = Math.floor((x/canvas.width)*16), row = Math.floor((y/canvas.height)*16);
+    const idx = row*16+col;
+    if(idx<0||idx>=256) return;
+    const pal = getPal();
+    const r=pal[idx*4], g=pal[idx*4+1], b=pal[idx*4+2];
+    hoverInfo.innerHTML = `<span class="hover-idx">#${idx}</span> <span class="hover-swatch" style="background:rgb(${r},${g},${b})"></span> rgb(${r},${g},${b}) — hex #${[r,g,b].map(v=>v.toString(16).padStart(2,'0')).join('')}`;
+  });
+  canvas.addEventListener('mouseleave',()=>{ hoverInfo.textContent='Hover a swatch — click to edit override'; });
+  canvas.addEventListener('click', e=>{
+    const rect = canvas.getBoundingClientRect();
+    const x = (e.clientX-rect.left)/rect.width * canvas.width;
+    const y = (e.clientY-rect.top)/rect.height * canvas.height;
+    const col = Math.floor((x/canvas.width)*16), row = Math.floor((y/canvas.height)*16);
+    const idx = row*16+col;
+    if(idx<0||idx>=256) return;
+    const pal = getPal();
+    const r=pal[idx*4], g=pal[idx*4+1], b=pal[idx*4+2];
+    // prompt color picker
+    const currentHex = '#'+[r,g,b].map(v=>v.toString(16).padStart(2,'0')).join('');
+    const input = document.createElement('input'); input.type='color'; input.value=currentHex;
+    input.style.position='fixed'; input.style.left='-9999px';
+    document.body.appendChild(input);
+    input.oninput = () => {
+      const m=input.value.match(/^#?([0-9a-f]{2})([0-9a-f]{2})([0-9a-f]{2})$/i);
+      if(!m) return;
+      const arr=[parseInt(m[1],16),parseInt(m[2],16),parseInt(m[3],16)];
+      if(!currentData.customColors) currentData.customColors={};
+      currentData.customColors[String(idx)] = arr;
+      triggerLiveChange();
+      refreshPreviews();
+    };
+    input.onchange = () => { setTimeout(()=>input.remove(),200); };
+    input.click();
+  });
+
+  // initial draw
+  setTimeout(()=>refreshPreviews(), 0);
+
+  return root;
+}
 function renderRaw() {
   const tc = $("tab-content"); if (!tc) return;
   tc.innerHTML = `<div class="field-group"><label class="field-label">JSON Definition</label><textarea class="json-editor" id="json-ta" spellcheck="false">${JSON.stringify(currentData, null, 2)}</textarea><div class="field-hint">Edit JSON directly. Must remain valid. Switch back to Visual to see structured view. Live Edit will preview on valid JSON if enabled.</div></div>`;
@@ -342,6 +752,21 @@ function buildForm(container, obj, path) {
       if (key.startsWith('_')) continue;
       if (key === 'docs' || key === 'ui' || key === 'ranges' || key === 'schema' || key === 'editor') continue;
       const val = obj[key]; const fp = path ? `${path}.${key}` : key;
+      // For palette config, brownRamp and customColors are managed by custom visual editor — show hint instead of duplicate nested form at top level
+      if (isPaletteConfig() && path === '' && (key === 'brownRamp' || key === 'customColors' || key === 'cubeLevels')) {
+        const fg = document.createElement('div'); fg.className='field-group';
+        const lbl = document.createElement('label'); lbl.className='field-label'; lbl.textContent = key.replace(/([A-Z])/g, ' $1').replace(/^./, s => s.toUpperCase()) + ' — managed above'; fg.appendChild(lbl);
+        const hint = document.createElement('div'); hint.className='field-hint'; hint.textContent = key === 'brownRamp' ? 'Tweak via color pickers in visual editor above.' : key === 'customColors' ? 'Overrides edited by clicking swatches above. Also editable below in raw nested list.' : 'Cube levels for smooth256/doom styles — edit below if needed.';
+        fg.appendChild(hint);
+        if (key !== 'brownRamp') {
+          const sub = document.createElement('div'); sub.className='nested-object'; buildForm(sub, val, fp); fg.appendChild(sub);
+        } else {
+          // for brownRamp we still want to show nested editing as fallback, but collapsed hint
+          const sub = document.createElement('div'); sub.className='nested-object'; buildForm(sub, val, fp); fg.appendChild(sub);
+        }
+        container.appendChild(fg);
+        continue;
+      }
       const fg = document.createElement("div"); fg.className = "field-group";
       const lbl = document.createElement("label"); lbl.className = "field-label";
       // tooltip from docs
@@ -397,8 +822,30 @@ function buildForm(container, obj, path) {
           const hint = document.createElement("div"); hint.className = "field-hint"; hint.textContent = docForNum; fg.appendChild(hint);
         }
       } else if (typeof val === "string") {
-        const inp = document.createElement("input"); inp.type = "text"; inp.className = "field-input"; inp.value = val;
-        inp.oninput = () => { setByPath(currentData, fp, inp.value); triggerLiveChange(); }; fg.appendChild(inp);
+        // Check if this field has enum ui config (e.g. paletteStyle)
+        const uiEntryForEnum = getUiEntry(fp);
+        const isEnum = uiEntryForEnum && uiEntryForEnum.type === 'enum' && Array.isArray(uiEntryForEnum.options);
+        if (isEnum && !isPaletteConfig()) {
+          const sel = document.createElement('select');
+          sel.className = 'field-input field-select';
+          uiEntryForEnum.options.forEach(optVal => {
+            const opt = document.createElement('option');
+            opt.value = optVal;
+            const labelMap = uiEntryForEnum.labels || {};
+            opt.textContent = labelMap[optVal] ? `${optVal} — ${labelMap[optVal]}` : optVal;
+            if (optVal === val) opt.selected = true;
+            sel.appendChild(opt);
+          });
+          sel.onchange = () => { setByPath(currentData, fp, sel.value); triggerLiveChange(); };
+          fg.appendChild(sel);
+        } else if (isPaletteConfig() && fp === 'paletteStyle') {
+          // Skip duplicate rendering — custom palette editor already shows enum dropdown
+          const hint = document.createElement('div'); hint.className='field-hint'; hint.textContent='Managed by palette visual editor above (enum dropdown).';
+          fg.appendChild(hint);
+        } else {
+          const inp = document.createElement("input"); inp.type = "text"; inp.className = "field-input"; inp.value = val;
+          inp.oninput = () => { setByPath(currentData, fp, inp.value); triggerLiveChange(); }; fg.appendChild(inp);
+        }
         const docForStr = getDocForPath(fp);
         if (docForStr) { const hint = document.createElement("div"); hint.className = "field-hint"; hint.textContent = docForStr; fg.appendChild(hint); }
       } else if (typeof val === "boolean") {

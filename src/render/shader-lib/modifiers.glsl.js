@@ -1,7 +1,7 @@
 // Modifier system - v15 moss decomposed: noise, env/nearwall, material, combined - fully tunable via JSON/UBO
 export const glslModifiers = `
 
-// UBO v18 - 20 vec4 = 320 bytes, binding 1 - fully tunable
+// UBO v20 - 22 vec4 = 352 bytes, binding 1 - fully tunable, moss albedo+strengths now live
 // 0 = modMossAlbedoRough: x=floorDepress y=seed z=mossNoiseScale w=mossThreshold
 // 1 = modMossParams: x=heightGroutLow y=heightGroutHigh z=aoGroutLow w=aoGroutHigh (puddle grout)
 // 2 = modWaterAlbedoRough -> mossEnv1: x=floorBase y=wallBase z=wallEdgeBase w=cornerBonus
@@ -22,6 +22,8 @@ export const glslModifiers = `
 // 17 = modMossFinalCombine: x=combineModeFinal (0=max,0.5=add,1=mul) yzw reserved
 // 18 = modMossGlobal: x=contrast y=brightness z=minThreshold w=maxThreshold
 // 19 = modMossGlobal2: x=power yzw reserved
+// 20 = modMossAlbedo: xyz albedo (from JSON [97,171,48]/255) w=colorStrength
+// 21 = modMossStrengths: x=roughAdd y=heightAdd z=normalStrength w=aoStrength
 layout(std140) uniform ModifiersBlock {
   vec4 modMossAlbedoRough;
   vec4 modMossParams;
@@ -43,6 +45,8 @@ layout(std140) uniform ModifiersBlock {
   vec4 modMossFinalCombine;
   vec4 modMossGlobal;
   vec4 modMossGlobal2;
+  vec4 modMossAlbedo;
+  vec4 modMossStrengths;
 };
 
 // --- Lean reusable noise ---
@@ -417,7 +421,8 @@ vec3 debugMossCombinedCol(vec3 worldPos, float matHeight, float ao, float rough,
 }
 
 // Main applyModifiers - moss uses decomposed pipeline, puddle unchanged
-void applyModifiers(inout vec3 albedo, inout vec3 N, inout float rough, inout float metal, inout float ao, in vec3 worldPos, in float matHeight, in float isFloorSurface) {
+// FIX: matHeight was previously read-only so moss could never affect height despite spec
+void applyModifiers(inout vec3 albedo, inout vec3 N, inout float rough, inout float metal, inout float ao, in vec3 worldPos, inout float matHeight, in float isFloorSurface) {
   float modsEnabled = float(u_modifiersEnabled);
   ivec2 cellI = ivec2(floor(worldPos.xy));
   float inBounds = step(0.0, float(cellI.x)) * step(0.0, float(cellI.y)) * step(float(cellI.x), u_mapSize.x - 1.0) * step(float(cellI.y), u_mapSize.y - 1.0);
@@ -461,17 +466,32 @@ void applyModifiers(inout vec3 albedo, inout vec3 N, inout float rough, inout fl
   // Moss - decomposed
   float isFloor = step(0.5, isFloorSurface);
   float mossMask = mossFinalMask(worldPos, matHeight, ao, rough, isFloorSurface);
-  float mossHas = step(0.001, mossCell) * step(0.001, mossMask);
+  // BUG FIX: was step(cell)*step(mask) -> double gating, mask already includes biome via texture
+  // Low biome 0.1 * low final 0.2 = invisible, so gate only by cell which has modsEnabled
+  float mossHas = step(0.001, mossCell);
   float mossNoiseVal = mossNoiseRaw(worldPos);
 
-  vec3 mossAlbedo = vec3(0.18, 0.42, 0.15) * (0.85 + 0.28 * mossNoiseVal);
-  albedo = mix(albedo, mossAlbedo, mossMask * 0.75 * mossHas);
-  rough = clamp(rough + 0.34 * mossMask * mossHas, 0.0, 1.0);
-  metal = mix(metal, 0.0, mossMask * 0.80 * mossHas);
-  ao *= (1.0 - mossMask * 0.16 * mossHas);
+  // NEW: live-tweakable colour + strengths from UBO (20,21) - fallback to original hardcoded
+  float mossAlbedoZero = step(length(modMossAlbedo), 0.0001);
+  vec3 mossAlbedoBase = mix(modMossAlbedo.xyz, vec3(0.18, 0.42, 0.15), mossAlbedoZero);
+  float mossColorStrength = mix(modMossAlbedo.w, 0.75, mossAlbedoZero);
+
+  float mossStrZero = step(length(modMossStrengths), 0.0001);
+  float mossRoughAdd = mix(modMossStrengths.x, 0.34, mossStrZero);
+  float mossHeightAdd = mix(modMossStrengths.y, 0.12, mossStrZero);
+  float mossNormalStr = mix(modMossStrengths.z, 0.36, mossStrZero);
+  float mossAoStr = mix(modMossStrengths.w, 0.16, mossStrZero);
+
+  vec3 mossAlbedo = mossAlbedoBase * (0.85 + 0.28 * mossNoiseVal);
+  float mossStrength = mossMask * mossHas;
+  albedo = mix(albedo, mossAlbedo, mossStrength * mossColorStrength);
+  rough = clamp(rough + mossRoughAdd * mossStrength, 0.0, 1.0);
+  metal = mix(metal, 0.0, mossStrength * 0.80);
+  ao *= (1.0 - mossStrength * mossAoStr);
   vec3 mossUp = vec3(0.0, 0.0, 1.0);
   float wallBias = mix(0.85, 0.55, isFloor);
-  N = normalize(mix(N, mossUp, mossMask * 0.36 * wallBias * mossHas));
+  N = normalize(mix(N, mossUp, mossStrength * mossNormalStr * wallBias));
+  matHeight += mossStrength * mossHeightAdd;
 
   // Puddle
   float floorHas = step(0.5, isFloorSurface) * step(worldPos.z, 0.6);
@@ -509,7 +529,9 @@ void applyModifiers(inout vec3 albedo, inout vec3 N, inout float rough, inout fl
 }
 
 void applyModifiers(inout vec3 albedo, inout vec3 N, inout float rough, inout float metal, inout float ao, in vec3 worldPos) {
-  applyModifiers(albedo, N, rough, metal, ao, worldPos, 0.5, 1.0);
+  float tmpH = 0.5;
+  float tmpFloor = 1.0;
+  applyModifiers(albedo, N, rough, metal, ao, worldPos, tmpH, tmpFloor);
 }
 
 `;

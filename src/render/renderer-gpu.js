@@ -578,7 +578,15 @@ export class GPURenderer {
         if (this.debugPuddleProgram) bindModsForProg(this.debugPuddleProgram);
         if (this.debugCombinedProgram) bindModsForProg(this.debugCombinedProgram);
         this.modifiersBlockIndex = blockIdx;
-        this.modifiersUBO = createUniformBuffer(gl, 320, gl.DYNAMIC_DRAW);
+        // UBO v20 – 22 vec4 = 352 bytes, see shader-lib/modifiers.glsl.js ModifiersBlock
+        // Query actual block size from GL to be safe (prevents "uniform buffer too small" if shader grows)
+        let uboSize = 352;
+        try {
+          const queried = gl.getActiveUniformBlockParameter(this.program, blockIdx, gl.UNIFORM_BLOCK_DATA_SIZE);
+          if (queried && queried > uboSize) uboSize = queried;
+        } catch {}
+        this.modifiersUBO = createUniformBuffer(gl, uboSize, gl.DYNAMIC_DRAW);
+        this._modifiersUBOSize = uboSize;
         bindUniformBufferBase(gl, this.modifiersBlockBinding, this.modifiersUBO);
       } else {
         this.modifiersBlockIndex = -1;
@@ -625,7 +633,10 @@ export class GPURenderer {
     this.authentic = (paletteCfg.authentic ?? rendering.authentic ?? legacy.authentic ?? true) !== false;
     this.paletteStyle = paletteCfg.paletteStyle || rendering.paletteStyle || legacy.paletteStyle || 'doom';
     this.bandLevels = paletteCfg.bandLevels ?? rendering.bandLevels ?? legacy.bandLevels ?? 32;
+    this.paletteCfgFull = paletteCfg; // keep full config for genPalette opts (brownRamp, customColors, cubeLevels)
   }
+
+
 
   _isWallCell(dungeon, x, y) {
     if (x < 0 || y < 0 || x >= dungeon.w || y >= dungeon.h) return false;
@@ -764,7 +775,12 @@ export class GPURenderer {
 
   rebuildPalette() {
     const gl = this.gl;
-    const pal = genPalette(this.paletteStyle);
+    const opts = this.paletteCfgFull ? {
+      brownRamp: this.paletteCfgFull.brownRamp,
+      customColors: this.paletteCfgFull.customColors || this.paletteCfgFull.paletteOverrides || this.paletteCfgFull.overrides,
+      cubeLevels: this.paletteCfgFull.cubeLevels || this.paletteCfgFull.levels
+    } : null;
+    const pal = genPalette(this.paletteStyle, opts);
     const lut = buildRGBToPal(pal);
     gl.bindTexture(gl.TEXTURE_2D, this.paletteTex);
     gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.NEAREST);
@@ -783,10 +799,8 @@ export class GPURenderer {
   }
 
   setAuthentic(v) { this.authentic = !!v; }
-  setPaletteStyle(s) { this.paletteStyle = s; this.rebuildPalette(); }
+  setPaletteStyle(s) { this.paletteStyle = s; this.paletteCfgFull = { ...(this.paletteCfgFull||{}), paletteStyle: s }; this.rebuildPalette(); }
   setBandLevels(n) { this.bandLevels = Math.max(8, Math.min(64, n | 0)); }
-  setGridDebug(v) { this.gridDebug = v ? 1 : 0; }
-  setLightingEnabled(v) { this.lightingEnabled = v ? 1 : 0; }
   setGridDebug(v) { this.gridDebug = v ? 1 : 0; }
   setLightingEnabled(v) { this.lightingEnabled = v ? 1 : 0; }
   setPBREnabled(v) { this.pbrEnabled = v ? 1 : 0; }
@@ -1152,7 +1166,10 @@ export class GPURenderer {
       const dust = { albedo:[0,0,0], roughAdd:0, colorStrength:0, noiseScale:0, threshold:0, aoWeight:0 };
       const damaged = { albedo:[0,0,0], roughAdd:0, colorStrength:0, noiseScale:0, threshold:0 };
       if (this.modifiersUBO && this.modifiersBlockIndex !== -1) {
-        const buf = new Float32Array(80); // 20 vec4 = 320 bytes v17 moss final weights+combine
+        // UBO v20 – 22 vec4 = 88 floats = 352 bytes (see ModifiersBlock in modifiers.glsl.js)
+        // Use queried GL size if larger, to avoid "uniform buffer too small"
+        const neededFloats = this._modifiersUBOSize ? Math.ceil(this._modifiersUBOSize / 4) : 88;
+        const buf = new Float32Array(Math.max(88, neededFloats));
         function normalizeAlbedo(arr, fallback) {
           const a = arr || fallback;
           if (a[0] > 1.0 || a[1] > 1.0 || a[2] > 1.0) {
@@ -1208,6 +1225,18 @@ export class GPURenderer {
         setVec4Full(72, mossFinal.contrast ?? 1.0, mossFinal.brightness ?? 0.0, mossFinal.minThreshold ?? 0.0, mossFinal.maxThreshold ?? 1.0);
         // 19: power + reserved
         setVec4Full(76, mossFinal.power ?? 1.0, 0, 0, 0);
+        // 20: moss albedo + colorStrength
+        {
+          const alb = normalizeAlbedo(moss.albedo, [0.18, 0.42, 0.15]);
+          setVec4Full(80, alb[0], alb[1], alb[2], moss.colorStrength ?? 0.75);
+        }
+        // 21: moss strengths — roughAdd, heightAdd, normalStrength, aoStr (reuse aoWeight as ao strength)
+        setVec4Full(84,
+          moss.roughAdd ?? 0.34,
+          moss.heightAdd ?? 0.12,
+          moss.normalStrength ?? 0.36,
+          moss.aoWeight ?? (moss.final ? 0.16 : moss.aoWeight) ?? 0.16
+        );
         updateUniformBuffer(gl, this.modifiersUBO, buf);
         bindUniformBufferBase(gl, this.modifiersBlockBinding, this.modifiersUBO);
       } else {

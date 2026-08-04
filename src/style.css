@@ -146,3 +146,34 @@ input[type=color]{padding:2px;border:1px solid var(--border);background:var(--bg
 .array-header{display:flex;align-items:center;justify-content:space-between;padding:8px 12px;background:var(--bg-elev2);border-bottom:1px solid var(--border-soft);font-size:12px;color:var(--text-faint);font-family:var(--font-mono)}
 .array-body{padding:var(--space-md)}
 .array-index{font-weight:500}.btn-icon{background:transparent;border:none;color:var(--text-faint);cursor:pointer;padding:2px 6px;border-radius:4px;font-size:14px}.btn-icon:hover{background:var(--err);color:#fff}
+
+/* ── Palette Editor Component ── */
+.palette-editor-root{border:1px solid var(--border-soft);border-radius:var(--radius);background:var(--bg-elev);padding:var(--space-lg);margin-bottom:var(--space-lg);max-width:960px}
+.palette-header{margin-bottom:var(--space-lg);padding-bottom:var(--space-md);border-bottom:1px solid var(--border-soft)}
+.palette-title{font-size:16px;font-weight:700;color:var(--accent);letter-spacing:.04em;display:flex;align-items:center;gap:8px;margin-bottom:6px}
+.palette-controls-grid{display:grid;grid-template-columns:1fr 1fr 1fr;gap:16px;margin-bottom:var(--space-lg)}
+@media(max-width:900px){.palette-controls-grid{grid-template-columns:1fr}}
+.palette-field{background:var(--bg-elev2);border:1px solid var(--border-soft);border-radius:var(--radius-sm);padding:12px}
+.field-select{appearance:none;background-image:linear-gradient(45deg, transparent 50%, var(--text-faint) 50%), linear-gradient(135deg, var(--text-faint) 50%, transparent 50%);background-position:calc(100% - 16px) calc(50% - 2px), calc(100% - 10px) calc(50% - 2px);background-size:6px 6px, 6px 6px;background-repeat:no-repeat;padding-right:32px;cursor:pointer}
+.field-select:hover{border-color:var(--accent-dim)}
+.palette-style-desc{margin-top:8px;padding:8px 10px;background:rgba(201,168,76,0.08);border-radius:6px;border-left:2px solid var(--accent-dim)}
+.palette-preview-wrap{margin:20px 0}
+.palette-section-title{font-size:13px;font-weight:600;text-transform:uppercase;letter-spacing:.1em;color:var(--text-dim);margin-bottom:12px;display:flex;align-items:center;gap:6px}
+.palette-preview-top{display:grid;grid-template-columns:360px 1fr;gap:20px}
+@media(max-width:800px){.palette-preview-top{grid-template-columns:1fr}}
+.palette-grid-container{position:relative}
+.palette-canvas-grid{width:100%;max-width:360px;height:auto;aspect-ratio:1;border-radius:8px;border:1px solid var(--border);image-rendering:pixelated;cursor:crosshair;box-shadow:var(--shadow);display:block}
+.palette-hover-info{margin-top:8px;font-family:var(--font-mono);font-size:12px;color:var(--text-dim);background:var(--bg-elev2);padding:6px 10px;border-radius:6px;min-height:28px;display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+.palette-hover-info .hover-idx{color:var(--accent);font-weight:700}
+.palette-hover-info .hover-swatch{width:16px;height:16px;border-radius:3px;border:1px solid rgba(255,255,255,0.2);display:inline-block}
+.palette-side-previews{display:flex;flex-direction:column;gap:14px}
+.mini-preview{background:var(--bg-elev2);border:1px solid var(--border-soft);border-radius:var(--radius-sm);padding:10px}
+.mini-title{font-size:11px;text-transform:uppercase;letter-spacing:.08em;color:var(--text-faint);font-weight:600;margin-bottom:6px}
+.mini-canvas{width:100%;height:auto;border-radius:6px;border:1px solid var(--border-soft);display:block;background:#111}
+.palette-tweak-section{background:var(--bg-elev2);border:1px solid var(--border-soft);border-radius:var(--radius-sm);padding:16px;margin-top:16px}
+.palette-ramp-row{display:grid;grid-template-columns:1fr 1fr;gap:16px}
+@media(max-width:700px){.palette-ramp-row{grid-template-columns:1fr}}
+.palette-overrides-list{display:flex;flex-direction:column;gap:6px;max-height:220px;overflow:auto;padding:4px}
+.override-row{display:flex;align-items:center;gap:8px;background:var(--bg-elev);border:1px solid var(--border-soft);border-radius:6px;padding:6px 10px}
+.override-swatch{width:18px;height:18px;border-radius:4px;border:1px solid rgba(255,255,255,0.15);flex-shrink:0}
+

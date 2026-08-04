@@ -103,16 +103,16 @@
     "moss": {
       "enabled": true,
       "albedo": [
-        97,
-        171,
-        48
+        52,
+        111,
+        59
       ],
       "roughAdd": 0.3,
       "heightAdd": 0.2,
       "normalStrength": 0.6,
-      "colorStrength": 1,
+      "colorStrength": 5,
       "noiseScale": 4,
-      "threshold": 0.6,
+      "threshold": 0.37,
       "feather": 0.22,
       "aoWeight": 0.82,
       "octaves": 4,
@@ -146,7 +146,7 @@
         "aoHigh": 0.4,
         "roughLow": 0.6,
         "roughHigh": 0.96,
-        "base": 0.1,
+        "base": 0.2,
         "feather": 0.2,
         "desc": "Material influence - low height (grout), low AO (crevice/AO high occlusion), high roughness porous"
       },
@@ -154,7 +154,7 @@
         "biomeBase": 0.6,
         "envBase": 0.6,
         "matBase": 0.6,
-        "boost": 1,
+        "boost": 1.01,
         "desc": "Combined final tuning - base mixes prevent zeroing, boost visibility",
         "noiseWeight": 1,
         "envWeight": 1,
