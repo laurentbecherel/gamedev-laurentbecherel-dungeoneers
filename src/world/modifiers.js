@@ -156,20 +156,30 @@ export function generateModifierMap(dungeon, config) {
     if(!isFloor) puddleI *= 0.02;
     puddleI = Math.max(0, Math.min(1, puddleI));
 
-    // Moss: higher freq + more octaves, tunable via material-modifiers.json moss.noiseScale
+    // Moss: thresholded sparse coverage like puddle, fixes full-coverage bug
     let mossI = 0;
     if (roleMoss > 0.001) {
       const mm = modCfg.modifiers || {};
       const mCfg = mm.moss || {};
-      const mossScale = mCfg.noiseScale ?? 0.85;
+      const mossScale = mCfg.noiseScale ?? 2.2;
+      const mossThreshold = mCfg.threshold ?? 0.42;
+      const mossFeather = mCfg.feather ?? 0.12;
+      // higher freq detail for organic edges
       const mossLarge = fbm(xc * mossScale, yc * mossScale, seed+333, 4);
-      const mossDetail = fbm(xc * mossScale * 2.2 + 17.3, yc * mossScale * 2.2 + 31.7, seed+334, 2) * 0.35;
-      let mt = (mossLarge + mossDetail - 0.35) / Math.max(0.0001, 0.26);
-      mt = Math.max(0, Math.min(1, mt));
-      mt = smooth(mt);
-      let mossShape = mt * (0.55 + 0.45 * medNoise);
-      const wallFactor = isFloor ? (isNearWall(x,y) ? 1.40 : 0.55) : 1.05;
-      mossI = roleMoss * mossShape * wallFactor * (0.40 + 0.60 * globalN);
+      const mossDetailRaw = fbm(xc * mossScale * 2.0 + 19.1, yc * mossScale * 2.0 + 33.7, seed+334, 3);
+      const mossSmall = fbm(xc * 0.55, yc * 0.55, seed+99+1, 2); // reuse for extra wobble
+
+      const low = mossThreshold - mossFeather;
+      const high = mossThreshold + mossFeather;
+      let t = (mossLarge - low) / Math.max(0.0001, high - low);
+      t = Math.max(0, Math.min(1, t));
+      t = smooth(t);
+      // puddle-style: large defines blob, detail modulates inside but preserves zero outside
+      let mossShape = t * (0.55 + 0.45 * mossDetailRaw) * (0.75 + 0.25 * mossSmall);
+      mossShape = Math.max(0, Math.min(1, mossShape));
+      // Wall factor now weak 1.1/0.9 so noise breaks vertical streaks, not dominates
+      const wallFactor = isFloor ? (isNearWall(x,y) ? 1.10 : 0.90) : 1.0;
+      mossI = roleMoss * mossShape * wallFactor * (0.50 + 0.50 * globalN);
       mossI = Math.max(0, Math.min(1, mossI));
     }
 

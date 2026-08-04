@@ -262,7 +262,7 @@ void main() {
   float gWallV_raw = 0.0; // for GBuffer correct 1/3 wall detection
 
   if (hit == 1) {
-    float floorH = 0.0; float ceilH = 1.0;
+    float floorH = 0.0; float ceilH = 1.15;
     float wallU; if (side==0) wallU = hitPos.y - floor(hitPos.y); else wallU = hitPos.x - floor(hitPos.x);
     if ((side==0 && ray.x > 0.0) || (side==1 && ray.y < 0.0)) wallU = 1.0 - wallU;
     if (u_authentic == 1) wallU = floor(wallU * 64.0 * 65536.0) / 65536.0 / 64.0;
@@ -286,7 +286,7 @@ void main() {
         finalColor = shadeFloorCell(floorWorld,floorUV,matId,fc,ray,eyeZ,floorH_atRay,d);
         perpDist = dist;
       } else {
-        float ceilH_atRay = 1.0;
+        float ceilH_atRay = 1.15;
         float dist = (ceilH_atRay - eyeZ) / max(0.0001, (horizon - vNorm)) * u_resolution.x / u_resolution.y * 0.5 / tan(u_fov*0.5);
         dist = max(dist,0.001);
         vec2 ceilWorld = u_playerPos + ray * dist;
@@ -438,12 +438,32 @@ void main(){ v_uv = a_pos * 0.5 + 0.5; gl_Position = vec4(a_pos, 0.0, 1.0); }
 `;
 
 // Debug programs - separate shaders, swapped via useProgram, no branching in main (avoids ANGLE giga)
-// Bright masks like puddle had: blue/pink for puddle, green for moss
+// Moss debug - continuous 3D isotropic, truly continuous floor/wall/ceiling
 export const fsDebugMoss = fsSource.replace(
   'outColor = vec4(finalColor,1.0);',
-  `vec3 dbgWPos = vec3(u_playerPos + ray * perpDist, 0.0);
-   vec3 dbgCol = debugFinalMossMask(dbgWPos, 0.5, 1.0);
-   outColor = vec4(dbgCol, 1.0);`
+  `vec3 dbgWPos;
+   float vN = fragCoord.y / u_resolution.y;
+   if (hit == 1) {
+     float wV = gWallV_raw;
+     if (wV >= 0.0 && wV <= 1.0) {
+       dbgWPos = vec3(hitPos, (1.0 - wV) * 1.15);
+     } else {
+       if (vN > 0.5) dbgWPos = vec3(u_playerPos + ray * perpDist, 0.0);
+       else dbgWPos = vec3(u_playerPos + ray * perpDist, 1.15);
+     }
+   } else {
+     if (vN > 0.5) dbgWPos = vec3(u_playerPos + ray * perpDist, 0.0);
+     else dbgWPos = vec3(u_playerPos + ray * perpDist, 1.15);
+   }
+   float dbgScale = modMossAlbedoRough.z > 0.001 ? modMossAlbedoRough.z : 0.85;
+   float dbgThresh = modMossAlbedoRough.w > 0.001 ? modMossAlbedoRough.w : 0.42;
+   vec3 dbgPos = dbgWPos * dbgScale * 0.85 + vec3(2.7,5.4,8.1);
+   float dbgN3D = fbm3D_3(dbgPos);
+   float dbgNdet = valueNoise3D(dbgPos*2.2+vec3(11.3,23.7,4.7));
+   float dbgVar = dbgN3D*0.65 + dbgNdet*0.35;
+   float dbgMask = smoothstep(dbgThresh-0.12, dbgThresh+0.12, dbgVar);
+   vec3 dbgCol = vec3(0.18,0.68,0.18)*dbgMask*1.6;
+   outColor = vec4(dbgCol,1.0);`
 );
 
 export const fsDebugPuddle = fsSource.replace(

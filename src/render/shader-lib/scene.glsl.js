@@ -40,26 +40,23 @@ vec3 debugFinalPuddleMask(in vec3 worldPos, in float matHeight, in float ao) {
 }
 
 vec3 debugFinalMossMask(in vec3 worldPos, in float matHeight, in float ao) {
-  vec2 modUV = worldPos.xy / u_mapSize;
-  vec4 mod1 = texture(u_modifierMap, modUV);
-  float mossCell = mod1.r;
-  // Wall-aware variation: use Z for vertical, XY for floor, avoid uniform walls
-  float isFloorDbg = step(0.5, worldPos.z) > 0.5 ? 0.0 : 1.0; // approx floor z~0, wall z varies, ceil z>1
-  // For walls, add variation from worldPos.z and wallU via fract
   float tunScale = modMossAlbedoRough.z > 0.001 ? modMossAlbedoRough.z : 0.85;
-  vec2 coordFloor = worldPos.xy * tunScale;
-  vec2 coordWall = vec2((worldPos.x + worldPos.y) * tunScale * 0.6, worldPos.z * tunScale * 1.8);
-  float isFloor = step(worldPos.z, 0.4); // floor low z, wall mid, ceil high
-  vec2 coord = mix(coordWall, coordFloor, isFloor);
-  float var = valueNoise2D(coord);
-  float mask = mossCell * (0.75 + 0.35 * var);
+  float mossThresh = modMossAlbedoRough.w > 0.001 ? modMossAlbedoRough.w : 0.42;
+  float mossFeather = 0.12;
+  // Pure continuous 3D isotropic
+  vec3 mossPos = worldPos * tunScale * 0.85 + vec3(2.7, 5.4, 8.1);
+  float n3D = fbm3D_3(mossPos);
+  float n3DDet = valueNoise3D(mossPos * 2.2 + vec3(11.3, 23.7, 4.7));
+  float varCombined = n3D * 0.65 + n3DDet * 0.35;
+  float low = mossThresh - mossFeather;
+  float high = mossThresh + mossFeather;
+  float shape = smoothstep(low, high, varCombined);
+  float mask = shape; // pure continuous, no cell discontinuity
   float edge = mask * (1.0 - mask) * 4.0;
   vec3 inside = vec3(0.18, 0.68, 0.18) * mask * 1.6;
   vec3 edgeCol = vec3(0.35, 1.0, 0.35) * edge * 0.9;
   vec3 bg = vec3(0.02, 0.02, 0.03);
   vec3 col = bg + inside + edgeCol;
-  float high = step(0.5, mask);
-  col = mix(col, vec3(0.22, 0.85, 0.22), high * 0.55);
   return clamp(col, 0.0, 1.0);
 }
 
@@ -109,7 +106,9 @@ vec3 shadeHorizontalCell(in vec2 horizWorld, in vec2 horizUV, in float matId, in
     applyFloorBaseboard(horizWorld, N, ao, albedo, rma);
     applyGridFloor(horizWorld, N, ao, albedo, rma);
   }
-  float isFloorSurface = isCeil ? 0.0 : 1.0;
+  // For moss: floor and ceiling both horizontal → same handling (continuous 3D), not 0 vs 1
+  // Puddle will filter by worldPos.z, so keep horizontal flag 1 for both
+  float isFloorSurface = 1.0;
   applyModifiers(albedo, N, rma.r, rma.g, ao, vec3(horizWorld, heightAtRay), heightVal, isFloorSurface);
   vec3 worldPos = vec3(horizWorld, heightAtRay);
   vec3 viewDir = normalize(vec3(u_playerPos, eyeZ) - worldPos);
@@ -160,7 +159,7 @@ vec3 shadeWallCell(in float wallU, in float wallV, in float matId, in float wc, 
   tOrtho = mix(tOrtho, tOrthoFlipped, tiny);
   vec3 tangentOrtho = normalize(tOrtho);
   tangent = mix(tangentFlat, tangentOrtho, cornerEn);
-  vec3 worldPos = vec3(hitPos.x, hitPos.y, u_playerHeight + (wallV - 0.5));
+  vec3 worldPos = vec3(hitPos.x, hitPos.y, (1.0 - wallV) * 1.15);
   vec3 viewDir = normalize(vec3(u_playerPos, u_playerHeight) - worldPos);
   vec3 viewTS = vec3(dot(viewDir, tangent), dot(viewDir, bitangent), dot(viewDir, Ngeom));
   float pomEn = float(u_pomEnabled);

@@ -52,6 +52,34 @@ float valueNoise2D(vec2 p) {
   return mix(mix(a, b, f.x), mix(c, d, f.x), f.y);
 }
 
+// --- 3D noise for moss - true vertical variation, breaks uniform walls ---
+float hash31(vec3 p) {
+  float seedOff = modMossAlbedoRough.y;
+  return fract(sin(dot(p + vec3(seedOff*0.13, seedOff*0.17, seedOff*0.19), vec3(127.1, 311.7, 74.7))) * 43758.5453);
+}
+float valueNoise3D(vec3 p) {
+  vec3 i = floor(p);
+  vec3 f = fract(p);
+  f = f*f*(3.0-2.0*f);
+  float n000 = hash31(i);
+  float n100 = hash31(i + vec3(1.0, 0.0, 0.0));
+  float n010 = hash31(i + vec3(0.0, 1.0, 0.0));
+  float n110 = hash31(i + vec3(1.0, 1.0, 0.0));
+  float n001 = hash31(i + vec3(0.0, 0.0, 1.0));
+  float n101 = hash31(i + vec3(1.0, 0.0, 1.0));
+  float n011 = hash31(i + vec3(0.0, 1.0, 1.0));
+  float n111 = hash31(i + vec3(1.0, 1.0, 1.0));
+  float nx00 = mix(n000, n100, f.x);
+  float nx10 = mix(n010, n110, f.x);
+  float nx01 = mix(n001, n101, f.x);
+  float nx11 = mix(n011, n111, f.x);
+  float nxy0 = mix(nx00, nx10, f.y);
+  float nxy1 = mix(nx01, nx11, f.y);
+  return mix(nxy0, nxy1, f.z);
+}
+float fbm3D_2(vec3 p){ return valueNoise3D(p)*0.5 + valueNoise3D(p*2.0)*0.25; }
+float fbm3D_3(vec3 p){ return valueNoise3D(p)*0.5 + valueNoise3D(p*2.0)*0.25 + valueNoise3D(p*4.0)*0.125; }
+
 // Fixed 2/3 octaves - no params, no break, directly unrolls
 float fbm2D_2(vec2 p) {
   return valueNoise2D(p) * 0.5 + valueNoise2D(p * 2.0) * 0.25;
@@ -230,30 +258,44 @@ void applyModifiers(inout vec3 albedo, inout vec3 N, inout float rough, inout fl
   threshold = mix(threshold, 0.55, step(threshold, 0.001));
   feather = mix(feather, 0.12, step(feather, 0.001));
 
-  // Moss - wall-aware, tunable scale, 2 noises max, no branching
+  // Moss - v24 continuous isotropic 3D, truly continuous floor/wall/ceiling
   float mossHas = step(0.001, mossCell);
-  float tunableMossScale = modMossAlbedoRough.z > 0.001 ? modMossAlbedoRough.z : 0.85;
-  float isFloor = step(0.5, isFloorSurface);
-  // Higher scale for more variation, wall uses wallU via fract(worldPos) + z for vertical
-  vec2 mossCoordFloor = worldPos.xy * tunableMossScale * 1.2;
-  vec2 mossCoordWall = vec2(fract(worldPos.x + worldPos.y) * tunableMossScale * 3.0 + worldPos.x * 0.2, worldPos.z * tunableMossScale * 2.5);
-  vec2 mossCoord = mix(mossCoordWall, mossCoordFloor, isFloor);
-  mossCoord += vec2(step(0.5, worldPos.z) * 9.7, 3.1);
-  float mossVar = valueNoise2D(mossCoord);
-  float mossMask = mossCell * mossHas * (0.70 + 0.40 * mossVar);
-  float mossDetail = valueNoise2D(mossCoord * 2.4 + vec2(11.3, 23.7)) * 0.30;
-  mossMask *= (0.82 + mossDetail);
-  vec3 mossAlbedo = vec3(0.18, 0.42, 0.15) * (0.88 + 0.22 * mossVar);
-  albedo = mix(albedo, mossAlbedo, mossMask * 0.65 * mossHas);
-  rough = clamp(rough + 0.30 * mossMask * mossHas, 0.0, 1.0);
-  metal = mix(metal, 0.0, mossMask * 0.70 * mossHas);
-  ao *= (1.0 - mossMask * 0.12 * mossHas);
+  float tunableMossScale = modMossAlbedoRough.z > 0.001 ? modMossAlbedoRough.z : 2.2;
+  float mossThreshold = modMossAlbedoRough.w > 0.001 ? modMossAlbedoRough.w : 0.42;
+  float mossFeather = 0.12;
+  float isFloor = step(0.5, isFloorSurface); // for normal bias only
+
+  // Continuous 3D: worldPos = (X,Y,Z) contiguous across floor (Z0), wall (Z=(1-wallV)*1.15), ceiling (Z1.15)
+  // Same scale for all axes → isotropic, slider 0-20 changes vert like horiz
+  // NOTE: wallV 0=top (ceil), 1=bottom (floor), so Z = (1-wallV)*1.15 for seamless seams
+  vec3 mossPos = worldPos * tunableMossScale * 0.85 + vec3(2.7, 5.4, 8.1);
+
+  float n3D = fbm3D_3(mossPos);
+  float n3DDet = valueNoise3D(mossPos * 2.2 + vec3(11.3, 23.7, 4.7));
+
+  float mossVar = n3D * 0.65 + n3DDet * 0.35;
+
+  float mossLow = mossThreshold - mossFeather;
+  float mossHigh = mossThreshold + mossFeather;
+  float mossShape = smoothstep(mossLow, mossHigh, mossVar);
+
+  // For true continuity, don't gate by 2D cell map (which is discontinuous at walls), use pure 3D shape
+  // Keep weak cell modulation as optional large-scale, but base ensures continuity
+  float mossMask = mossHas * mossShape; // pure continuous, no cell discontinuity
+  // Uncomment to keep some biome from map: mossMask *= (0.70 + 0.30 * mossCell);
+
+  vec3 mossAlbedo = vec3(0.18, 0.42, 0.15) * (0.85 + 0.28 * n3D);
+  albedo = mix(albedo, mossAlbedo, mossMask * 0.70 * mossHas);
+  rough = clamp(rough + 0.32 * mossMask * mossHas, 0.0, 1.0);
+  metal = mix(metal, 0.0, mossMask * 0.75 * mossHas);
+  ao *= (1.0 - mossMask * 0.14 * mossHas);
   vec3 mossUp = vec3(0.0, 0.0, 1.0);
   float wallBias = mix(0.85, 0.55, isFloor);
-  N = normalize(mix(N, mossUp, mossMask * 0.30 * wallBias * mossHas));
+  N = normalize(mix(N, mossUp, mossMask * 0.32 * wallBias * mossHas));
 
-  // Puddle - perfect organic noise restored (was perfect before moss)
-  float floorHas = step(0.5, isFloorSurface);
+  // Puddle - floor only, not ceiling (ceiling Z~1.15, floor Z~0, wall Z 0..1.15 but isFloorSurface 0 for walls)
+  // isFloorSurface is now 1 for both floor and ceiling (to keep moss continuous), so also check Z<0.6 for floor
+  float floorHas = step(0.5, isFloorSurface) * step(worldPos.z, 0.6);
   float puddleHas = step(0.001, puddleCell) * floorHas;
   float puddleCellForMask = puddleCell * puddleHas;
   float puddleMask = computePuddleMaskTweakable(worldPos, matHeight, ao, puddleCellForMask);

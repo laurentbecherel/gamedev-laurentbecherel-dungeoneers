@@ -13,26 +13,66 @@ function status(msg, type = "ok") {
   setTimeout(() => { if (el.innerHTML.includes(msg)) el.innerHTML = ""; }, 3500);
 }
 
-function getDocForPath(fullPath) {
+function getRawDocEntry(fullPath) {
   try {
     const data = currentData;
     if (!data || !data.docs) return null;
-    // fullPath like modifiers.puddle.threshold or threshold when inside puddle
     let parts = fullPath.replace(/\[(\d+)\]/g, '.$1').split('.').filter(Boolean);
-    // strip modifiers/ prefix to look in docs.puddle...
     if (parts[0] === 'modifiers') parts = parts.slice(1);
-    // also handle when path is just threshold inside puddle object - need to know current container path
-    // Try direct traversal under docs
     let cur = data.docs;
     for (let p of parts) {
       if (cur && typeof cur === 'object' && p in cur) cur = cur[p];
-      else {
-        // try case where docs are under puddle even if path is deeper
-        return null;
-      }
+      else return null;
     }
-    return typeof cur === 'string' ? cur : null;
+    return cur;
   } catch { return null; }
+}
+function getUiEntry(fullPath) {
+  const containers = ['ui', 'ranges', 'schema', 'editor', '_ui', '_schema'];
+  for (const cname of containers) {
+    try {
+      if (!currentData || !currentData[cname]) continue;
+      for (const strip of [true, false]) {
+        let parts = fullPath.replace(/\[(\d+)\]/g, '.$1').split('.').filter(Boolean);
+        if (strip && parts[0] === 'modifiers') parts = parts.slice(1);
+        let cur = currentData[cname];
+        let ok = true;
+        for (const p of parts) {
+          if (cur && typeof cur === 'object' && p in cur) cur = cur[p];
+          else { ok = false; break; }
+        }
+        if (ok && cur && typeof cur === 'object' && ('min' in cur || 'max' in cur || 'desc' in cur || 'description' in cur)) {
+          return cur;
+        }
+      }
+    } catch {}
+  }
+  return null;
+}
+function getSchemaForPath(fullPath) {
+  const docEntry = getRawDocEntry(fullPath);
+  const uiEntry = getUiEntry(fullPath);
+  const merged = {};
+  if (typeof docEntry === 'string') {
+    merged.desc = docEntry;
+  } else if (docEntry && typeof docEntry === 'object') {
+    merged.desc = docEntry.desc || docEntry.description || docEntry.text || null;
+    if ('min' in docEntry) merged.min = docEntry.min;
+    if ('max' in docEntry) merged.max = docEntry.max;
+    if ('step' in docEntry) merged.step = docEntry.step;
+  }
+  if (uiEntry) {
+    if (uiEntry.desc || uiEntry.description) merged.desc = merged.desc || uiEntry.desc || uiEntry.description;
+    if ('min' in uiEntry) merged.min = uiEntry.min;
+    if ('max' in uiEntry) merged.max = uiEntry.max;
+    if ('step' in uiEntry) merged.step = uiEntry.step;
+  }
+  if (!merged.desc && !('min' in merged) && !('max' in merged) && !('step' in merged)) return null;
+  return merged;
+}
+function getDocForPath(fullPath) {
+  const schema = getSchemaForPath(fullPath);
+  return schema?.desc || null;
 }
 function formatLabel(s) { return s.replace(/[-_]/g, " ").replace(/\b\w/g, c => c.toUpperCase()); }
 function iconFor(name, isFolder) { if (isFolder) return "ph-folder"; const ext = name.split(".").pop(); const m = { json: "ph-file-code", md: "ph-file-text", png: "ph-file-png", jpg: "ph-file-jpg", js: "ph-file-js", css: "ph-file-css", html: "ph-file-html" }; return m[ext] || "ph-file"; }
@@ -300,7 +340,7 @@ function buildForm(container, obj, path) {
   if (obj !== null && typeof obj === "object") {
     for (const key of Object.keys(obj)) {
       if (key.startsWith('_')) continue;
-      if (key === 'docs') continue;
+      if (key === 'docs' || key === 'ui' || key === 'ranges' || key === 'schema' || key === 'editor') continue;
       const val = obj[key]; const fp = path ? `${path}.${key}` : key;
       const fg = document.createElement("div"); fg.className = "field-group";
       const lbl = document.createElement("label"); lbl.className = "field-label";
@@ -315,9 +355,39 @@ function buildForm(container, obj, path) {
         inp.oninput = () => { setByPath(currentData, fp, parseFloat(inp.value) || 0); triggerLiveChange(); if (sl) sl.value = inp.value; };
         row.appendChild(inp);
         let sl = null;
-        if ((val >= 0 && val <= 1 && key.match(/roughness|metal|chance|weight|strength|opacity|scale|mult/i)) || key === "metal" || key.toLowerCase().includes('factor') || key.toLowerCase().includes('amount') || key.toLowerCase().includes('speed')) {
-          sl = document.createElement("input"); sl.type = "range"; sl.min = "0"; sl.max = key.toLowerCase().includes('speed') ? "20" : "1"; sl.step = key.toLowerCase().includes('speed') ? "0.1" : "0.01"; sl.value = val; sl.style.flex = "2";
-          if (val > 1) { sl.max = String(Math.max(20, val*2)); }
+        // Declarative schema from JSON (ui / docs with min/max) takes precedence over heuristics
+        const schema = getSchemaForPath(fp);
+        const hasSchemaRange = schema && ('min' in schema || 'max' in schema);
+        const lowerKey = key.toLowerCase();
+        const showSliderByHeuristic = (val >= 0 && val <= 1 && key.match(/roughness|metal|chance|weight|strength|opacity|scale|mult/i)) || key === "metal" || lowerKey.includes('factor') || lowerKey.includes('amount') || lowerKey.includes('speed');
+        const showSlider = hasSchemaRange || showSliderByHeuristic;
+        if (showSlider) {
+          let minVal = 0, maxVal = 1, stepVal = 0.01;
+          if (hasSchemaRange) {
+            minVal = schema.min ?? 0;
+            maxVal = schema.max ?? (lowerKey.includes('speed') ? 20 : 1);
+            stepVal = schema.step ?? (maxVal > 1 ? 0.05 : 0.01);
+          } else {
+            // generic heuristic fallback (no hardcoded noiseScale — use schema if you need custom range)
+            if (lowerKey.includes('speed')) {
+              maxVal = 20;
+              stepVal = 0.1;
+            }
+            if (val > 1) {
+              maxVal = Math.max(maxVal, Math.max(20, val * 2));
+            }
+          }
+          sl = document.createElement("input");
+          sl.type = "range";
+          sl.min = String(minVal);
+          sl.max = String(maxVal);
+          sl.step = String(stepVal);
+          sl.value = String(Math.min(Math.max(parseFloat(val), minVal), maxVal));
+          sl.style.flex = "2";
+          // if current val exceeds declared max, expand max so slider still works (non-destructive)
+          if (parseFloat(val) > parseFloat(sl.max)) {
+            sl.max = String(Math.max(parseFloat(sl.max), parseFloat(val) * 1.2));
+          }
           sl.oninput = () => { inp.value = sl.value; setByPath(currentData, fp, parseFloat(sl.value)); triggerLiveChange(); };
           row.appendChild(sl);
         }

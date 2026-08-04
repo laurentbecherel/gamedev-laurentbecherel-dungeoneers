@@ -101,19 +101,20 @@
   },
   "modifiers": {
     "moss": {
-      "enabled": false,
+      "enabled": true,
       "albedo": [
-        0.18,
-        0.42,
-        0.15
+        97,
+        171,
+        48
       ],
       "roughAdd": 0.35,
       "heightAdd": 0.18,
       "normalStrength": 0.6,
-      "colorStrength": 0.85,
-      "noiseScale": 0.85,
-      "threshold": 0.42,
-      "aoWeight": 0.7,
+      "colorStrength": 1,
+      "noiseScale": 2.95,
+      "threshold": 0.46,
+      "feather": 0.16,
+      "aoWeight": 0.82,
       "octaves": 4
     },
     "damaged": {
@@ -213,13 +214,40 @@
     }
   },
   "docs": {
+    "moss": {
+      "noiseScale": {
+        "desc": "Moss noise frequency. Higher = smaller patches, more detailed. 0.2 large blobs, 5+ tiny speckles. Tweak live.",
+        "min": 0,
+        "max": 20,
+        "step": 0.05
+      },
+      "threshold": {
+        "desc": "Moss coverage threshold 0-1. Lower=more moss, higher=sparser. 0.42 balanced.",
+        "min": 0,
+        "max": 1,
+        "step": 0.01
+      },
+      "feather": {
+        "desc": "Softness of moss edge 0-0.5. Higher=softer transition.",
+        "min": 0,
+        "max": 0.5,
+        "step": 0.01
+      },
+      "colorStrength": "0-1 moss tint strength over base albedo.",
+      "roughAdd": "0-1 additional roughness from moss."
+    },
     "puddle": {
       "albedo": "0-255 RGB base puddle color. Dark (10,40,80) for water. Mixed with darkBase. Now auto /255.",
       "roughTarget": "0-1 target roughness where puddle (0.04=glossy mirror, 0.8=matte).",
       "colorStrength": "0-1 how much floor albedo replaced by puddle tint. 0.55 subtle, 0.92 full.",
       "tintMix": "0-1 mix darkBase vs pure albedo. 0=only darkened floor, 1=pure albedo.",
       "darkBaseFactor": "0-1 darkening of floor before tint. 0.65 darker base less saturated.",
-      "noiseScaleLarge": "World scale of large blobs. Smaller= larger pools. Tweak live.",
+      "noiseScaleLarge": {
+        "desc": "World scale of large blobs. Smaller= larger pools. Tweak live. Now 0-20 via schema.",
+        "min": 0,
+        "max": 20,
+        "step": 0.05
+      },
       "threshold": "0-1 noise cutoff where cloud becomes puddle. Lower=more coverage.",
       "feather": "0-0.2 softness of threshold edge. Higher=softer cloud edge.",
       "cellFeatherLow": "Tile border feather low (0). Tweak to remove straight cut.",
@@ -241,11 +269,69 @@
       "roughFeatherHigh": "Mask high for roughness lerp",
       "flatStrength": "0-1 how much normal becomes flat up (0,0,1) as water surface.",
       "metalMix": "0-1 how much metal removed in puddle (water non-metal).",
-      "rippleScale": "UV scale for ripple normal. 0=off, 3=visible ripples.",
+      "rippleScale": {
+        "desc": "UV scale for ripple normal. 0=off, 3=visible ripples. Now 0-20 via schema.",
+        "min": 0,
+        "max": 20,
+        "step": 0.1
+      },
       "aoMix": "0-1 how much AO darkening removed under water.",
       "floorDepress": "-0.5..0.5 height depression where puddle (negative lowers floor). Now wired live, was dead before.",
       "seed_note": "Omitted - all noise/puddle seeds derived from master gameplay/generator.json seed via hash. One master seed = deterministic refresh."
     },
     "system": "All are T1 live-edit via UBO ModifiersBlock (binding=1). No regen. heightAdd/aoWeight/noiseScale/normalStrength/roughAdd were dead legacy and removed."
+  },
+  "ui": {
+    "moss": {
+      "noiseScale": {
+        "min": 0,
+        "max": 20,
+        "step": 0.05
+      },
+      "threshold": {
+        "min": 0,
+        "max": 1,
+        "step": 0.01
+      },
+      "feather": {
+        "min": 0,
+        "max": 0.5,
+        "step": 0.01
+      }
+    },
+    "puddle": {
+      "noiseScaleLarge": {
+        "min": 0,
+        "max": 20,
+        "step": 0.05
+      },
+      "rippleScale": {
+        "min": 0,
+        "max": 20,
+        "step": 0.1
+      },
+      "threshold": {
+        "min": 0,
+        "max": 1,
+        "step": 0.01
+      },
+      "feather": {
+        "min": 0,
+        "max": 0.5,
+        "step": 0.01
+      }
+    },
+    "generator": {
+      "noiseScale": {
+        "min": 0,
+        "max": 1,
+        "step": 0.01
+      },
+      "puddleScaleLarge": {
+        "min": 0,
+        "max": 1,
+        "step": 0.01
+      }
+    }
   }
 }
