@@ -32,9 +32,9 @@
         26
       ],
       "to": [
-        125,
-        185,
-        105
+        81,
+        145,
+        59
       ],
       "count": 32
     }
@@ -59,18 +59,18 @@
       26
     ],
     "to": [
-      125,
-      185,
-      105
+      81,
+      145,
+      59
     ],
     "count": 32
   },
   "regularColors": {
     "count": 112,
-    "saturation": 0.42,
+    "saturation": 0.26,
     "saturationVar": 0.18,
     "lightnessMin": 0.32,
-    "lightnessMax": 0.8,
+    "lightnessMax": 0.9,
     "hueShift": 137.5
   },
   "grayscale": {
