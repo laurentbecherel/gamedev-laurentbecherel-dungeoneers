@@ -703,8 +703,7 @@ fn fs_main(@location(0) v_uv: vec2<f32>, @builtin(position) fragPos: vec4<f32>) 
 }
 `;
 
-// SSR – minimal stub, avoids material group to stay under 16 textures, no POM
-// Uses layout [frame, samplers, ssrTextures] = groups 0,1,2
+// SSR – full raymarch ported from WebGL2 fsSSR (632b7f2) – uses layout [frame, samplers, ssrTextures] = groups 0,1,2
 export const fsSSRwgsl = `
 struct FrameUniforms {
   resolution: vec2<f32>,
@@ -843,28 +842,203 @@ fn octaDecodeSSR(enc: vec2<f32>) -> vec3<f32> {
   return normalize(n);
 }
 
+fn worldToScreenUVSSR_Full(worldPos: vec3<f32>, camPos: vec2<f32>, eyeZ: f32, playerAngle: f32, planeLen: f32, resolution: vec2<f32>, bobPixels: f32) -> vec3<f32> {
+  let dx: f32 = worldPos.x - camPos.x;
+  let dy: f32 = worldPos.y - camPos.y;
+  let dirX: f32 = cos(playerAngle);
+  let dirY: f32 = sin(playerAngle);
+  let rightX: f32 = -dirY;
+  let rightY: f32 = dirX;
+  var forwardDist: f32 = dx * dirX + dy * dirY;
+  let rightDist: f32 = dx * rightX + dy * rightY;
+  if (forwardDist < 0.06) { forwardDist = 0.06; }
+  let cameraX: f32 = rightDist / forwardDist / max(0.0001, planeLen);
+  let uvX: f32 = cameraX * 0.5 + 0.5;
+  let fovFactor: f32 = 1.0 / max(0.0001, planeLen);
+  let aspect: f32 = resolution.x / max(1.0, resolution.y);
+  let yShift: f32 = (eyeZ - worldPos.z) / forwardDist * fovFactor * 0.5 * aspect;
+  let uvY_noBob: f32 = 0.5 - yShift;
+  let uvY: f32 = uvY_noBob + bobPixels / max(1.0, resolution.y);
+  return vec3<f32>(uvX, uvY, forwardDist);
+}
+
+struct SSRResult_Full {
+  color: vec3<f32>,
+  hit: f32,
+  fade: f32,
+  rayLength: f32,
+  hitUV: vec2<f32>,
+};
+
+fn traceScreenSpaceRaySSR_Full(startUV: vec2<f32>, N: vec3<f32>, V: vec3<f32>, linearDepth: f32, puddleMask: f32, roughness: f32, resolution: vec2<f32>, steps: i32, binarySteps: i32, maxDistance: f32, thickness: f32, stride: f32, jitter: f32, depthBias: f32, zThicknessScale: f32, camPos: vec2<f32>, eyeZ: f32, playerAngle: f32, planeLen: f32, bobPixels: f32) -> SSRResult_Full {
+  var res: SSRResult_Full;
+  res.color = vec3<f32>(0.0, 0.0, 0.0);
+  res.hit = 0.0; res.fade = 0.0; res.rayLength = 0.0; res.hitUV = startUV;
+  var R: vec3<f32> = reflect(-V, N);
+  let effectiveJitter: f32 = jitter * clamp(roughness * 4.0, 0.0, 1.0);
+  if (abs(R.z) < 0.001) { R.z = 0.001; }
+  if (dot(R, vec3<f32>(0.0, 0.0, 1.0)) < -0.999) { return res; }
+
+  let fragCoord: vec2<f32> = vec2<f32>(startUV.x * resolution.x, (1.0 - startUV.y) * resolution.y);
+  let cameraX0: f32 = 2.0 * fragCoord.x / resolution.x - 1.0;
+  let rayDir0: vec2<f32> = vec2<f32>(cos(playerAngle), sin(playerAngle));
+  let plane0: vec2<f32> = vec2<f32>(-rayDir0.y, rayDir0.x) * planeLen;
+  let ray0: vec2<f32> = rayDir0 + plane0 * cameraX0;
+  let worldPos: vec3<f32> = vec3<f32>(camPos + ray0 * linearDepth, 0.0);
+
+  var noise: f32 = 0.0;
+  if (effectiveJitter > 0.001) {
+    let noiseUV: vec2<f32> = fract(startUV * resolution / 64.0);
+    noise = textureSampleLevel(blueNoiseTex, nearestSampler, noiseUV, 0.0).r * 2.0 - 1.0;
+  }
+  var tRay: f32 = depthBias + abs(noise) * effectiveJitter * 0.08;
+  var tStep: f32 = 0.12;
+
+  for (var i: i32 = 0; i < 64; i++) {
+    if (i >= steps) { break; }
+    if (tRay > maxDistance) { break; }
+    let reflectedWorld: vec3<f32> = worldPos + R * tRay;
+    let proj: vec3<f32> = worldToScreenUVSSR_Full(reflectedWorld, camPos, eyeZ, playerAngle, planeLen, resolution, bobPixels);
+    let uv: vec2<f32> = proj.xy;
+    let fwDist: f32 = proj.z;
+    if (uv.x < -0.15 || uv.x > 1.15 || uv.y < -0.15 || uv.y > 1.15) { tRay += tStep; tStep = tStep * stride; continue; }
+    let gSmpl: vec4<f32> = textureSampleLevel(gNormalDepthTex, nearestSampler, uv, 0.0);
+    let sampledDepthNorm: f32 = gSmpl.b;
+    if (sampledDepthNorm < 0.001) { tRay += tStep; tStep = tStep * stride; continue; }
+    let sampledN: vec3<f32> = octaDecodeSSR(gSmpl.rg);
+    if (sampledN.z > 0.60) { tRay += tStep; tStep = tStep * stride; continue; }
+    if (uv.y < 0.48) { tRay += tStep; tStep = tStep * stride; continue; }
+    let sampledLin: f32 = sampledDepthNorm * maxDistance;
+    let depthDiff: f32 = fwDist - sampledLin;
+    let curThickness: f32 = thickness + tRay * zThicknessScale * 0.08;
+    if (abs(depthDiff) < curThickness) {
+      res.hit = 1.0; res.hitUV = uv; res.color = textureSampleLevel(sceneTex, nearestSampler, uv, 0.0).rgb; res.rayLength = tRay;
+      var lowT: f32 = tRay - tStep; var highT: f32 = tRay;
+      for (var b: i32 = 0; b < 8; b++) {
+        if (b >= binarySteps) { break; }
+        let midT: f32 = mix(lowT, highT, 0.5);
+        let midW: vec3<f32> = worldPos + R * midT;
+        let midProj: vec3<f32> = worldToScreenUVSSR_Full(midW, camPos, eyeZ, playerAngle, planeLen, resolution, bobPixels);
+        let midG: vec4<f32> = textureSampleLevel(gNormalDepthTex, nearestSampler, midProj.xy, 0.0);
+        let midDepthNorm: f32 = midG.b;
+        if (midDepthNorm < 0.001) { lowT = midT; continue; }
+        let midN: vec3<f32> = octaDecodeSSR(midG.rg);
+        if (midN.z > 0.60) { lowT = midT; continue; }
+        let midLin: f32 = midDepthNorm * maxDistance;
+        let midDiff: f32 = midProj.z - midLin;
+        if (abs(midDiff) < curThickness) { highT = midT; } else { lowT = midT; }
+      }
+      let finalW: vec3<f32> = worldPos + R * highT;
+      let finalProj: vec3<f32> = worldToScreenUVSSR_Full(finalW, camPos, eyeZ, playerAngle, planeLen, resolution, bobPixels);
+      let finalG: vec4<f32> = textureSampleLevel(gNormalDepthTex, nearestSampler, finalProj.xy, 0.0);
+      let finalN: vec3<f32> = octaDecodeSSR(finalG.rg);
+      if (finalG.b > 0.001 && finalN.z <= 0.60 && finalProj.y > 0.40) {
+        res.hitUV = finalProj.xy;
+        res.color = textureSampleLevel(sceneTex, nearestSampler, finalProj.xy, 0.0).rgb;
+        res.rayLength = highT;
+      } else {
+        res.hit = 0.0;
+      }
+      if (res.hit > 0.5) { break; }
+    }
+    tRay += tStep;
+    tStep = tStep * stride;
+  }
+
+  if (res.hit < 0.5 && puddleMask > 0.02) {
+    let fallbackW: vec3<f32> = worldPos + R * (maxDistance * 0.5);
+    let fProj: vec3<f32> = worldToScreenUVSSR_Full(fallbackW, camPos, eyeZ, playerAngle, planeLen, resolution, bobPixels);
+    let fUV: vec2<f32> = clamp(fProj.xy, vec2<f32>(0.0), vec2<f32>(1.0));
+    if (fUV.y > 0.40) {
+      let fG: vec4<f32> = textureSampleLevel(gNormalDepthTex, nearestSampler, fUV, 0.0);
+      let fN: vec3<f32> = octaDecodeSSR(fG.rg);
+      if (fG.b > 0.001 && fN.z <= 0.60) {
+        res.color = textureSampleLevel(sceneTex, nearestSampler, fUV, 0.0).rgb * 0.7;
+        res.hit = 0.5;
+        res.hitUV = fUV;
+        res.rayLength = maxDistance * 0.5;
+      }
+    }
+  }
+  return res;
+}
+
 struct SSRFSOut {
   @location(0) color: vec4<f32>,
 };
 
 @fragment
 fn fs_main(@location(0) v_uv: vec2<f32>) -> SSRFSOut {
-  let resolution = frame.resolution;
-  let startUV = v_uv;
-  let texSize = vec2<i32>(i32(resolution.x), i32(resolution.y));
-  var coord = vec2<i32>(vec2<f32>(clamp(startUV, vec2<f32>(0.0), vec2<f32>(1.0)) * resolution));
-  coord = vec2<i32>(clamp(coord, vec2<i32>(0), texSize - vec2<i32>(1)));
-  let gSample: vec4<f32> = textureLoad(gNormalDepthTex, coord, 0);
-  let enc: vec2<f32> = gSample.xy;
-  let puddleMask: f32 = gSample.w;
-  var out: SSRFSOut;
-  if (puddleMask < 0.01) { out.color = vec4<f32>(0.0); return out; }
+  let resolution: vec2<f32> = frame.resolution;
+  let g: vec4<f32> = textureSample(gNormalDepthTex, nearestSampler, v_uv);
+  let depthNorm: f32 = g.b;
+  let puddleMask: f32 = g.a;
+  let enc: vec2<f32> = g.rg;
   let N: vec3<f32> = octaDecodeSSR(enc);
-  if (N.z < 0.1) { out.color = vec4<f32>(0.0); return out; }
-  // Use textureLoad for base to avoid uniform control flow restriction
-  let baseSample = textureLoad(sceneTex, coord, 0).rgb;
-  let fade = puddleMask * 0.5;
-  out.color = vec4<f32>(baseSample * 0.7, fade);
+
+  var out: SSRFSOut;
+
+  // gating thresholds from ssr.json
+  let minPuddleMask: f32 = 0.10;
+  let normalThreshold: f32 = 0.35;
+  let maxGrazingAngle: f32 = 0.92;
+
+  // debug modes
+  if (frame.ssrDebugMode == 1) {
+    let edge: f32 = puddleMask * (1.0 - puddleMask) * 5.0;
+    var inside: vec3<f32> = vec3<f32>(0.10, 0.55, 1.0) * puddleMask * 1.8;
+    var edgeCol: vec3<f32> = vec3<f32>(1.0, 0.25, 0.85) * edge;
+    var col: vec3<f32> = vec3<f32>(0.02, 0.02, 0.03) + inside + edgeCol;
+    if (puddleMask > 0.5) { col = mix(col, vec3<f32>(0.20, 0.75, 1.0), 0.6); }
+    out.color = vec4<f32>(col, 1.0); return out;
+  } else if (frame.ssrDebugMode == 2) {
+    out.color = vec4<f32>(vec3<f32>(pow(clamp(depthNorm, 0.0, 1.0), 0.55)), 1.0); return out;
+  } else if (frame.ssrDebugMode == 3) {
+    out.color = vec4<f32>(N * 0.5 + 0.5, 1.0); return out;
+  }
+
+  if (puddleMask < minPuddleMask) { out.color = vec4<f32>(0.0); return out; }
+  if (N.z < normalThreshold) { out.color = vec4<f32>(0.0); return out; }
+
+  let fragCoord: vec2<f32> = vec2<f32>(v_uv.x * resolution.x, (1.0 - v_uv.y) * resolution.y);
+  let cameraX: f32 = 2.0 * fragCoord.x / resolution.x - 1.0;
+  let planeLen: f32 = tan(frame.fov * 0.5);
+  let rayDir: vec2<f32> = vec2<f32>(cos(frame.playerAngle), sin(frame.playerAngle));
+  let plane: vec2<f32> = vec2<f32>(-rayDir.y, rayDir.x) * planeLen;
+  let ray: vec2<f32> = rayDir + plane * cameraX;
+  let linearDepth: f32 = depthNorm * frame.ssrDepthRange;
+  let worldPos: vec3<f32> = vec3<f32>(frame.playerPos + ray * linearDepth, 0.0);
+  let eyePos: vec3<f32> = vec3<f32>(frame.playerPos, 0.5);
+  let V: vec3<f32> = normalize(eyePos - worldPos);
+  let NdotV: f32 = clamp(dot(N, V), 0.0, 1.0);
+  if (NdotV < (1.0 - maxGrazingAngle)) { out.color = vec4<f32>(0.0); return out; }
+
+  let steps: i32 = 48;
+  let binarySteps: i32 = 6;
+  let maxDistance: f32 = 12.0;
+  let thickness: f32 = 2.0;
+  let stride: f32 = 1.08;
+  let jitter: f32 = 0.02;
+  let depthBias: f32 = 0.06;
+  let zThicknessScale: f32 = 0.15;
+
+  let r: SSRResult_Full = traceScreenSpaceRaySSR_Full(v_uv, N, V, linearDepth, puddleMask, 0.04, resolution, steps, binarySteps, maxDistance, thickness, stride, jitter, depthBias, zThicknessScale, frame.playerPos, 0.5, frame.playerAngle, planeLen, frame.bobPixels);
+
+  let edgeFadeStart: f32 = 1.15; let edgeFadeEnd: f32 = 1.35;
+  let distFadeStart: f32 = 12.0; let distFadeEnd: f32 = 35.0;
+  let fresnelPower: f32 = 2.2; let fresnelMin: f32 = 0.25; let fresnelMax: f32 = 1.0;
+
+  let edgeFade: f32 = 1.0 - smoothstep(edgeFadeStart, edgeFadeEnd, max(abs(r.hitUV.x - 0.5), abs(r.hitUV.y - 0.5)) * 2.0);
+  let distFade: f32 = 1.0 - smoothstep(distFadeStart, distFadeEnd, r.rayLength);
+  let fresnel: f32 = fresnelMin + (fresnelMax - fresnelMin) * pow(1.0 - NdotV, fresnelPower);
+  let fade: f32 = edgeFade * distFade * fresnel * r.hit * puddleMask;
+
+  if (frame.ssrDebugMode == 4) { out.color = vec4<f32>(r.hitUV, 0.0, 1.0); return out; }
+  else if (frame.ssrDebugMode == 5) { out.color = vec4<f32>(vec3<f32>(r.hit), 1.0); return out; }
+  else if (frame.ssrDebugMode == 6) { out.color = vec4<f32>(vec3<f32>(NdotV), 1.0); return out; }
+  else if (frame.ssrDebugMode == 7 || frame.ssrDebugMode == 8) { out.color = vec4<f32>(r.color, 1.0); return out; }
+
+  out.color = vec4<f32>(r.color, fade);
   return out;
 }
 
@@ -881,15 +1055,40 @@ struct CompOut {
 };
 @group(0) @binding(0) var sceneTex: texture_2d<f32>;
 @group(0) @binding(1) var ssrTex: texture_2d<f32>;
+@group(0) @binding(2) var gNormalDepthTex: texture_2d<f32>;
 @group(1) @binding(0) var nearestSampler: sampler;
 
 @fragment
 fn fs_main(@location(0) v_uv: vec2<f32>) -> CompOut {
-  let base: vec3<f32> = textureSample(sceneTex, nearestSampler, v_uv).rgb;
+  let baseCol: vec4<f32> = textureSample(sceneTex, nearestSampler, v_uv);
   let refl: vec4<f32> = textureSample(ssrTex, nearestSampler, v_uv);
-  let mixed: vec3<f32> = mix(base, refl.rgb, refl.a * 0.85);
+  let g: vec4<f32> = textureSample(gNormalDepthTex, nearestSampler, v_uv);
+  let puddleMask: f32 = g.a;
+
+  // config defaults from ssr.json composition
+  let minPuddleMask: f32 = 0.10;
+  let puddleMaskInfluence: f32 = 0.70;
+  let tintStrength: f32 = 0.10;
+  let blendStrength: f32 = 4.0;
+  let additiveBoost: f32 = 0.15;
+  let tint: vec3<f32> = vec3<f32>(0.4, 0.5, 0.65);
+
+  var fade: f32 = refl.a;
+  if (puddleMask < minPuddleMask) {
+    // keep base where no puddle, but still allow debug? For normal mode, skip SSR
+    var outNoSSR: CompOut;
+    outNoSSR.color = vec4<f32>(baseCol.rgb, baseCol.a);
+    return outNoSSR;
+  }
+  fade = fade * mix(1.0, puddleMask, puddleMaskInfluence);
+  var reflection: vec3<f32> = refl.rgb;
+  reflection = mix(reflection, reflection * tint * 2.0, tintStrength);
+  let lum: f32 = dot(reflection, vec3<f32>(0.299, 0.587, 0.114));
+  reflection = reflection + vec3<f32>(lum * additiveBoost);
+  let composite: vec3<f32> = mix(baseCol.rgb, reflection, clamp(fade * blendStrength, 0.0, 1.0));
+
   var out: CompOut;
-  out.color = vec4<f32>(mixed, 1.0);
+  out.color = vec4<f32>(composite, baseCol.a);
   return out;
 }
 @vertex
@@ -1078,6 +1277,11 @@ struct CameraUniforms {
 @group(0) @binding(0) var<uniform> cam: CameraUniforms;
 @group(0) @binding(1) var<uniform> lightData: array<vec4<f32>, 40>;
 fn decodeNormal(enc: vec3<f32>) -> vec3<f32> { return normalize(enc * 2.0 - 1.0); }
+fn attenuateSprite(dist: f32, radius: f32) -> f32 {
+  if (dist > radius) { return 0.0; }
+  let d: f32 = dist / radius;
+  return pow(max(0.0, 1.0 - d), 2.0) / (1.0 + d * d * 0.2);
+}
 @fragment
 fn fs_main(
   @location(0) v_uv: vec2<f32>,
@@ -1121,14 +1325,15 @@ fn fs_main(
     let VdotL: f32 = dot(V, L);
     let behind: f32 = max(0.0, -VdotL);
     if (behind > 0.01) {
-      let fresnel: f32 = pow(1.0 - max(dot(V, N), 0.0), 3.0) * v_rimStrength;
-      Lo += albedo * fresnel * behind * 0.5;
+      let fresnel: f32 = pow(1.0 - max(dot(N, V), 0.0), 3.0);
+      let rim: f32 = fresnel * behind * v_rimStrength * 0.7;
+      Lo += vec3<f32>(rim, rim * 0.6, rim * 0.3);
     }
   }
   for (var i: i32 = 0; i < 8; i++) {
     let base: i32 = i * 5;
     let lPos: vec3<f32> = lightData[base].xyz;
-    let lInt: f32 = lightData[base].w;
+    var lInt: f32 = lightData[base].w;
     if (lInt <= 0.001) { continue; }
     let lColor: vec3<f32> = lightData[base + 1].xyz;
     let lRadius: f32 = lightData[base + 1].w;
@@ -1136,27 +1341,63 @@ fn fs_main(
     let lDir: vec3<f32> = lightData[base + 2].xyz;
     let coneInner: f32 = lightData[base + 3].x;
     let coneOuter: f32 = lightData[base + 3].y;
-    let dist: f32 = distance(v_worldPos.xy, lPos.xy);
-    if (dist > lRadius * 1.35) { continue; }
-    var atten: f32 = 1.0 - dist / lRadius;
-    if (atten <= 0.0) { continue; }
-    atten = atten * atten;
+    let pulseSpeed: f32 = lightData[base + 3].z;
+    let pulseAmt: f32 = lightData[base + 3].w;
+    let flickerSpeed: f32 = lightData[base + 4].y; // we store flickerSpeed here; flickerAmount in z
+    // 3D distance like old final
+    let toL: vec3<f32> = lPos - v_worldPos;
+    let dist: f32 = length(toL);
+    if (dist > lRadius) { continue; }
+    var atten: f32 = attenuateSprite(dist, lRadius);
     if (lType == 1) {
-      let toP: vec3<f32> = normalize(v_worldPos - vec3<f32>(lPos.xy, lPos.z));
-      let ld: vec3<f32> = normalize(lDir);
-      let cosA: f32 = dot(-toP, ld);
-      if (cosA < coneOuter) { continue; }
-      let spot: f32 = smoothstep(coneOuter, coneInner, cosA);
-      atten = atten * spot;
+      let spotDir: vec3<f32> = normalize(lDir);
+      let Ldir: vec3<f32> = normalize(toL);
+      let cosTheta: f32 = dot(-Ldir, spotDir);
+      let spotAtt: f32 = smoothstep(coneOuter, coneInner, cosTheta);
+      atten = atten * spotAtt;
     }
-    let L: vec3<f32> = normalize(lPos - v_worldPos);
+    if (lType == 2) {
+      let flick: f32 = 0.72 + 0.28 * sin(cam.time * 9.0 + f32(i) * 2.3) + 0.12 * sin(cam.time * 17.0 + f32(i));
+      atten = atten * clamp(flick, 0.45, 1.35);
+    } else if (lType == 3) {
+      var ps: f32 = pulseSpeed;
+      var pa: f32 = pulseAmt;
+      if (ps < 0.1) { ps = 2.2; }
+      if (pa < 0.01) { pa = 0.4; }
+      atten = atten * (1.0 + pa * sin(cam.time * ps + f32(i)));
+    }
+    if (atten <= 0.01) { continue; }
+    let L: vec3<f32> = toL / max(dist, 0.001);
     let NdotL: f32 = max(dot(N, L), 0.0);
-    Lo += albedo * lColor * lInt * atten * NdotL * 1.15;
+    if (NdotL > 0.0) {
+      let attenN: f32 = atten * (0.35 + 0.65 * NdotL);
+      let contrib: f32 = attenN * lInt * NdotL * 1.15;
+      Lo += albedo * contrib * lColor;
+    }
+    if (NdotL > 0.08) {
+      let H: vec3<f32> = normalize(V + L);
+      let NdotH: f32 = max(dot(N, H), 0.0);
+      if (NdotH > 0.18) {
+        let specPower: f32 = 3.0 + (1.0 - roughness) * 36.0;
+        let metalBoost: f32 = 0.2 + metal * 1.6;
+        let attenN: f32 = atten * (0.35 + 0.65 * NdotL);
+        let spec: f32 = pow(NdotH, specPower) * (1.0 - roughness) * metalBoost * max(0.1, NdotL) * attenN;
+        Lo += spec * lColor;
+      }
+    }
+    let VdotL: f32 = dot(V, L);
+    let behind: f32 = max(0.0, -VdotL);
+    let behindSide: f32 = max(0.0, -dot(N, L)) * 0.5;
+    let NdotV: f32 = max(dot(N, V), 0.0);
+    let fresnel: f32 = pow(1.0 - NdotV, 3.0);
+    let edgeNorm: f32 = length(normalTS.xy);
+    let rimBase: f32 = max(edgeNorm * 1.8, max(0.0, 1.0 - normalTS.z) * 2.0);
+    let rim: f32 = rimBase * fresnel * (behind * 0.9 + behindSide) * v_rimStrength * atten * (0.7 + metal * 0.8) * 0.35;
+    if (rim > 0.001) { Lo += vec3<f32>(rim, rim * 0.6, rim * 0.3) * lColor; }
   }
   let fog: f32 = 1.0 / (1.0 + v_dist * cam.fogBase + v_dist * v_dist * cam.fogSq);
-  let fogClamped: f32 = clamp(fog, 0.06, 1.0);
-  let fogDark: f32 = 0.55 + fogClamped * 0.45;
-  Lo = Lo * fogDark;
+  let fogClamped: f32 = clamp(fog, 0.05, 1.0);
+  Lo = Lo * fogClamped;
   var maxC: f32 = max(max(Lo.r, Lo.g), Lo.b);
   if (maxC > 1.0) {
     let over: f32 = clamp((maxC - 1.0) * 0.32, 0.0, 0.7);

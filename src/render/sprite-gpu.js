@@ -162,18 +162,19 @@ export class SpriteGpuRenderer {
         const col = L.color || [1, 1, 1];
         f32[b1] = col[0]; f32[b1 + 1] = col[1]; f32[b1 + 2] = col[2]; f32[b1 + 3] = L.radius || 5;
         const dir = L.dir || [0, 0, -1];
-        f32[b2] = dir[0]; f32[b2 + 1] = dir[1]; f32[b2 + 2] = dir[2]; f32[b2 + 3] = 0;
+        const typeMapS = { point:0, spot:1, flicker:2, pulse:3, emissive:4, ambient:5, steady:6 };
+        const typeIdS = L.typeId ?? typeMapS[L.type] ?? 0;
+        f32[b2] = dir[0]; f32[b2 + 1] = dir[1]; f32[b2 + 2] = dir[2]; f32[b2 + 3] = typeIdS;
         f32[b3] = L.coneInner ?? 0.85; f32[b3 + 1] = L.coneOuter ?? 0.65; f32[b3 + 2] = L.pulseSpeed ?? 0; f32[b3 + 3] = L.pulseAmount ?? 0;
-        f32[b4] = (L.noShadow ? 1 : 0); f32[b4 + 1] = L.flickerSpeed ?? 0; f32[b4 + 2] = L.flickerAmount ?? 0; f32[b4 + 3] = L.phase ?? 0;
+        f32[b4] = (L.noShadow ? 1 : 0); f32[b4 + 1] = L.flickerSpeed ?? 0; f32[b4 + 2] = L.flickerAmount ?? L.flickerAmt ?? 0; f32[b4 + 3] = L.phase ?? 0;
       }
       device.queue.writeBuffer(this.lightDataBuffer, 0, lbuf);
     }
 
     if (externalEncoder && targetView) {
-      const pass = externalEncoder.beginRenderPass({ colorAttachments: [{ view: targetView, loadOp: 'load', storeOp: 'store' }] });
-      pass.setPipeline(this.pipeline);
-      pass.setBindGroup(0, this.cameraBindGroup);
-      pass.setBindGroup(2, this.samplerBindGroup);
+      // Pre-build all instance data to avoid writeBuffer inside pass (WebGPU best practice)
+      const instances = [];
+      const bgs = [];
       for (const s of sorted) {
         if (s.visible === false) continue;
         const texEntry = getSpriteTextures(device, s.spriteId || s.type);
@@ -193,11 +194,26 @@ export class SpriteGpuRenderer {
         const u1 = (sx + (meta?.cropW || meta?.cellW || 64)) / atlasW; const v1 = (sy + (meta?.cropH || meta?.cellH || 64)) / atlasH;
         const worldH = s.worldHeight ?? (meta?.worldHeight || 0.58) * (s.scale || 1);
         const worldW = s.worldWidth ?? worldH * (meta?.worldWidthFactor || 0.43);
-        const inst = new Float32Array([s.x, s.y, s.z || 0, worldW, worldH, u0, v0, u1, v1, s.alpha ?? 1, 2.2, 1.2]);
-        device.queue.writeBuffer(this.instanceBuffer, 0, inst.buffer, inst.byteOffset, inst.byteLength);
-        pass.setVertexBuffer(0, this.quadBuffer);
-        pass.setVertexBuffer(1, this.instanceBuffer);
-        pass.setBindGroup(1, bg);
+        const normalStrength = s.material?.normalStrength ?? meta?.material?.normalStrength ?? 2.2;
+        const rimStrength = s.material?.rimStrength ?? meta?.material?.rimStrength ?? 1.2;
+        const inst = new Float32Array([s.x, s.y, s.z || 0, worldW, worldH, u0, v0, u1, v1, s.alpha ?? 1, normalStrength, rimStrength]);
+        instances.push(inst);
+        bgs.push(bg);
+      }
+      if (instances.length > 0) {
+        // Batch write instances into buffer with offsets
+        for (let i = 0; i < instances.length; i++) {
+          device.queue.writeBuffer(this.instanceBuffer, i * 12 * 4, instances[i].buffer, instances[i].byteOffset, instances[i].byteLength);
+        }
+      }
+      const pass = externalEncoder.beginRenderPass({ colorAttachments: [{ view: targetView, loadOp: 'load', storeOp: 'store' }] });
+      pass.setPipeline(this.pipeline);
+      pass.setBindGroup(0, this.cameraBindGroup);
+      pass.setBindGroup(2, this.samplerBindGroup);
+      pass.setVertexBuffer(0, this.quadBuffer);
+      for (let i = 0; i < instances.length; i++) {
+        pass.setVertexBuffer(1, this.instanceBuffer, i * 12 * 4, 12 * 4);
+        pass.setBindGroup(1, bgs[i]);
         pass.draw(6, 1, 0, 0);
       }
       pass.end();

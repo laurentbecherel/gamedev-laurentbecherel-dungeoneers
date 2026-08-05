@@ -1,5 +1,5 @@
 export const wgslMaterial = `
-// ----- material helpers (array path) – uses textureLoad to avoid uniform control flow restriction
+// ----- material helpers (array path) – uses textureSampleLevel with explicit LOD to restore bilinear filtering like old GLSL texture()
 fn decodeNormal(enc: vec3<f32>) -> vec3<f32> {
   return normalize(enc * 2.0 - 1.0);
 }
@@ -12,61 +12,44 @@ fn clampLayer(id: f32, count: f32) -> i32 {
   return i32(l);
 }
 
-// Use textureLoad for array textures – avoids "must only be called from uniform control flow"
-// Assumes texture size 64x64 (our material gen) – UV 0..1 -> i32(uv*64)
+// Restore bilinear filtering via textureSampleLevel (explicit LOD 0) – allowed in non-uniform flow in WGSL fragment
 fn sampleWallAlbedo(layer: i32, uv: vec2<f32>) -> vec3<f32> {
-  let size = 64;
-  let c = vec2<i32>(vec2<f32>(clamp(uv, vec2<f32>(0.0), vec2<f32>(0.999)) * f32(size)));
-  return textureLoad(wallAlbedo, c, u32(layer), 0).rgb;
+  return textureSampleLevel(wallAlbedo, linearSampler, uv, u32(layer), 0.0).rgb;
 }
 fn sampleWallNormalRaw(layer: i32, uv: vec2<f32>) -> vec3<f32> {
-  let size = 64;
-  let c = vec2<i32>(vec2<f32>(clamp(uv, vec2<f32>(0.0), vec2<f32>(0.999)) * f32(size)));
-  return textureLoad(wallNormal, c, u32(layer), 0).rgb;
+  return textureSampleLevel(wallNormal, linearSampler, uv, u32(layer), 0.0).rgb;
 }
 fn sampleWallHeight(layer: i32, uv: vec2<f32>) -> f32 {
-  let size = 64;
-  let c = vec2<i32>(vec2<f32>(clamp(uv, vec2<f32>(0.0), vec2<f32>(0.999)) * f32(size)));
-  return textureLoad(wallHeight, c, u32(layer), 0).r;
+  return textureSampleLevel(wallHeight, linearSampler, uv, u32(layer), 0.0).r;
 }
 fn sampleWallRMA(layer: i32, uv: vec2<f32>) -> vec4<f32> {
-  let size = 64;
-  let c = vec2<i32>(vec2<f32>(clamp(uv, vec2<f32>(0.0), vec2<f32>(0.999)) * f32(size)));
-  return textureLoad(wallRoughMetal, c, u32(layer), 0);
+  return textureSampleLevel(wallRoughMetal, linearSampler, uv, u32(layer), 0.0);
 }
 
 fn sampleFloorAlbedo(layer: i32, uv: vec2<f32>) -> vec3<f32> {
-  let size = 64; let c = vec2<i32>(vec2<f32>(clamp(uv, vec2<f32>(0.0), vec2<f32>(0.999)) * f32(size)));
-  return textureLoad(floorAlbedo, c, u32(layer), 0).rgb;
+  return textureSampleLevel(floorAlbedo, linearSampler, uv, u32(layer), 0.0).rgb;
 }
 fn sampleFloorNormalRaw(layer: i32, uv: vec2<f32>) -> vec3<f32> {
-  let size = 64; let c = vec2<i32>(vec2<f32>(clamp(uv, vec2<f32>(0.0), vec2<f32>(0.999)) * f32(size)));
-  return textureLoad(floorNormal, c, u32(layer), 0).rgb;
+  return textureSampleLevel(floorNormal, linearSampler, uv, u32(layer), 0.0).rgb;
 }
 fn sampleFloorHeight(layer: i32, uv: vec2<f32>) -> f32 {
-  let size = 64; let c = vec2<i32>(vec2<f32>(clamp(uv, vec2<f32>(0.0), vec2<f32>(0.999)) * f32(size)));
-  return textureLoad(floorHeight, c, u32(layer), 0).r;
+  return textureSampleLevel(floorHeight, linearSampler, uv, u32(layer), 0.0).r;
 }
 fn sampleFloorRMA(layer: i32, uv: vec2<f32>) -> vec4<f32> {
-  let size = 64; let c = vec2<i32>(vec2<f32>(clamp(uv, vec2<f32>(0.0), vec2<f32>(0.999)) * f32(size)));
-  return textureLoad(floorRoughMetal, c, u32(layer), 0);
+  return textureSampleLevel(floorRoughMetal, linearSampler, uv, u32(layer), 0.0);
 }
 
 fn sampleCeilAlbedo(layer: i32, uv: vec2<f32>) -> vec3<f32> {
-  let size = 64; let c = vec2<i32>(vec2<f32>(clamp(uv, vec2<f32>(0.0), vec2<f32>(0.999)) * f32(size)));
-  return textureLoad(ceilAlbedo, c, u32(layer), 0).rgb;
+  return textureSampleLevel(ceilAlbedo, linearSampler, uv, u32(layer), 0.0).rgb;
 }
 fn sampleCeilNormalRaw(layer: i32, uv: vec2<f32>) -> vec3<f32> {
-  let size = 64; let c = vec2<i32>(vec2<f32>(clamp(uv, vec2<f32>(0.0), vec2<f32>(0.999)) * f32(size)));
-  return textureLoad(ceilNormal, c, u32(layer), 0).rgb;
+  return textureSampleLevel(ceilNormal, linearSampler, uv, u32(layer), 0.0).rgb;
 }
 fn sampleCeilHeight(layer: i32, uv: vec2<f32>) -> f32 {
-  let size = 64; let c = vec2<i32>(vec2<f32>(clamp(uv, vec2<f32>(0.0), vec2<f32>(0.999)) * f32(size)));
-  return textureLoad(ceilHeight, c, u32(layer), 0).r;
+  return textureSampleLevel(ceilHeight, linearSampler, uv, u32(layer), 0.0).r;
 }
 fn sampleCeilRMA(layer: i32, uv: vec2<f32>) -> vec4<f32> {
-  let size = 64; let c = vec2<i32>(vec2<f32>(clamp(uv, vec2<f32>(0.0), vec2<f32>(0.999)) * f32(size)));
-  return textureLoad(ceilRoughMetal, c, u32(layer), 0);
+  return textureSampleLevel(ceilRoughMetal, linearSampler, uv, u32(layer), 0.0);
 }
 
 fn fetchFloorMatId(cell: vec2<i32>) -> f32 {

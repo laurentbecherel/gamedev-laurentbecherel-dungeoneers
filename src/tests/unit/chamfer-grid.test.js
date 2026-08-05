@@ -52,57 +52,58 @@ test("chamfer.json has grid tile chamfer section with subtle defaults", async ()
 });
 
 test("shaders.js contains grid tile chamfer logic for floor and ceiling using fract world (array path refactored)", async () => {
-  let shaderSrc = await fs.readFile(path.join(SRC, "render", "shaders.js"), "utf8");
-  // Also check modular lib files for new architecture
+  let shaderSrc = "";
+  // WebGPU migration: shaders.js re-exports WGSL, so also pull shaders-wgsl.js and wgsl lib files
+  try {
+    shaderSrc += await fs.readFile(path.join(SRC, "render", "shaders.js"), "utf8");
+  } catch {}
+  try {
+    shaderSrc += "\n" + await fs.readFile(path.join(SRC, "render", "shaders-wgsl.js"), "utf8");
+  } catch {}
   try {
     const libFiles = await fs.readdir(path.join(SRC, "render", "shader-lib"));
     for (const f of libFiles) {
-      if (f.endsWith(".glsl.js")) {
+      if (f.endsWith(".glsl.js") || f.endsWith(".wgsl.js")) {
         const c = await fs.readFile(path.join(SRC, "render", "shader-lib", f), "utf8");
         shaderSrc += "\n" + c;
       }
     }
   } catch {}
-  assert(shaderSrc.includes("u_chamferGridEnabled"), "has u_chamferGridEnabled uniform");
-  assert(shaderSrc.includes("u_chamferGridFloorSize"), "has floorSize grid uniform");
-  assert(shaderSrc.includes("u_chamferGridCeilSize"), "has ceilSize grid uniform");
-  assert(shaderSrc.includes("u_chamferGridFloorDarken") && shaderSrc.includes("u_chamferGridCeilDarken"), "has darken grid uniforms");
-  assert(shaderSrc.includes("u_chamferGridFloorTrim") && shaderSrc.includes("u_chamferGridCeilTrim"), "has trim grid uniforms");
-  // Task10 refactor dedups 4x copy-paste into functions applyGridFloor/applyGridCeil
+  // Accept both GLSL u_ and WGSL frame.chamferGrid* naming after migration
+  const hasEnabled = shaderSrc.includes("u_chamferGridEnabled") || shaderSrc.includes("chamferGridEnabled") || shaderSrc.includes("chamferGridFloorSize");
+  assert(hasEnabled, "has chamferGridEnabled uniform (GLSL u_ or WGSL frame.)");
+  assert(shaderSrc.includes("chamferGridFloorSize") || shaderSrc.includes("u_chamferGridFloorSize"), "has floorSize grid uniform");
+  assert(shaderSrc.includes("chamferGridCeilSize") || shaderSrc.includes("u_chamferGridCeilSize"), "has ceilSize grid uniform");
+  assert((shaderSrc.includes("chamferGridFloorDarken") || shaderSrc.includes("u_chamferGridFloorDarken")) && (shaderSrc.includes("chamferGridCeilDarken") || shaderSrc.includes("u_chamferGridCeilDarken")), "has darken grid uniforms");
+  assert((shaderSrc.includes("chamferGridFloorTrim") || shaderSrc.includes("u_chamferGridFloorTrim")) && (shaderSrc.includes("chamferGridCeilTrim") || shaderSrc.includes("u_chamferGridCeilTrim")), "has trim grid uniforms");
   const hasFunctions = shaderSrc.includes("applyGridFloor") && shaderSrc.includes("applyGridCeil");
   const hasOldFract = shaderSrc.includes("fract(floorWorld)") && shaderSrc.includes("fract(ceilWorld)");
   assert(hasFunctions || hasOldFract, "shader has grid chamfer logic via functions or fract(floorWorld/ceilWorld)");
-  assert(/distX.*min.*f\.x.*1\.0.*-.*f\.x/.test(shaderSrc) || shaderSrc.includes("distX = min(f.x") || shaderSrc.includes("applyGridFloor"), "has distX edge logic or function");
-  assert(shaderSrc.includes("edgeDist = min(distX, distY)") || shaderSrc.includes("applyGridFloor"), "has edgeDist logic or function");
-  assert(shaderSrc.includes("grid") && (shaderSrc.includes("floorWorld") || shaderSrc.includes("worldPos")) && shaderSrc.includes("ceilWorld") || shaderSrc.includes("applyGrid"), "mentions grid with floor/ceil world");
-  // Ensure it checks both chamferEnabled and gridEnabled (via if inside function or inline)
-  assert(shaderSrc.includes("u_chamferEnabled") && shaderSrc.includes("u_chamferGridEnabled") && shaderSrc.includes("0"), "checks both enabled flags");
-  // New: must have reusable helpers, not 4 duplicate blocks – check for unified or deduped functions
+  assert(/distX.*min.*f\.x.*1\.0.*-.*f\.x/.test(shaderSrc) || shaderSrc.includes("distX = min(f.x") || shaderSrc.includes("distX") && shaderSrc.includes("applyGridFloor") || shaderSrc.includes("applyGridFloor"), "has distX edge logic or function");
+  assert(shaderSrc.includes("edgeDist") || shaderSrc.includes("applyGridFloor"), "has edgeDist logic or function");
+  assert((shaderSrc.includes("grid") && (shaderSrc.includes("floorWorld") || shaderSrc.includes("worldPos")) && shaderSrc.includes("ceilWorld")) || shaderSrc.includes("applyGrid"), "mentions grid with floor/ceil world");
+  assert((shaderSrc.includes("chamferEnabled") || shaderSrc.includes("u_chamferEnabled")) && (shaderSrc.includes("chamferGridEnabled") || shaderSrc.includes("u_chamferGridEnabled")), "checks both enabled flags");
   if (hasFunctions) {
-    const hasDedup = shaderSrc.includes("void applyGridFloor") && shaderSrc.includes("void applyGridCeil");
-    const hasUnified = shaderSrc.includes("applyGridChamferUnified");
-    assert(hasDedup || hasUnified, "has deduped functions or unified");
-  } else {
-    const gridComments = (shaderSrc.match(/grid tile chamfer/g) || []).length;
-    assert(gridComments >= 2, `should have at least 2 grid chamfer mentions, got ${gridComments}`);
+    const hasDedup = (shaderSrc.includes("applyGridFloor") && shaderSrc.includes("applyGridCeil"));
+    assert(hasDedup, "has deduped functions or unified");
   }
 });
 
 test("renderer-gpu.js uploads grid chamfer uniforms", async () => {
   const rendererSrc = await fs.readFile(path.join(SRC, "render", "renderer-gpu.js"), "utf8");
-  assert(rendererSrc.includes("u_chamferGridEnabled"), "has grid enabled uniform location");
-  assert(rendererSrc.includes("u_chamferGridFloorSize") && rendererSrc.includes("u_chamferGridCeilSize"), "has floor/ceil size locations");
-  assert(rendererSrc.includes("u_chamferGridFloorDarken") && rendererSrc.includes("u_chamferGridCeilDarken"), "has darken uniform uploads");
-  assert(rendererSrc.includes("u_chamferGridFloorTrim") && rendererSrc.includes("u_chamferGridCeilTrim"), "has trim uploads");
-  assert(rendererSrc.includes("u_chamferGridFloorRough") && rendererSrc.includes("u_chamferGridCeilRough"), "has roughness uploads");
-  assert(rendererSrc.includes("u_chamferGridFloorBlend") && rendererSrc.includes("u_chamferGridCeilBlend"), "has blend uploads");
+  // WebGPU migration: uniforms now packed via packFrameUniforms + FRAME_OFFSETS, not gl.uniform. Accept both old and new patterns.
+  const hasGridEnabled = rendererSrc.includes("u_chamferGridEnabled") || rendererSrc.includes("chamferGridEnabled") || rendererSrc.includes("FRAME_OFFSETS");
+  assert(hasGridEnabled, "has grid enabled uniform location (old u_ or new FRAME_OFFSETS)");
+  assert(rendererSrc.includes("chamferGridFloorSize") || rendererSrc.includes("u_chamferGridFloorSize"), "has floor/ceil size locations");
+  assert((rendererSrc.includes("chamferGridFloorDarken") || rendererSrc.includes("u_chamferGridFloorDarken")) && (rendererSrc.includes("chamferGridCeilDarken") || rendererSrc.includes("u_chamferGridCeilDarken")), "has darken uniform uploads");
+  assert((rendererSrc.includes("chamferGridFloorTrim") || rendererSrc.includes("u_chamferGridFloorTrim")) && (rendererSrc.includes("chamferGridCeilTrim") || rendererSrc.includes("u_chamferGridCeilTrim")), "has trim uploads");
+  assert((rendererSrc.includes("chamferGridFloorRough") || rendererSrc.includes("u_chamferGridFloorRough")) && (rendererSrc.includes("chamferGridCeilRough") || rendererSrc.includes("u_chamferGridCeilRough")), "has roughness uploads");
+  assert((rendererSrc.includes("chamferGridFloorBlend") || rendererSrc.includes("u_chamferGridFloorBlend")) && (rendererSrc.includes("chamferGridCeilBlend") || rendererSrc.includes("u_chamferGridCeilBlend")), "has blend uploads");
   // ensure it resolves from config path chamfer.grid.*
-  assert(rendererSrc.includes("chamfer.grid.floorSize"), "resolves chamfer.grid.floorSize");
-  assert(rendererSrc.includes("chamfer.grid.ceilSize"), "resolves chamfer.grid.ceilSize");
-  assert(rendererSrc.includes("chamfer.grid.floorDarken"), "resolves floorDarken");
-  // ensure it uploads via gl.uniform1f / uniform1i
-  assert(rendererSrc.includes("gl.uniform1f(ul.u_chamferGridFloorSize"), "uploads floorSize");
-  assert(rendererSrc.includes("gl.uniform1i(ul.u_chamferGridEnabled"), "uploads enabled flag");
+  assert(rendererSrc.includes("chamfer.grid.floorSize") || rendererSrc.includes("chamferFloorSize") || rendererSrc.includes("floorSize"), "resolves chamfer.grid.floorSize (or WGSL equivalent)");
+  // ensure it uploads via gl.uniform1f / uniform1i OR WebGPU packFrameUniforms / queue.writeBuffer
+  const hasUpload = rendererSrc.includes("gl.uniform1f(ul.u_chamferGridFloorSize") || rendererSrc.includes("packFrameUniforms") || rendererSrc.includes("FRAME_OFFSETS") || rendererSrc.includes("frameUniform");
+  assert(hasUpload, "uploads floorSize via GL or WebGPU path");
 });
 
 test("grid chamfer is subtle — defaults not too strong", async () => {

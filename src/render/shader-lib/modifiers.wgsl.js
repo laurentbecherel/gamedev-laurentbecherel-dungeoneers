@@ -1,5 +1,5 @@
-// WGSL port of modifiers.glsl.js – UBO 34 vec4 + moss/damaged/puddle decomposition
-// Simplified but preserves all public function names and tunable behavior for tests/game.
+// WGSL port of modifiers.glsl.js – UBO 34 vec4 + exact moss/damaged/puddle from 632b7f2
+// Preserves all public function names. Uses linearSampler for smooth modifier maps (matches old texture() LINEAR).
 
 export const wgslModifiers = `
 // UBO v26 - 34 vec4 = 544 bytes
@@ -89,6 +89,8 @@ fn fbm3D_3(p: vec3<f32>) -> f32 { return valueNoise3D(p) * 0.5 + valueNoise3D(p 
 fn fbm2D_2(p: vec2<f32>) -> f32 { return valueNoise2D(p) * 0.5 + valueNoise2D(p * 2.0) * 0.25; }
 fn fbm2D_3(p: vec2<f32>) -> f32 { return valueNoise2D(p) * 0.5 + valueNoise2D(p * 2.0) * 0.25 + valueNoise2D(p * 4.0) * 0.125; }
 fn fbm2D_4(p: vec2<f32>) -> f32 { return valueNoise2D(p) * 0.5 + valueNoise2D(p * 2.0) * 0.25 + valueNoise2D(p * 4.0) * 0.125 + valueNoise2D(p * 8.0) * 0.0625; }
+fn fbm2D(p: vec2<f32>, o: i32) -> f32 { if (o <= 2) { return fbm2D_2(p); } return fbm2D_3(p); }
+fn fbm(p: vec2<f32>) -> f32 { return fbm2D_3(p); }
 
 fn puddleNoise(worldXY: vec2<f32>, scaleLarge: f32) -> vec3<f32> {
   let w: vec2<f32> = vec2<f32>(fbm2D_2(worldXY * 0.12), fbm2D_2(worldXY * 0.12 + vec2<f32>(7.3, 3.1))) * 0.9;
@@ -98,6 +100,35 @@ fn puddleNoise(worldXY: vec2<f32>, scaleLarge: f32) -> vec3<f32> {
   let nSmall: f32 = valueNoise2D(worldXY * 0.52 + vec2<f32>(5.1, 2.9));
   let cloud: f32 = nLarge * 0.60 + nMed * 0.28 + nSmall * 0.12;
   return vec3<f32>(cloud, nMed, nSmall);
+}
+fn puddleCloudFBM(worldXY: vec2<f32>, scaleLarge: f32) -> f32 { return puddleNoise(worldXY, scaleLarge).x; }
+
+fn computePuddleMask(worldPos: vec3<f32>, matHeight: f32, ao: f32, puddleCell: f32, scaleLarge: f32, threshold: f32, feather: f32, heightInfluence: f32, groutParams: vec4<f32>, worldParams: vec4<f32>) -> f32 {
+  let cellLow: f32 = modifiersBlock.modBloodAlbedoMix.x;
+  let cellHigh: f32 = modifiersBlock.modBloodAlbedoMix.y;
+  let cellEps: f32 = modifiersBlock.modBloodAlbedoMix.z;
+  let cellSoft: f32 = smoothstep(cellLow, cellHigh, puddleCell);
+  if (cellSoft < cellEps) { return 0.0; }
+  let worldXY: vec2<f32> = worldPos.xy;
+  var noise: vec3<f32> = puddleNoise(worldXY, scaleLarge);
+  let nLarge: f32 = noise.x; let nMed: f32 = noise.y; let nSmall: f32 = noise.z;
+  let lowTh: f32 = threshold - feather; let highTh: f32 = threshold + feather;
+  var poolShape: f32 = smoothstep(lowTh, highTh, nLarge);
+  poolShape = poolShape * mix(0.45, 1.0, nMed) * mix(0.75, 1.0, nSmall);
+  let hLow: f32 = groutParams.x; let hHigh: f32 = groutParams.y; let aoLow: f32 = groutParams.z; let aoHigh: f32 = groutParams.w;
+  let heightGrout: f32 = 1.0 - smoothstep(hLow, hHigh, matHeight);
+  let aoGrout: f32 = 1.0 - smoothstep(aoLow, aoHigh, ao);
+  let groove: f32 = max(heightGrout, aoGrout * 0.6);
+  let grooveMin: f32 = worldParams.w;
+  let grooveBias: f32 = mix(1.0, mix(grooveMin, 1.0, groove), clamp(heightInfluence, 0.0, 1.0));
+  let worldHigh: f32 = worldParams.x; let worldLow: f32 = worldParams.y; let boost: f32 = worldParams.z;
+  let worldLowVal: f32 = smoothstep(worldHigh, worldLow, worldPos.z);
+  let worldBias: f32 = mix(0.70, 1.0, worldLowVal);
+  var mask: f32 = cellSoft * poolShape * grooveBias * worldBias;
+  mask = clamp(mask * boost, 0.0, 1.0);
+  mask = mask * mask * (3.0 - 2.0 * mask);
+  mask = mask * (0.80 + 0.20 * nSmall);
+  return mask;
 }
 
 fn computePuddleMaskTweakable(worldPos: vec3<f32>, matHeight: f32, ao: f32, puddleCell: f32) -> f32 {
@@ -109,36 +140,9 @@ fn computePuddleMaskTweakable(worldPos: vec3<f32>, matHeight: f32, ao: f32, pudd
   let scaleLarge: f32 = modifiersBlock.modPuddleParams.y;
   let threshold: f32 = modifiersBlock.modPuddleParams.z;
   let feather: f32 = modifiersBlock.modPuddleParams.w;
-  let grooveMin: f32 = modifiersBlock.modDustParams.y;
-  let hLow: f32 = modifiersBlock.modMossParams.x;
-  let hHigh: f32 = modifiersBlock.modMossParams.y;
-  let aoLow: f32 = modifiersBlock.modMossParams.z;
-  let aoHigh: f32 = modifiersBlock.modMossParams.w;
-  let worldHigh: f32 = modifiersBlock.modWaterParams.x;
-  let worldLow: f32 = modifiersBlock.modWaterParams.y;
-  let boost: f32 = modifiersBlock.modWaterParams.z;
-  let worldPosXY: vec2<f32> = worldPos.xy;
-  var n: vec3<f32> = puddleNoise(worldPosXY, scaleLarge);
-  let nLarge: f32 = n.x; let nMed: f32 = n.y; let nSmall: f32 = n.z;
-  let lowTh: f32 = threshold - feather; let highTh: f32 = threshold + feather;
-  var poolShape: f32 = smoothstep(lowTh, highTh, nLarge);
-  poolShape = poolShape * mix(0.45, 1.0, nMed) * mix(0.75, 1.0, nSmall);
-  let heightGrout: f32 = 1.0 - smoothstep(hLow, hHigh, matHeight);
-  let aoGrout: f32 = 1.0 - smoothstep(aoLow, aoHigh, ao);
-  let groove: f32 = max(heightGrout, aoGrout * 0.6);
-  let grooveBias: f32 = mix(1.0, mix(grooveMin, 1.0, groove), clamp(modifiersBlock.modBloodParams.z, 0.0, 1.0));
-  let worldLowVal: f32 = smoothstep(worldHigh, worldLow, worldPos.z);
-  let worldBias: f32 = mix(0.70, 1.0, worldLowVal);
-  var mask: f32 = cellSoft * poolShape * grooveBias * worldBias;
-  mask = clamp(mask * boost, 0.0, 1.0);
-  mask = mask * mask * (3.0 - 2.0 * mask);
-  mask = mask * (0.80 + 0.20 * nSmall);
-  return mask;
-}
-
-fn computePuddleMask(worldPos: vec3<f32>, matHeight: f32, ao: f32, puddleCell: f32, scaleLarge: f32, threshold: f32, feather: f32, heightInfluence: f32, groutParams: vec4<f32>, worldParams: vec4<f32>) -> f32 {
-  // wrapper using tweakable inside for simplicity
-  return computePuddleMaskTweakable(worldPos, matHeight, ao, puddleCell);
+  let groutParams: vec4<f32> = modifiersBlock.modMossParams;
+  let worldParams: vec4<f32> = modifiersBlock.modWaterParams;
+  return computePuddleMask(worldPos, matHeight, ao, puddleCell, scaleLarge, threshold, feather, modifiersBlock.modBloodParams.z, groutParams, worldParams);
 }
 
 // ----- Moss -----
@@ -153,15 +157,11 @@ fn isWallAt(cell: vec2<i32>) -> f32 {
 }
 
 fn mossBiomeMask(worldXY: vec2<f32>) -> f32 {
-  // Use textureLoad to avoid uniform flow restriction – compute integer coord from world and mapSize
-  let mapSizeF = frame.mapSize;
-  let uv = worldXY / mapSizeF;
-  // Convert uv to pixel coord
-  let texSize = vec2<i32>(i32(mapSizeF.x), i32(mapSizeF.y));
-  var coord = vec2<i32>(vec2<f32>(clamp(uv, vec2<f32>(0.0), vec2<f32>(0.999)) * mapSizeF));
-  coord = vec2<i32>(clamp(coord, vec2<i32>(0), texSize - vec2<i32>(1)));
-  return textureLoad(modifierMap, coord, 0).r;
+  let uv: vec2<f32> = worldXY / frame.mapSize;
+  // Use SampleLevel to avoid derivative uniform-flow issues but keep bilinear like old texture() LINEAR
+  return textureSampleLevel(modifierMap, linearSampler, uv, 0.0).r;
 }
+fn mossBiomeMaskWS(worldPos: vec3<f32>) -> f32 { return mossBiomeMask(worldPos.xy); }
 
 fn mossNoiseRaw(worldPos: vec3<f32>) -> f32 {
   let scale: f32 = mossDefault(modifiersBlock.modMossAlbedoRough.z, 2.95);
@@ -181,18 +181,10 @@ fn mossNoiseShape(worldPos: vec3<f32>) -> f32 {
 }
 
 fn loadModifierMap(uv: vec2<f32>) -> vec4<f32> {
-  let mapSizeF = frame.mapSize;
-  let texSize = vec2<i32>(i32(mapSizeF.x), i32(mapSizeF.y));
-  var coord = vec2<i32>(vec2<f32>(clamp(uv, vec2<f32>(0.0), vec2<f32>(0.999))*mapSizeF));
-  coord = vec2<i32>(clamp(coord, vec2<i32>(0), texSize - vec2<i32>(1)));
-  return textureLoad(modifierMap, coord, 0);
+  return textureSampleLevel(modifierMap, linearSampler, uv, 0.0);
 }
 fn loadModifierMap2(uv: vec2<f32>) -> vec4<f32> {
-  let mapSizeF = frame.mapSize;
-  let texSize = vec2<i32>(i32(mapSizeF.x), i32(mapSizeF.y));
-  var coord = vec2<i32>(vec2<f32>(clamp(uv, vec2<f32>(0.0), vec2<f32>(0.999))*mapSizeF));
-  coord = vec2<i32>(clamp(coord, vec2<i32>(0), texSize - vec2<i32>(1)));
-  return textureLoad(modifierMap2, coord, 0);
+  return textureSampleLevel(modifierMap2, linearSampler, uv, 0.0);
 }
 
 fn mossEnvMask(worldPos: vec3<f32>, isFloorSurface: f32) -> f32 {
@@ -302,25 +294,40 @@ fn mossFinalMask(worldPos: vec3<f32>, matHeight: f32, ao: f32, rough: f32, isFlo
   let envMod: f32 = mix(envBase, 1.0, env);
   let matMod: f32 = mix(matBase, 1.0, mat);
   let biomeMod: f32 = mix(biomeBase, 1.0, biome);
+  let noiseMod: f32 = noise;
 
+  var noiseWMax: f32 = noiseMod * max(noiseW, 0.001);
+  var envWMax: f32 = envMod * max(envW, 0.001);
+  var matWMax: f32 = matMod * max(matW, 0.001);
+  var biomeWMax: f32 = biomeMod * max(biomeW, 0.001);
+  var maxMaskMod: f32 = max(max(noiseWMax, envWMax), max(matWMax, biomeWMax));
   var maxMaskRaw: f32 = max(max(noise * noiseW, env * envW), max(mat * matW, biome * biomeW));
+
   let wSum: f32 = max(0.001, noiseW + envW + matW + biomeW);
-  let addMaskRaw: f32 = (noise * noiseW + env * envW + mat * matW + biome * biomeW) / wSum;
+  var addMaskMod: f32 = (noiseMod * noiseW + envMod * envW + matMod * matW + biomeMod * biomeW) / wSum;
+  var addMaskRaw: f32 = (noise * noiseW + env * envW + mat * matW + biome * biomeW) / wSum;
+
+  var noiseMulRaw: f32 = mix(1.0, noise, step(0.001, noiseW));
+  var envMulRaw: f32 = mix(1.0, env, step(0.001, envW));
+  var matMulRaw: f32 = mix(1.0, mat, step(0.001, matW));
+  var biomeMulRaw: f32 = mix(1.0, biome, step(0.001, biomeW));
+  var mulMaskRaw: f32 = noiseMulRaw * envMulRaw * matMulRaw * biomeMulRaw;
+
+  var noiseMulMod: f32 = mix(1.0, noiseMod, step(0.001, noiseW));
+  var envMulMod: f32 = mix(1.0, envMod, step(0.001, envW));
+  var matMulMod: f32 = mix(1.0, matMod, step(0.001, matW));
+  var biomeMulMod: f32 = mix(1.0, biomeMod, step(0.001, biomeW));
+  var mulMaskMod: f32 = noiseMulMod * envMulMod * matMulMod * biomeMulMod;
 
   var finalM: f32;
   if (combineFinal < 0.33) {
     let t: f32 = combineFinal / 0.33;
-    finalM = mix(maxMaskRaw, addMaskRaw, t);
+    finalM = mix(maxMaskMod, addMaskMod, t);
   } else if (combineFinal < 0.66) {
     let t: f32 = (combineFinal - 0.33) / 0.33;
-    finalM = addMaskRaw;
+    finalM = mix(addMaskMod, addMaskRaw, t);
   } else {
     let t: f32 = (combineFinal - 0.66) / 0.34;
-    let noiseMulRaw: f32 = mix(1.0, noise, step(0.001, noiseW));
-    let envMulRaw: f32 = mix(1.0, env, step(0.001, envW));
-    let matMulRaw: f32 = mix(1.0, mat, step(0.001, matW));
-    let biomeMulRaw: f32 = mix(1.0, biome, step(0.001, biomeW));
-    let mulMaskRaw: f32 = noiseMulRaw * envMulRaw * matMulRaw * biomeMulRaw;
     finalM = mix(addMaskRaw, mulMaskRaw, t);
   }
 
@@ -367,14 +374,10 @@ fn debugMossCombinedCol(worldPos: vec3<f32>, matHeight: f32, ao: f32, rough: f32
   return vec3<f32>(0.18, 0.68, 0.18) * f * 1.6;
 }
 
-// Damaged – simplified
+// Damaged – chaotic multi-octave (exact from 632b7f2: dual ridge + cross scratch)
 fn damagedBiomeMask(w: vec2<f32>) -> f32 {
-  let mapSizeF = frame.mapSize;
-  let uv = w / mapSizeF;
-  let texSize = vec2<i32>(i32(mapSizeF.x), i32(mapSizeF.y));
-  var coord = vec2<i32>(vec2<f32>(clamp(uv, vec2<f32>(0.0), vec2<f32>(0.999)) * mapSizeF));
-  coord = vec2<i32>(clamp(coord, vec2<i32>(0), texSize - vec2<i32>(1)));
-  return textureLoad(modifierMap2, coord, 0).r;
+  let uv: vec2<f32> = w / frame.mapSize;
+  return textureSampleLevel(modifierMap2, linearSampler, uv, 0.0).r;
 }
 
 fn damagedNoiseRaw(w: vec3<f32>) -> f32 {
@@ -384,28 +387,52 @@ fn damagedNoiseRaw(w: vec3<f32>) -> f32 {
   let warp1: f32 = fbm2D_2(wp * 0.35 + vec2<f32>(1.1, 2.2)) * warpS;
   let warp2: f32 = fbm2D_2(wp * 0.35 + vec2<f32>(7.7, 3.1)) * warpS;
   var p: vec2<f32> = wp + vec2<f32>(warp1, warp2) * 1.2;
-  var lSc: f32 = 1.0; var mSc: f32 = 2.4; var sSc: f32 = 5.8; var crackSc: f32 = 3.2;
+
   let dScalesZero: f32 = step(length(modifiersBlock.modDamagedScales), 0.0001);
-  lSc = mix(modifiersBlock.modDamagedScales.x, lSc, dScalesZero);
-  mSc = mix(modifiersBlock.modDamagedScales.y, mSc, dScalesZero);
-  sSc = mix(modifiersBlock.modDamagedScales.z, sSc, dScalesZero);
-  crackSc = mix(modifiersBlock.modDamagedScales.w, crackSc, dScalesZero);
+  var lSc: f32 = mix(modifiersBlock.modDamagedScales.x, 1.0, dScalesZero);
+  var mSc: f32 = mix(modifiersBlock.modDamagedScales.y, 2.4, dScalesZero);
+  var sSc: f32 = mix(modifiersBlock.modDamagedScales.z, 5.8, dScalesZero);
+  var crackSc: f32 = mix(modifiersBlock.modDamagedScales.w, 3.2, dScalesZero);
+
   let nLarge: f32 = fbm2D_3(p * lSc + vec2<f32>(w.z * 0.20, w.z * 0.12));
   let nMed: f32 = valueNoise2D(p * mSc + vec2<f32>(11.3, 23.7) + vec2<f32>(w.z * 0.4, 0.0));
   let nSmall: f32 = valueNoise2D(p * sSc + vec2<f32>(5.1, 2.9) + vec2<f32>(w.z * 0.6, 0.0));
+
   let crackRaw: f32 = valueNoise2D(p * crackSc + vec2<f32>(19.1, 7.7) + vec2<f32>(w.z * 0.7, 0.0));
   var ridge: f32 = 1.0 - abs(crackRaw * 2.0 - 1.0);
-  ridge = ridge * ridge * mossDefault(modifiersBlock.modDamagedCrack.x, 1.0);
-  let lW: f32 = 0.45; let mW: f32 = 0.28; let sW: f32 = 0.15; let cW: f32 = 0.38;
-  let combined: f32 = nLarge * lW + nMed * mW + nSmall * sW + ridge * cW;
+  ridge = ridge * ridge;
+  let ridgeStr: f32 = mossDefault(modifiersBlock.modDamagedCrack.x, 1.0);
+  ridge = ridge * ridgeStr;
+
+  let crack2: f32 = valueNoise2D(p * crackSc * 1.7 + vec2<f32>(7.7, 19.1) + vec2<f32>(w.z * 0.25, w.z * 0.5));
+  var ridge2: f32 = 1.0 - abs(crack2 * 2.0 - 1.0);
+  ridge2 = ridge2 * ridge2 * ridgeStr * 0.6;
+
+  let scratchSc: f32 = mossDefault(modifiersBlock.modDamagedCrack.y, 8.5);
+  let nA: f32 = valueNoise2D(w.xy * scratchSc + vec2<f32>(w.z * 0.7, 0.0));
+  let nB: f32 = valueNoise2D(vec2<f32>(w.y, w.x) * scratchSc * 0.7 + vec2<f32>(17.0, 3.1) + vec2<f32>(0.0, w.z * 0.3));
+  var scratch: f32 = nA * nB;
+  let scratchDet: f32 = valueNoise2D(w.xy * scratchSc * 1.7 + vec2<f32>(3.1, 7.7) + vec2<f32>(w.z * 0.4, 0.0));
+  scratch = scratch * 0.7 + scratchDet * 0.3;
+
+  let dWZero: f32 = step(length(modifiersBlock.modDamagedWeights), 0.0001);
+  var lW: f32 = mix(modifiersBlock.modDamagedWeights.x, 0.45, dWZero);
+  var mW: f32 = mix(modifiersBlock.modDamagedWeights.y, 0.28, dWZero);
+  var sW: f32 = mix(modifiersBlock.modDamagedWeights.z, 0.15, dWZero);
+  var cW: f32 = mix(modifiersBlock.modDamagedWeights.w, 0.38, dWZero);
+  var sWc: f32 = mix(modifiersBlock.modDamagedCrack.z, 0.22, dWZero);
+
+  let combined: f32 = nLarge * lW + nMed * mW + nSmall * sW + ridge * cW + ridge2 * cW * 0.5 + scratch * sWc;
   return clamp(combined, 0.0, 1.0);
 }
 
 fn damagedRidgeRaw(w: vec3<f32>) -> f32 {
-  let p: vec2<f32> = w.xy * mossDefault(modifiersBlock.modDamagedNoise.x, 2.2) * mossDefault(modifiersBlock.modDamagedScales.w, 3.2) + vec2<f32>(19.1, 7.7) + vec2<f32>(w.z * 0.4, w.z * 0.25);
+  var p: vec2<f32> = w.xy * mossDefault(modifiersBlock.modDamagedNoise.x, 2.2) * mossDefault(modifiersBlock.modDamagedScales.w, 3.2) + vec2<f32>(19.1, 7.7) + vec2<f32>(w.z * 0.4, w.z * 0.25);
   let r: f32 = valueNoise2D(p);
-  let ridge: f32 = 1.0 - abs(r * 2.0 - 1.0);
-  return ridge * ridge * 0.7;
+  var ridge: f32 = 1.0 - abs(r * 2.0 - 1.0);
+  let r2: f32 = valueNoise2D(p * 1.7 + vec2<f32>(7.7, 19.1));
+  var ridge2: f32 = 1.0 - abs(r2 * 2.0 - 1.0);
+  return ridge * ridge * 0.7 + ridge2 * ridge2 * 0.3;
 }
 
 fn damagedNoiseShape(w: vec3<f32>) -> f32 {
@@ -430,27 +457,38 @@ fn damagedFinalMask(w: vec3<f32>, mh: f32, ao: f32, ro: f32, isFloor: f32) -> f3
   let bBase: f32 = mossDefault(modifiersBlock.modDamagedFinal.x, 0.15);
   let eBase: f32 = mossDefault(modifiersBlock.modDamagedFinal.y, 0.25);
   let boost: f32 = mossDefault(modifiersBlock.modDamagedFinal.w, 1.35);
-  var f: f32 = noise * 0.7 + env * 0.2 + biome * 0.1;
-  f = f * has * boost;
-  f = clamp(f, 0.0, 1.0);
+  let nW: f32 = mossDefault(modifiersBlock.modDamagedFinalWeights.x, 1.0);
+  let eW: f32 = mossDefault(modifiersBlock.modDamagedFinalWeights.y, 0.35);
+  let bW: f32 = mossDefault(modifiersBlock.modDamagedFinalWeights.w, 0.5);
+  let envMod: f32 = mix(eBase, 1.0, env);
+  let bioMod: f32 = mix(bBase, 1.0, biome);
+  let sum: f32 = max(0.001, nW + eW + bW);
+  var f: f32 = (noise * nW + envMod * eW + bioMod * bW) / sum;
+  f = f * has;
+  f = clamp(f * boost, 0.0, 1.0);
   let contrast: f32 = mossDefault(modifiersBlock.modDamagedGlobal.x, 1.35);
   f = clamp((f - 0.5) * contrast + 0.5, 0.0, 1.0);
-  return f * f * (3.0 - 2.0 * f);
+  f = f * f * (3.0 - 2.0 * f);
+  return f;
 }
 
 fn damagedHeightOffset(w: vec3<f32>, s: f32) -> f32 {
   let has: f32 = step(0.001, s);
-  var depth: f32 = -0.38;
   let dSZero: f32 = step(length(modifiersBlock.modDamagedSurface), 0.0001);
-  depth = mix(modifiersBlock.modDamagedSurface.x, depth, dSZero);
+  var depth: f32 = mix(modifiersBlock.modDamagedSurface.x, -0.38, dSZero);
+  var pitVar: f32 = mix(modifiersBlock.modDamagedSurface.y, 0.32, dSZero);
+  var ridgeH: f32 = mix(modifiersBlock.modDamagedSurface.z, 0.18, dSZero);
   let raw: f32 = damagedNoiseRaw(w);
-  return raw * depth * s * has * 0.5;
+  let ridge: f32 = damagedRidgeRaw(w);
+  let scratch: f32 = valueNoise2D(w.xy * mossDefault(modifiersBlock.modDamagedCrack.y, 8.5));
+  var pit: f32 = depth + (raw - 0.5) * pitVar * 1.2 - scratch * 0.08;
+  return (pit * 0.85 + ridge * ridgeH * 0.35) * s * has;
 }
 
 fn pomOffsetArrayDamaged(heightTex: texture_2d_array<f32>, uv: vec2<f32>, layer: i32, viewTS: vec3<f32>, strength: f32, steps: i32, worldPos: vec3<f32>, isFloor: f32) -> vec2<f32> {
   let base: vec2<f32> = pomOffsetArray(heightTex, uv, layer, viewTS, strength, steps);
   let modUV: vec2<f32> = worldPos.xy / frame.mapSize;
-  let ci: vec2<i32> = vec2<i32>(vec2<i32>(floor(worldPos.xy)));
+  let ci: vec2<i32> = vec2<i32>(floor(worldPos.xy));
   var inB: f32 = 1.0;
   if (ci.x < 0 || ci.y < 0 || ci.x >= i32(frame.mapSize.x) || ci.y >= i32(frame.mapSize.y)) { inB = 0.0; }
   let cell: f32 = loadModifierMap2(modUV).r * f32(frame.modifiersEnabled) * inB;
@@ -471,10 +509,10 @@ fn pomOffsetArrayDamaged(heightTex: texture_2d_array<f32>, uv: vec2<f32>, layer:
 fn debugDamagedNoiseCol(w: vec3<f32>) -> vec3<f32> { return vec3<f32>(0.85, 0.22, 0.18) * damagedNoiseShape(w) * 1.8; }
 fn debugDamagedCombinedCol(w: vec3<f32>, mh: f32, ao: f32, ro: f32, isFloor: f32) -> vec3<f32> { return vec3<f32>(0.85, 0.25, 0.15) * damagedFinalMask(w, mh, ao, ro, isFloor) * 1.8; }
 
-// Main applyModifiers
+// Main applyModifiers – exact from old GLSL translated to WGSL
 fn applyModifiers(albedo: ptr<function, vec3<f32>>, N: ptr<function, vec3<f32>>, rough: ptr<function, f32>, metal: ptr<function, f32>, ao: ptr<function, f32>, worldPos: vec3<f32>, matHeight: ptr<function, f32>, isFloorSurface: f32) {
   let modsEnabled: f32 = f32(frame.modifiersEnabled);
-  let cellI: vec2<i32> = vec2<i32>(vec2<i32>(floor(worldPos.xy)));
+  let cellI: vec2<i32> = vec2<i32>(floor(worldPos.xy));
   var inBounds: f32 = 1.0;
   if (cellI.x < 0 || cellI.y < 0 || cellI.x >= i32(frame.mapSize.x) || cellI.y >= i32(frame.mapSize.y)) { inBounds = 0.0; }
 
@@ -487,6 +525,7 @@ fn applyModifiers(albedo: ptr<function, vec3<f32>>, N: ptr<function, vec3<f32>>,
   let floorFactor: f32 = step(0.5, isFloorSurface);
   puddleCell = puddleCell * mix(0.02, 1.0, floorFactor);
 
+  // Moss decomposed
   let mossMask: f32 = mossFinalMask(worldPos, *matHeight, *ao, *rough, isFloorSurface);
   let mossHas: f32 = step(0.001, mossCell);
   let mossNoiseVal: f32 = mossNoiseRaw(worldPos);
@@ -518,7 +557,7 @@ fn applyModifiers(albedo: ptr<function, vec3<f32>>, N: ptr<function, vec3<f32>>,
   *N = normalize(mix(*N, mossUp, mossStrength * mossNormalStr * wallBias));
   *matHeight = *matHeight + mossStrength * mossHeightAdd;
 
-  // Puddle
+  // Puddle – full ripple + metal + ao path from old GLSL
   let isFloor: f32 = step(0.5, isFloorSurface);
   let floorHasP: f32 = isFloor * step(worldPos.z, 0.6);
   let puddleHas: f32 = step(0.001, puddleCell) * floorHasP;
@@ -527,34 +566,119 @@ fn applyModifiers(albedo: ptr<function, vec3<f32>>, N: ptr<function, vec3<f32>>,
   let puddleHas2: f32 = step(0.001, puddleMask);
   puddleMask = puddleMask * puddleHas2;
 
-  let darkBase: f32 = modifiersBlock.modWaterParams.w;
-  let tintMix: f32 = modifiersBlock.modDustParams.x;
-  let puddleAlbedo: vec3<f32> = modifiersBlock.modPuddleAlbedoRough.xyz;
-  let colorStrength: f32 = 0.92;
+  var darkBase: f32 = modifiersBlock.modWaterParams.w;
+  darkBase = mix(darkBase, 0.35, step(darkBase, 0.0001));
+  var tintMix: f32 = modifiersBlock.modDustParams.x;
+  tintMix = mix(tintMix, 0.60, step(length(modifiersBlock.modDustParams), 0.0001));
+  var puddleAlbedo: vec3<f32> = modifiersBlock.modPuddleAlbedoRough.xyz;
+  let puddleAlbedoZero: f32 = step(length(modifiersBlock.modPuddleAlbedoRough), 0.0001);
+  puddleAlbedo = mix(puddleAlbedo, vec3<f32>(0.10, 0.14, 0.19), puddleAlbedoZero);
+  var colorStrength: f32 = modifiersBlock.modPuddleParams.x;
+  colorStrength = mix(colorStrength, 0.92, step(colorStrength, 0.001));
+  var floorDepress: f32 = modifiersBlock.modMossAlbedoRough.x;
+  floorDepress = mix(floorDepress, -0.08, step(abs(floorDepress), 0.0001) * step(floorDepress, 0.001)); // keep negative fallback
+  // Actually use -0.08 if UBO has 0 and we are in fallback mode: detect via length zero of block 0
+  // Simpler: if abs(floorDepress) < 0.0001 then -0.08
+  if (abs(floorDepress) < 0.0001) { floorDepress = -0.08; }
   let darkBaseCol: vec3<f32> = *albedo * darkBase;
   let puddleTint: vec3<f32> = mix(darkBaseCol, puddleAlbedo, tintMix);
   *albedo = mix(*albedo, puddleTint, puddleMask * colorStrength * puddleHas2);
 
   let edge: f32 = puddleMask * (1.0 - puddleMask);
-  let edgeLow: f32 = modifiersBlock.modDustParams.z;
-  let edgeHigh: f32 = modifiersBlock.modDustParams.w;
-  let edgeFoam: f32 = modifiersBlock.modBloodParams.y;
+  var edgeLow: f32 = modifiersBlock.modDustParams.z;
+  var edgeHigh: f32 = modifiersBlock.modDustParams.w;
+  let dustZero: f32 = step(length(modifiersBlock.modDustParams), 0.0001);
+  edgeLow = mix(edgeLow, 0.0, dustZero);
+  edgeHigh = mix(edgeHigh, 0.15, dustZero);
+  var edgeFoam: f32 = modifiersBlock.modBloodParams.y;
+  edgeFoam = mix(edgeFoam, 0.25, step(length(modifiersBlock.modBloodParams), 0.0001));
   let edgeV: f32 = smoothstep(edgeLow, edgeHigh, edge) * edgeFoam * puddleHas2;
   *albedo = mix(*albedo, *albedo + vec3<f32>(0.18, 0.175, 0.16) * edgeV, puddleHas2);
 
-  let roughLow: f32 = modifiersBlock.modDamagedParams.x;
-  let roughHigh: f32 = modifiersBlock.modDamagedParams.y;
-  let puddleRoughTarget: f32 = modifiersBlock.modPuddleAlbedoRough.w;
+  var roughLow: f32 = modifiersBlock.modDamagedParams.x;
+  var roughHigh: f32 = modifiersBlock.modDamagedParams.y;
+  let damParamsZero: f32 = step(length(modifiersBlock.modDamagedParams), 0.0001);
+  roughLow = mix(roughLow, 0.0, damParamsZero);
+  roughHigh = mix(roughHigh, 0.65, damParamsZero);
+  var puddleRoughTarget: f32 = modifiersBlock.modPuddleAlbedoRough.w;
+  puddleRoughTarget = mix(puddleRoughTarget, 0.04, puddleAlbedoZero);
   let roughFeather: f32 = smoothstep(roughLow, roughHigh, puddleMask);
   *rough = mix(*rough, puddleRoughTarget, roughFeather * 0.97 * puddleHas2);
 
-  // Damaged
+  // Ripple normal + metal + ao + depress – restored from old
+  var rippleScale: f32 = modifiersBlock.modBloodParams.x;
+  rippleScale = mix(rippleScale, 3.0, step(length(modifiersBlock.modBloodParams), 0.0001));
+  var flatStrength: f32 = modifiersBlock.modDamagedParams.z;
+  flatStrength = mix(flatStrength, 0.88, damParamsZero);
+  var metalMix: f32 = modifiersBlock.modDamagedParams.w;
+  metalMix = mix(metalMix, 0.85, damParamsZero);
+  var aoMix: f32 = modifiersBlock.modBloodParams.w;
+  aoMix = mix(aoMix, 0.20, step(length(modifiersBlock.modBloodParams), 0.0001));
+
+  let flatWater: vec3<f32> = vec3<f32>(0.0, 0.0, 1.0);
+  let ripUV: vec2<f32> = worldPos.xy * rippleScale;
+  let r1: f32 = valueNoise2D(ripUV);
+  let r2: f32 = valueNoise2D(ripUV + vec2<f32>(13.5, 7.1));
+  let rippleN: vec3<f32> = normalize(vec3<f32>((r1 - 0.5) * 0.25, (r2 - 0.5) * 0.25, 1.0));
+  let baseFlat: vec3<f32> = mix(*N, flatWater, puddleMask * flatStrength * puddleHas2);
+  let rippleMix: f32 = puddleMask * 0.28 * (0.5 + 0.5 * fbm2D_2(worldPos.xy * 0.52)) * puddleHas2;
+  *N = normalize(mix(baseFlat, rippleN, rippleMix));
+
+  *metal = mix(*metal, 0.0, puddleMask * metalMix * puddleHas2);
+  *ao = *ao * (1.0 - puddleMask * aoMix * puddleHas2);
+  // depress handled via matHeight bias in scene if needed (floorDepress negative); we keep here for completeness
+  // matHeight depression is applied via puddle floor depress (handled via extra offset in footstep shader, we keep additive inverse)
+  // In old path, floorDepress modulated height but main depression is via separate pass; keeping matHeight update minimal
+  // *matHeight += puddleMask * floorDepress * puddleHas2; // floorDepress negative -> slight dip
+
+  // Damaged – full chaotic PBR from old GLSL
   let dCell: f32 = mod2.r * modsEnabled * inBounds;
+  let dHas: f32 = step(0.001, dCell);
   let dMask: f32 = damagedFinalMask(worldPos, *matHeight, *ao, *rough, isFloorSurface);
-  let dStrength: f32 = dMask * step(0.001, dCell);
-  *rough = *rough + dStrength * 0.15;
-  *ao = *ao * (1.0 - dStrength * 0.25);
-  let hOff: f32 = damagedHeightOffset(worldPos, dStrength);
+  var dStr: f32 = dMask * dHas;
+  let dHasS: f32 = step(0.001, dStr);
+  dStr = dStr * dHasS;
+
+  let dSZero: f32 = step(length(modifiersBlock.modDamagedSurface), 0.0001);
+  let dS2Zero: f32 = step(length(modifiersBlock.modDamagedSurface2), 0.0001);
+  var dDepth: f32 = mix(modifiersBlock.modDamagedSurface.x, -0.38, dSZero);
+  var dNStr: f32 = mix(modifiersBlock.modDamagedSurface.w, 0.95, dSZero);
+  var dRAdd: f32 = mix(modifiersBlock.modDamagedSurface2.y, 0.42, dS2Zero);
+  var dRVar: f32 = mix(modifiersBlock.modDamagedSurface2.z, 0.28, dS2Zero);
+  var dAo: f32 = mix(modifiersBlock.modDamagedSurface2.w, 0.38, dS2Zero);
+  let chipSc: f32 = mix(modifiersBlock.modDamagedGlobal2.w, 12.0, step(length(modifiersBlock.modDamagedGlobal2), 0.0001));
+
+  let rawD: f32 = damagedNoiseRaw(worldPos);
+  let ridge: f32 = damagedRidgeRaw(worldPos);
+  let fine: f32 = valueNoise2D(worldPos.xy * chipSc * 0.7);
+  let hPit: f32 = dDepth + (rawD - 0.5) * 0.32 * 1.2 + fine * 0.12;
+  let hOff: f32 = (hPit * 0.85 + ridge * 0.18 * 0.35) * dStr;
   *matHeight = *matHeight + hOff;
+
+  let upV: vec3<f32> = vec3<f32>(0.0, 0.0, 1.0);
+  var tang: vec3<f32> = normalize(cross(*N, upV + vec3<f32>(0.001, 0.002, 0.0)));
+  let upDot: f32 = abs(dot(*N, upV));
+  var tangAlt: vec3<f32> = cross(*N, vec3<f32>(1.0, 0.0, 0.0));
+  tang = normalize(mix(tang, tangAlt, step(0.95, upDot)));
+  let bit: vec3<f32> = normalize(cross(*N, tang));
+  let nX: f32 = valueNoise2D(worldPos.xy * 12.0) * 2.0 - 1.0;
+  let nY: f32 = valueNoise2D(worldPos.xy * 12.0 + vec2<f32>(5.7, 3.1)) * 2.0 - 1.0;
+  let grad: vec3<f32> = tang * nX + bit * nY;
+  let dN: vec3<f32> = normalize(*N - grad * dNStr * dStr * 0.65);
+  *N = normalize(mix(*N, dN, clamp(dStr * dNStr, 0.0, 1.0)));
+
+  let rNoise: f32 = rawD * 0.6 + fine * 0.3 + ridge * 0.2;
+  let rAdd: f32 = dRAdd * dStr + dRVar * rNoise * dStr;
+  *rough = clamp(*rough + rAdd * dHasS, 0.0, 1.0);
+
+  var aoDark: f32 = 1.0 - dStr * dAo * (0.6 + 0.4 * rawD + 0.3 * ridge);
+  aoDark = mix(1.0, aoDark, dHasS);
+  *ao = clamp(*ao * aoDark, 0.0, 1.0);
+  *metal = mix(*metal, *metal * 0.72, dStr * 0.45);
+}
+
+fn applyModifiersSimple(albedo: ptr<function, vec3<f32>>, N: ptr<function, vec3<f32>>, rough: ptr<function, f32>, metal: ptr<function, f32>, ao: ptr<function, f32>, worldPos: vec3<f32>) {
+  var tmpH: f32 = 0.5;
+  applyModifiers(albedo, N, rough, metal, ao, worldPos, &tmpH, 1.0);
 }
 `;

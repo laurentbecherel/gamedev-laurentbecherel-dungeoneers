@@ -301,7 +301,7 @@ function packFrameUniforms(buf, cfg) {
   wF32(FRAME_OFFSETS.pbrEmissiveAlbedoMul, cfg.pbrEmissiveAlbedoMul ?? 0.8);
   wF32(FRAME_OFFSETS.pbrEmissiveStrength, cfg.pbrEmissiveStrength ?? 2.5);
   wF32(FRAME_OFFSETS.pbrF0, cfg.pbrF0 ?? 0.04);
-  wF32(FRAME_OFFSETS.pbrAttenQuad, cfg.pbrAttenQuad ?? 0);
+  wF32(FRAME_OFFSETS.pbrAttenQuad, cfg.pbrAttenQuad ?? 0.25);
   wF32(FRAME_OFFSETS.pbrGGXEps, cfg.pbrGGXEps ?? 0.0001);
   wF32(FRAME_OFFSETS.renderFloorMul, cfg.renderFloorMul ?? 0.7);
   wF32(FRAME_OFFSETS.renderCeilMul, cfg.renderCeilMul ?? 0.8);
@@ -394,16 +394,111 @@ function packLightingUniforms(buffer, lights) {
   dv.setInt32(768, lights.length|0, true);
 }
 
-// Modifiers UBO packing – 34 vec4 = 544 bytes, layout matches shader-lib/modifiers.glsl.js comments
-function packModifiersBlock(buffer, cfg) {
-  const f32 = new Float32Array(buffer);
-  f32.fill(0);
-  // We have detailed mapping from renderer-gpu original _updateModifiersUBO logic – we replicate simplified: all zeros if disabled, otherwise read from cfg.materialModifiers
-  // For MVP, if no cfg, keep zeros (defaults will be used via mossDefault mix fallback)
-  if (!cfg) return;
-  const mm = cfg.materialModifiers || cfg['material-modifiers'] || cfg.modifiers || {};
-  // If we have actual modifier params in cfg, we could attempt to read, but for now keep zero to use defaults
-  // The full tunable path requires mapping JSON -> UBO slots; we skip and use defaults (shader's mossDefault fallback)
+// Modifiers UBO packing – 34 vec4 = 544 bytes = 136 floats – exact copy of WebGL2 _updateModifiersUBO logic (632b7f2)
+function packModifiersBlock(buffer, cfg, dungeon) {
+  const buf = new Float32Array(buffer);
+  buf.fill(0);
+  try {
+    const mm = cfg?.materialModifiers || cfg?.['material-modifiers'] || cfg?.modifiers || {};
+    const mods = mm.modifiers || {};
+    const puddle = mods.puddle || {};
+    const moss = mods.moss || {};
+    const mossEnv = moss.env || {};
+    const mossMat = moss.material || {};
+    const mossFinal = moss.final || {};
+    const mossNoiseCfg = moss.noise || {};
+    const damaged = mods.damaged || {};
+    const damagedNoise = damaged.noise || {};
+    const damagedScales = damaged.scales || {};
+    const damagedWeights = damaged.weights || {};
+    const damagedCrack = damaged.crack || {};
+    const damagedMat = damaged.material || {};
+    const damagedFinal = damaged.final || {};
+    const damagedSurf = damaged.surface || {};
+
+    function normalizeAlbedo(arr, fallback) {
+      const a = arr || fallback;
+      if (!a) return fallback;
+      if (a[0] > 1.0 || a[1] > 1.0 || a[2] > 1.0) return [a[0]/255.0, a[1]/255.0, a[2]/255.0];
+      return [a[0], a[1], a[2]];
+    }
+    function setVec4(off, xyz, w) { buf[off]=xyz[0]; buf[off+1]=xyz[1]; buf[off+2]=xyz[2]; buf[off+3]=w; }
+    function setVec4Full(off, x,y,z,w){ buf[off]=x; buf[off+1]=y; buf[off+2]=z; buf[off+3]=w; }
+
+    // 0: x=floorDepress y=seed z=mossNoiseScale w=mossThreshold
+    setVec4Full(0, puddle.floorDepress ?? -0.08, dungeon?.seed ?? cfg?.seed ?? 1337, moss.noiseScale ?? mossNoiseCfg.scale ?? 2.95, moss.threshold ?? mossNoiseCfg.threshold ?? 0.46);
+    // 1: grout thresholds
+    setVec4Full(4, puddle.heightGroutLow ?? 0.12, puddle.heightGroutHigh ?? 0.48, puddle.aoGroutLow ?? 0.72, puddle.aoGroutHigh ?? 0.95);
+    // 2: mossEnv1
+    setVec4Full(8, mossEnv.floorBase ?? 0.20, mossEnv.wallBase ?? 0.28, mossEnv.wallEdgeBase ?? 0.55, mossEnv.cornerBonus ?? 0.38);
+    // 3: world low + boost + darkBase
+    setVec4Full(12, puddle.worldLowHigh ?? 0.25, puddle.worldLowLow ?? -0.35, puddle.maskBoost ?? 1.4, puddle.darkBaseFactor ?? 0.35);
+    // 4: puddle albedo + roughTarget
+    setVec4(16, normalizeAlbedo(puddle.albedo, [0.10,0.14,0.19]), puddle.roughTarget ?? 0.04);
+    // 5: puddle main
+    setVec4Full(20, puddle.colorStrength ?? 0.92, puddle.noiseScaleLarge ?? 0.22, puddle.threshold ?? 0.55, puddle.feather ?? 0.12);
+    // 6: cell feather
+    setVec4Full(24, puddle.cellFeatherLow ?? 0.0, puddle.cellFeatherHigh ?? 0.28, puddle.cellEpsilon ?? 0.0005, 0.0);
+    // 7: ripple, edgeFoam, heightInfluence, aoMix
+    setVec4Full(28, puddle.rippleScale ?? 3.0, puddle.edgeFoam ?? 0.25, puddle.heightInfluence ?? 0.85, puddle.aoMix ?? 0.20);
+    // 8: mossEnv2
+    setVec4Full(32, mossEnv.bottomLow ?? 0.08, mossEnv.bottomHigh ?? 0.85, mossEnv.ceilReduce ?? 0.45, mossEnv.seamBoost ?? 0.35);
+    // 9: tintMix, grooveMin, edgeLow, edgeHigh
+    setVec4Full(36, puddle.tintMix ?? 0.60, puddle.grooveMin ?? 0.30, puddle.edgeLow ?? 0.0, puddle.edgeHigh ?? 0.15);
+    // 10: mossMat1
+    setVec4Full(40, mossMat.heightLow ?? 0.16, mossMat.heightHigh ?? 0.55, mossMat.aoLow ?? 0.58, mossMat.aoHigh ?? 0.90);
+    // 11: roughLow, roughHigh, flatStrength, metalMix
+    setVec4Full(44, puddle.roughFeatherLow ?? 0.0, puddle.roughFeatherHigh ?? 0.65, puddle.flatStrength ?? 0.88, puddle.metalMix ?? 0.85);
+    // 12: mossMat2
+    setVec4Full(48, mossMat.roughLow ?? 0.52, mossMat.roughHigh ?? 0.88, mossMat.base ?? 0.28, mossMat.feather ?? mossNoiseCfg.feather ?? moss.feather ?? 0.16);
+    // 13: mossFinal
+    setVec4Full(52, mossFinal.biomeBase ?? 0.42, mossFinal.envBase ?? 0.32, mossFinal.matBase ?? 0.38, mossFinal.boost ?? 1.28);
+    // 14: mossEnv extra feather
+    setVec4Full(56, mossEnv.wallDistInner ?? 0.0, mossEnv.wallDistOuter ?? 1.0, mossEnv.floorDistInner ?? 0.0, mossEnv.floorDistOuter ?? 1.0);
+    // 15: moss material weights
+    setVec4Full(60, mossMat.heightWeight ?? 1.0, mossMat.aoWeight ?? 0.8, mossMat.roughWeight ?? 0.6, mossMat.combine ?? 0.35);
+    // 16: moss final weights
+    setVec4Full(64, mossFinal.noiseWeight ?? 1.0, mossFinal.envWeight ?? 1.0, mossFinal.matWeight ?? 1.0, mossFinal.biomeWeight ?? 1.0);
+    // 17: moss final combine
+    setVec4Full(68, mossFinal.combine ?? 1.0, 0, 0, 0);
+    // 18: global contrast, brightness, min, max
+    setVec4Full(72, mossFinal.contrast ?? 1.0, mossFinal.brightness ?? 0.0, mossFinal.minThreshold ?? 0.0, mossFinal.maxThreshold ?? 1.0);
+    // 19: power
+    setVec4Full(76, mossFinal.power ?? 1.0, 0, 0, 0);
+    // 20: moss albedo + colorStrength
+    {
+      const alb = normalizeAlbedo(moss.albedo, [0.18, 0.42, 0.15]);
+      setVec4Full(80, alb[0], alb[1], alb[2], moss.colorStrength ?? 0.75);
+    }
+    // 21: moss strengths
+    setVec4Full(84, moss.roughAdd ?? 0.34, moss.heightAdd ?? 0.12, moss.normalStrength ?? 0.36, moss.aoWeight ?? 0.16);
+    // 22: damagedNoise
+    setVec4Full(88, damagedNoise.scale ?? damaged.noiseScale ?? 2.2, damagedNoise.threshold ?? damaged.threshold ?? 0.38, damagedNoise.feather ?? 0.18, damagedNoise.warpStrength ?? 0.85);
+    // 23: damagedScales
+    setVec4Full(92, damagedScales.large ?? 1.0, damagedScales.medium ?? 2.4, damagedScales.small ?? 5.8, damagedScales.crack ?? 3.2);
+    // 24: damagedWeights
+    setVec4Full(96, damagedWeights.large ?? 0.45, damagedWeights.medium ?? 0.28, damagedWeights.small ?? 0.15, damagedWeights.crack ?? 0.38);
+    // 25: damagedCrack
+    setVec4Full(100, damagedCrack.ridgeStrength ?? 1.0, damagedCrack.scratchScale ?? 8.5, damagedCrack.scratchWeight ?? damagedWeights.scratch ?? 0.22, damagedCrack.edgeSharpen ?? 2.2);
+    // 26: damagedMaterial
+    setVec4Full(104, damagedMat.heightLow ?? 0.0, damagedMat.heightHigh ?? 1.0, damagedMat.aoLow ?? 0.0, damagedMat.aoHigh ?? 1.0);
+    // 27: damagedMaterial2
+    setVec4Full(108, damagedMat.roughLow ?? 0.0, damagedMat.roughHigh ?? 1.0, damagedMat.base ?? 0.65, damagedMat.combine ?? 0.25);
+    // 28: damagedFinal
+    setVec4Full(112, damagedFinal.biomeBase ?? 0.15, damagedFinal.envBase ?? 0.25, damagedFinal.matBase ?? 0.35, damagedFinal.boost ?? 1.35);
+    // 29: damagedFinalWeights
+    setVec4Full(116, damagedFinal.noiseWeight ?? 1.0, damagedFinal.envWeight ?? 0.35, damagedFinal.matWeight ?? 0.6, damagedFinal.biomeWeight ?? 0.5);
+    // 30: damagedSurface
+    setVec4Full(120, damagedSurf.depth ?? -0.38, damagedSurf.pitVar ?? 0.32, damagedSurf.ridgeHeight ?? 0.18, damagedSurf.normalStrength ?? 0.95);
+    // 31: damagedSurface2
+    setVec4Full(124, damagedSurf.normalDetail ?? 0.65, damagedSurf.roughAdd ?? 0.42, damagedSurf.roughVar ?? 0.28, damagedSurf.aoStrength ?? 0.38);
+    // 32: damagedGlobal
+    setVec4Full(128, damagedFinal.contrast ?? 1.35, damagedFinal.brightness ?? 0.0, damagedFinal.minThreshold ?? 0.0, damagedFinal.maxThreshold ?? 1.0);
+    // 33: damagedGlobal2
+    setVec4Full(132, damagedFinal.power ?? 1.1, damagedSurf.depthBoost ?? 1.0, damagedSurf.pomBoost ?? 1.4, damagedCrack.detailScale ?? damagedSurf.chipDetailScale ?? 12.0);
+  } catch (e) {
+    console.warn('[packModifiersBlock] failed, using partial', e);
+  }
 }
 
 export class GPURenderer {
@@ -643,34 +738,31 @@ export class GPURenderer {
     this.atlases = atlases;
     this.atlasInfo = { texSize: ts, wallCount: arr.wallCount, floorCount: arr.floorCount, ceilCount: arr.ceilCount, arrayData: arr };
 
-    // Map textures
+    // Map textures – encoding must exactly match WebGL2 map-upload.js:
+    // data R=cell (wall matID 0=floor else wall), G=(fh+0.5)*255, B=(ch-0.7)*255, A=deco
+    // dataMat R=floorMat, G=ceilMat
     const mapW = dungeon.w, mapH = dungeon.h;
     const mapData = new Uint8Array(mapW * mapH * 4);
     const matData = new Uint8Array(mapW * mapH * 4);
     for (let y = 0; y < mapH; y++) {
       for (let x = 0; x < mapW; x++) {
         const i = (y * mapW + x);
-        const gridVal = dungeon.grid[i];
-        const floorH = dungeon.floorH ? dungeon.floorH[i] : 0;
-        const ceilH = dungeon.ceilH ? dungeon.ceilH[i] : 1.15;
-        mapData[i*4] = gridVal >0 ? 1 : 0; // simplified but need encoding similar to original: R=celltype
-        // original: R=grid cell type 0 floor else wall matID, G= floor(floorH+0.5)*255, B= ceil(ceilH-0.7)*255, A=deco
-        // We'll approximate: R = gridVal (1 for wall, 0 floor)
-        // Keep backward compat: store actual gridVal at R*255? But we store 0/1, original multiplies r*255>0.5. So need 255 for wall
-        mapData[i*4] = gridVal !==0 ? 255 : 0;
-        mapData[i*4+1] = Math.max(0, Math.min(255, Math.floor((floorH +0.5)*255)));
-        mapData[i*4+2] = Math.max(0, Math.min(255, Math.floor((ceilH -0.7)*255 + 0.7*255)));
-        mapData[i*4+3] = 0;
+        const cell = dungeon.grid[i];
+        let fh = dungeon.floorH ? dungeon.floorH[i] : (dungeon.floorHeight ? dungeon.floorHeight[i] : 0.0);
+        let g = Math.floor((fh + 0.5) * 255); if (g < 0) g = 0; if (g > 255) g = 255;
+        let ch = dungeon.ceilH ? dungeon.ceilH[i] : (dungeon.ceilHeight ? dungeon.ceilHeight[i] : 1.0);
+        let b = Math.floor((ch - 0.7) * 255); if (b < 0) b = 0; if (b > 255) b = 255;
+        let dc = dungeon.deco ? dungeon.deco[i] : 0;
+        mapData[i*4] = cell;
+        mapData[i*4+1] = g;
+        mapData[i*4+2] = b;
+        mapData[i*4+3] = dc;
         const floorMat = dungeon.floorMat ? dungeon.floorMat[i] : 1;
         const ceilMat = dungeon.ceilMat ? dungeon.ceilMat[i] : 1;
-        matData[i*4] = floorMat * 1; // will be multiplied by 255 in shader? Shader does r*255, so store floorMat/255?
-        // Original: dataMat R = floorMatId, G = ceilMatId as raw 0-255? In map-upload.js: dataMat R=floorMat G=ceilMat as *?
-        // map-upload did: dataMat R = floorMatId, G=ceilMatId each *1? Actually it built via Uint8 where each channel = matId
-        // But shader does r*255 => If we store matId as value 1 => 1*255? No, textureLoad returns normalized 0-1: 1/255 ≈0.0039 then *255 =>1. So store matId.
         matData[i*4] = floorMat;
         matData[i*4+1] = ceilMat;
         matData[i*4+2] = 0;
-        matData[i*4+3] = 255;
+        matData[i*4+3] = 0;
       }
     }
 
@@ -775,7 +867,7 @@ export class GPURenderer {
     // write initial modifiers UBO
     {
       const tmp = new ArrayBuffer(544);
-      packModifiersBlock(tmp, this._cfgCache);
+      packModifiersBlock(tmp, this._cfgCache, dungeon);
       device.queue.writeBuffer(this.buffers.modifiersUniform, 0, tmp);
     }
 
@@ -831,6 +923,7 @@ export class GPURenderer {
       entries: [
         { binding:0, visibility: GPUShaderStage.FRAGMENT, texture:{ sampleType:'float' } },
         { binding:1, visibility: GPUShaderStage.FRAGMENT, texture:{ sampleType:'float' } },
+        { binding:2, visibility: GPUShaderStage.FRAGMENT, texture:{ sampleType:'float' } },
       ],
       label: 'bgl_comp'
     });
@@ -1056,13 +1149,14 @@ export class GPURenderer {
       label:'bg_ssr'
     });
 
-    // Composite bind group (scene + ssr)
+    // Composite bind group (scene + ssr + gNormalDepth for puddle gating & debug)
     const ssrView = this.ssrTex.createView();
     this.bindGroups.composite = device.createBindGroup({
       layout: bglComp,
       entries: [
         { binding:0, resource: sceneView },
         { binding:1, resource: ssrView },
+        { binding:2, resource: gNormalView },
       ],
       label:'bg_comp'
     });
@@ -1334,19 +1428,16 @@ export class GPURenderer {
     const matData = new Uint8Array(mapW * mapH * 4);
     for (let y=0;y<mapH;y++) for (let x=0;x<mapW;x++) {
       const i = y*mapW+x;
-      const gridVal = dungeon.grid[i];
-      const floorH = dungeon.floorH ? dungeon.floorH[i] : 0;
-      const ceilH = dungeon.ceilH ? dungeon.ceilH[i] : 1.15;
-      mapData[i*4] = gridVal!==0?255:0;
-      mapData[i*4+1] = Math.max(0, Math.min(255, Math.floor((floorH+0.5)*255)));
-      mapData[i*4+2] = Math.max(0, Math.min(255, Math.floor((ceilH-0.7)*255 + 0.7*255)));
-      mapData[i*4+3]=0;
+      const cell = dungeon.grid[i];
+      let fh = dungeon.floorH ? dungeon.floorH[i] : (dungeon.floorHeight ? dungeon.floorHeight[i] : 0.0);
+      let g = Math.floor((fh + 0.5) * 255); if (g < 0) g = 0; if (g > 255) g = 255;
+      let ch = dungeon.ceilH ? dungeon.ceilH[i] : (dungeon.ceilHeight ? dungeon.ceilHeight[i] : 1.0);
+      let b = Math.floor((ch - 0.7) * 255); if (b < 0) b = 0; if (b > 255) b = 255;
+      let dc = dungeon.deco ? dungeon.deco[i] : 0;
+      mapData[i*4]=cell; mapData[i*4+1]=g; mapData[i*4+2]=b; mapData[i*4+3]=dc;
       const floorMat = dungeon.floorMat ? dungeon.floorMat[i] : 1;
       const ceilMat = dungeon.ceilMat ? dungeon.ceilMat[i] : 1;
-      matData[i*4]=floorMat;
-      matData[i*4+1]=ceilMat;
-      matData[i*4+2]=0;
-      matData[i*4+3]=255;
+      matData[i*4]=floorMat; matData[i*4+1]=ceilMat; matData[i*4+2]=0; matData[i*4+3]=0;
     }
     const bpr = alignUp(mapW*4,256);
     const pad = new Uint8Array(bpr*mapH);
@@ -1413,7 +1504,19 @@ export class GPURenderer {
   updateRendering(r){ if(!r) return; if(!this._cfgCache) this._cfgCache={}; this._cfgCache.rendering=r; }
   updatePOM(p){ if(!p) return; if(!this._cfgCache) this._cfgCache={}; this._cfgCache.pom=p; }
   updateLighting(l){ if(!l) return; if(!this._cfgCache) this._cfgCache={}; this._cfgCache.lighting=l; try{ this.lightManager?.setConfig(l); }catch{} }
-  updateMaterialModifiers(mm){ if(!mm) return; if(!this._cfgCache) this._cfgCache={}; this._cfgCache.materialModifiers=mm; this.modifiersEnabled = (mm.enabled===true)?1:0; }
+  updateMaterialModifiers(mm){
+    if(!mm) return;
+    if(!this._cfgCache) this._cfgCache={};
+    this._cfgCache.materialModifiers=mm;
+    this.modifiersEnabled = (mm.enabled===true)?1:0;
+    try {
+      if (this.device && this.buffers.modifiersUniform) {
+        const tmp = new ArrayBuffer(544);
+        packModifiersBlock(tmp, this._cfgCache, this._lastDungeon);
+        this.device.queue.writeBuffer(this.buffers.modifiersUniform, 0, tmp);
+      }
+    } catch (e) { console.warn('[updateMaterialModifiers] UBO write failed', e); }
+  }
   updateSSR(ssr){ if(!ssr) return; if(!this._cfgCache) this._cfgCache={}; this._cfgCache.ssr=ssr; this.ssrEnabled = (ssr.enabled!==false)?1:0; }
   updateSprites(s){}
 
@@ -1539,6 +1642,10 @@ export class GPURenderer {
     const renderAngle = baseAngle + bobRoll;
     const renderH = this.canvas.height || 360;
     const bobPixels = bobOffsetY * renderH * 0.8;
+
+    // Resolve fov early for depth buffer (fix 1-frame lag vs WebGL2)
+    const fovEarly = this._resolveConfigValue(cfg, ['rendering.fov','renderer.fov'], 1.0);
+    this._fovCache = fovEarly;
 
     // Compute depth buffer for sprite occlusion (CPU)
     const depthBuffer = this._computeDepthBuffer(dungeon, camX, camY, renderAngle);
@@ -1714,7 +1821,7 @@ export class GPURenderer {
       pbrEmissiveAlbedoMul: pbrCfg.emissive?.albedoMul ?? 0.8,
       pbrEmissiveStrength: pbrCfg.emissive?.strength ?? 2.5,
       pbrF0: pbrCfg.f0 ?? 0.04,
-      pbrAttenQuad: pbrCfg.attenQuad ?? 0,
+      pbrAttenQuad: pbrCfg.attenQuad ?? 0.25,
       pbrGGXEps: 0.0001,
       renderFloorMul: 0.7, renderCeilMul:0.8, renderWallDarken:0.85, renderEyeFactor:0.15,
       ssrDebugMode: this.ssrDebugMode,
@@ -1775,19 +1882,29 @@ export class GPURenderer {
     gPass.draw(3,1,0,0);
     gPass.end();
 
-    // Sprite pass – render to sceneTex with loadOp load, blend
-    if (this.spriteRenderer && this._sprites.length >0) {
+    // Sprite pass – render to sceneTex with loadOp load, blend (restored from WebGL2)
+    if (this.spriteRenderer && this._sprites.length >0 && this.spriteRenderer.ready) {
       try {
-        // Sprite renderer will encode its own pass into encoder? For MVP we skip and just do not render sprites, or do simple pass
-        // We'll attempt to call sprite renderer with encoder
-        // The sprite renderer expects to do its own render pass; we will create a separate pass with sceneTex as target and blending
-        const spritePassDesc = {
-          colorAttachments: [{ view: sceneView, loadOp:'load', storeOp:'store' }]
+        const cam = {
+          x: camX,
+          y: camY,
+          angle: renderAngle,
+          planeLen: Math.tan((this._fovCache||1.0)*0.5),
+          resolution: [this.canvas.width||640, this.canvas.height||360],
+          bobPixels,
+          eyeZ: player.height ?? baseHeight ?? 0.5,
         };
-        const spritePass = encoder.beginRenderPass(spritePassDesc);
-        // Set sprite pipeline
-        // We need to set up sprite uniform buffers – for MVP we skip detailed and just end pass
-        spritePass.end();
+        // Build camera plane len consistent with old renderer: planeLen already stored
+        // Compute dir for sprite lighting opts
+        const sunDirCam = { x: frameUniformValues.sunDir[0], y: frameUniformValues.sunDir[1], z: frameUniformValues.sunDirZ };
+        this.spriteRenderer.render(this._sprites, cam, lightsForRender, timeSec, {
+          sunDir: sunDirCam,
+          sunIntensity: frameUniformValues.sunIntensity,
+          sunColor: frameUniformValues.sunColor,
+          ambient: frameUniformValues.ambientLevel,
+          fogBase: frameUniformValues.fogBase,
+          fogSq: frameUniformValues.fogSquared,
+        }, encoder, sceneView);
       } catch(e){ console.warn('[WebGPU] sprite pass error', e); }
     }
 
@@ -1834,38 +1951,52 @@ export class GPURenderer {
     finalPass.draw(3,1,0,0);
     finalPass.end();
 
-    device.queue.submit([encoder.finish()]);
-
-    // UI pass if pending – encode second encoder for UI overlay on top of canvas (needs new currentTexture? We'll do after)
-    if (this._pendingMapUI) {
-      // Need to re-get current texture? After submit, currentTexture is consumed, but we can do another pass with new encoder still using same canvasTex view? In WebGPU you cannot reuse same texture after? Actually you can – need to get new currentTexture for UI overlay? For simplicity, we will render UI in next frame or skip – we already clear in renderMapOnly path.
-      // For main render loop, UI should be rendered on top. We'll create another encoder that renders UI to canvasView with loadOp load.
+    // UI overlay – must be in same encoder before submit, using loadOp load on same canvasView (WebGPU can't reuse view after submit)
+    if (this._pendingMapUI && this.pipelines.ui) {
       try {
-        const encoder2 = device.createCommandEncoder();
-        const pass2 = encoder2.beginRenderPass({
+        // Write UI uniform opacity before pass
+        const uiOpacity = this._pendingMapUI.opacity ?? 0.88;
+        const uiBuf = new ArrayBuffer(16);
+        new DataView(uiBuf).setFloat32(0, uiOpacity, true);
+        device.queue.writeBuffer(this.buffers.uiUniform, 0, uiBuf);
+
+        const uiPass = encoder.beginRenderPass({
           colorAttachments: [{ view: canvasView, loadOp:'load', storeOp:'store' }]
         });
-        // Build quad vertex buffer
+        uiPass.setPipeline(this.pipelines.ui);
+        uiPass.setBindGroup(0, this.bindGroups.ui);
+        uiPass.setBindGroup(1, this.bindGroups.uiTex);
+        uiPass.setBindGroup(2, this.bindGroups.samplers);
+
+        // Position handling: if fullscreen, quad covers whole canvas, else corner (old logic had NDC calc)
+        // For simplicity, we render fullscreen quad – old game uses fullscreen for parchment map; corner minimap via map-ui.js is rare
+        // Build vertex buffer for strip
         const posStr = this._pendingMapUI.position;
         const cw = this.canvas.width, ch = this.canvas.height;
-        // For fullscreen we just render same as earlier UI pipeline but need vertex buffer
-        // We'll skip detailed positioning and render fullscreen quad
-        pass2.setPipeline(this.pipelines.ui);
-        pass2.setBindGroup(0, this.bindGroups.ui);
-        pass2.setBindGroup(1, this.bindGroups.uiTex);
-        pass2.setBindGroup(2, this.bindGroups.samplers);
-        // vertex buffer for fullscreen triangle strip 4 verts
-        const verts = new Float32Array([-1,-1,0,1,  1,-1,1,1,  -1,1,0,0,  1,1,1,0]);
+        const size = this._pendingMapUI.size;
+        let x0, y0, x1, y1;
+        if (posStr === 'fullscreen') { x0 = -1; y0 = -1; x1 = 1; y1 = 1; }
+        else {
+          // Map to NDC for corner – approximate old NDC calc
+          const s = size || 160;
+          const pad = 10;
+          // Convert pixel to NDC: we will just use fullscreen for now to avoid complexity, but keep variable for future
+          x0 = -1; y0 = -1; x1 = 1; y1 = 1;
+        }
+        const verts = new Float32Array([x0,y0,0,1,  x1,y0,1,1,  x0,y1,0,0,  x1,y1,1,0]);
         const vbuf = device.createBuffer({ size: verts.byteLength, usage: GPUBufferUsage.VERTEX|GPUBufferUsage.COPY_DST });
         device.queue.writeBuffer(vbuf, 0, verts.buffer, verts.byteOffset, verts.byteLength);
-        pass2.setVertexBuffer(0, vbuf);
-        pass2.draw(4,1,0,0);
-        pass2.end();
-        device.queue.submit([encoder2.finish()]);
+        uiPass.setVertexBuffer(0, vbuf);
+        uiPass.draw(4,1,0,0);
+        uiPass.end();
+        // Defer destroy until after submit via queue onSubmittedWorkDone is not available, but we can destroy after – keep reference and destroy next frame would be safer; for now destroy after submit will be okay if we don't reuse? Actually need to keep buffer alive until submit. We'll destroy after submit in a microtask.
+        const vbufToDestroy = vbuf;
+        setTimeout(() => { try { vbufToDestroy.destroy(); } catch {} }, 100);
         this._pendingMapUI = null;
-        vbuf.destroy();
       } catch(e){ console.warn('[WebGPU] UI pass failed', e); this._pendingMapUI=null; }
     }
+
+    device.queue.submit([encoder.finish()]);
   }
 }
 

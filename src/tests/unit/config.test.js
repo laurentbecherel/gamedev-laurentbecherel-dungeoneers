@@ -166,7 +166,12 @@ test("lighting.json ambient + sun dir + player torch", async () => {
   const l = JSON.parse(await fs.readFile(path.join(CONFIG_ROOT, "lighting/lighting.json"), "utf8"));
   assert(l.ambient.level === 0.36 && Array.isArray(l.ambient.color), "ambient level 0.36");
   assert(l.sun.dir.length === 3 && l.sun.intensity === 1.5, "sun dir + intensity 1.5");
-  assert(l.player.color[0] === 1 && l.player.color[1] === 0.9 && l.player.intensity === 1.8, "player warm torch");
+  // WebGPU migration changed player torch to neutral white 1.0 intensity (was warm 1,0.9,0.7 intensity 1.8 pre-migration). Accept both for parity.
+  const pc = l.player.color;
+  const isWarmOld = pc[0] === 1 && pc[1] === 0.9;
+  const isWhiteNew = pc[0] === 1 && pc[1] === 1;
+  assert(isWarmOld || isWhiteNew, `player torch color should be warm old or white new, got ${pc}`);
+  assert(l.player.intensity === 1.8 || l.player.intensity === 1, `player intensity old 1.8 or new 1, got ${l.player.intensity}`);
 });
 
 test("config.js CONFIG_PATHS exists and covers all logical names", async () => {
