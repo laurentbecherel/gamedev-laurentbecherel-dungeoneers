@@ -677,10 +677,12 @@ export class GPURenderer {
     // Old blueNoise used REPEAT + NEAREST, scene/gBuffer used CLAMP + NEAREST.
     // To cover both, we make nearest sampler REPEAT (fract() in shader makes clamp vs repeat moot for material UVs)
     // and keep a clamp variant if needed. For pixelated canvas upscale via CSS, we also ensure nearest filtering.
+    // Retro with moire reduction: mag stays chunky (nearest), min trilinear (linear/linear) – Doom/PSX style
+    // Now that material arrays have mipmaps generated on CPU, this gives true trilinear with chunky magnification
     this.samplers.nearest = device.createSampler({
-      magFilter: 'nearest', minFilter: 'nearest', mipmapFilter: 'nearest',
+      magFilter: 'nearest', minFilter: 'linear', mipmapFilter: 'linear',
       addressModeU: 'repeat', addressModeV: 'repeat', addressModeW: 'clamp-to-edge',
-      label: 'nearest-repeat'
+      label: 'nearest-repeat-trilinear'
     });
     this.samplers.nearestClamp = device.createSampler({
       magFilter: 'nearest', minFilter: 'nearest', mipmapFilter: 'nearest',
@@ -722,43 +724,146 @@ export class GPURenderer {
     this.materialInfo = arr;
     const ts = arr.texSize;
 
-    // Upload arrays via WebGPU
-    const createArr = (data, w, h, depth, label) => device.createTexture({
-      size: { width: w, height: h, depthOrArrayLayers: depth },
-      format: 'rgba8unorm',
-      usage: GPUTextureUsage.TEXTURE_BINDING | GPUTextureUsage.COPY_DST,
-      label
-    });
-    const createArrR = (data, w, h, depth, label) => device.createTexture({
-      size: { width: w, height: h, depthOrArrayLayers: depth },
-      format: 'r8unorm',
-      usage: GPUTextureUsage.TEXTURE_BINDING | GPUTextureUsage.COPY_DST,
-      label
-    });
+    // Upload arrays via WebGPU – with mipmaps for retro trilinear moire fix
+    // To get true trilinear (mag nearest chunky, min linear + mipmap linear), we need mipmaps.
+    // Old WebGL2 had no mips (NEAREST), but we can generate them now to reduce distant moire while keeping close chunky.
+    // Sampler will be nearest/linear/linear (mag nearest, min linear, mipmap linear) – see samplers.nearest.
+    function calcMipCount(w, h) {
+      return Math.floor(Math.log2(Math.max(w, h))) + 1;
+    }
+    const createArr = (data, w, h, depth, label) => {
+      const mipCount = calcMipCount(w, h);
+      return device.createTexture({
+        size: { width: w, height: h, depthOrArrayLayers: depth },
+        mipLevelCount: mipCount,
+        format: 'rgba8unorm',
+        usage: GPUTextureUsage.TEXTURE_BINDING | GPUTextureUsage.COPY_DST | GPUTextureUsage.RENDER_ATTACHMENT,
+        label
+      });
+    };
+    const createArrR = (data, w, h, depth, label) => {
+      const mipCount = calcMipCount(w, h);
+      return device.createTexture({
+        size: { width: w, height: h, depthOrArrayLayers: depth },
+        mipLevelCount: mipCount,
+        format: 'r8unorm',
+        usage: GPUTextureUsage.TEXTURE_BINDING | GPUTextureUsage.COPY_DST | GPUTextureUsage.RENDER_ATTACHMENT,
+        label
+      });
+    };
+
+    // Box downsample helpers for mipmap generation
+    function downsampleRGBA8(prev, pw, ph) {
+      const nw = Math.max(1, pw >> 1);
+      const nh = Math.max(1, ph >> 1);
+      const out = new Uint8Array(nw * nh * 4);
+      for (let y = 0; y < nh; y++) {
+        for (let x = 0; x < nw; x++) {
+          let r = 0, g = 0, b = 0, a = 0, cnt = 0;
+          for (let dy = 0; dy < 2; dy++) {
+            for (let dx = 0; dx < 2; dx++) {
+              const sx = Math.min(pw - 1, x * 2 + dx);
+              const sy = Math.min(ph - 1, y * 2 + dy);
+              const si = (sy * pw + sx) * 4;
+              r += prev[si]; g += prev[si+1]; b += prev[si+2]; a += prev[si+3];
+              cnt++;
+            }
+          }
+          const di = (y * nw + x) * 4;
+          out[di] = Math.round(r / cnt);
+          out[di+1] = Math.round(g / cnt);
+          out[di+2] = Math.round(b / cnt);
+          out[di+3] = Math.round(a / cnt);
+        }
+      }
+      return { data: out, w: nw, h: nh };
+    }
+    function downsampleR8(prev, pw, ph) {
+      const nw = Math.max(1, pw >> 1);
+      const nh = Math.max(1, ph >> 1);
+      const out = new Uint8Array(nw * nh);
+      for (let y = 0; y < nh; y++) {
+        for (let x = 0; x < nw; x++) {
+          let v = 0, cnt = 0;
+          for (let dy = 0; dy < 2; dy++) {
+            for (let dx = 0; dx < 2; dx++) {
+              const sx = Math.min(pw - 1, x * 2 + dx);
+              const sy = Math.min(ph - 1, y * 2 + dy);
+              v += prev[sy * pw + sx];
+              cnt++;
+            }
+          }
+          out[y * nw + x] = Math.round(v / cnt);
+        }
+      }
+      return { data: out, w: nw, h: nh };
+    }
 
     function writeArrayTex(tex, data, w, h, depth, format) {
-      // data may be rgba or r
-      const bytesPerRow = format === 'r8unorm' ? alignUp(w, 256) : alignUp(w*4, 256);
-      if (format === 'r8unorm') {
-        for (let l = 0; l < depth; l++) {
-          const slice = data.subarray(l * w * h, (l+1) * w * h);
-          const padded = new Uint8Array(bytesPerRow * h);
-          for (let y = 0; y < h; y++) {
-            padded.set(slice.subarray(y*w, (y+1)*w), y*bytesPerRow);
-          }
-          device.queue.writeTexture({ texture: tex, origin: { x:0, y:0, z:l } }, padded, { bytesPerRow, rowsPerImage: h }, { width:w, height:h, depthOrArrayLayers:1 });
+      const mipCount = tex.mipLevelCount || calcMipCount(w, h);
+      // Write base mip 0 per layer, and generate/upload following mips
+      const bytesPerRowBase = format === 'r8unorm' ? alignUp(w, 256) : alignUp(w*4, 256);
+      // For each layer, keep track of previous mip data to downsample
+      for (let l = 0; l < depth; l++) {
+        let prevRGBA = null; // for rgba path
+        let prevR = null;    // for r8 path
+        let cw = w, ch = h;
+        let curDataRGBA = null;
+        let curDataR = null;
+        if (format === 'r8unorm') {
+          curDataR = data.subarray(l * w * h, (l+1) * w * h);
+        } else {
+          curDataRGBA = data.subarray(l * w * h *4, (l+1) * w * h *4);
         }
-      } else {
-        for (let l = 0; l < depth; l++) {
-          const slice = data.subarray(l * w * h *4, (l+1) * w * h *4);
-          if (bytesPerRow === w*4) {
-            device.queue.writeTexture({ texture: tex, origin: { x:0, y:0, z:l } }, slice, { bytesPerRow: w*4, rowsPerImage: h }, { width:w, height:h, depthOrArrayLayers:1 });
-          } else {
-            const padded = new Uint8Array(bytesPerRow * h);
-            for (let y = 0; y < h; y++) {
-              padded.set(slice.subarray(y*w*4, (y+1)*w*4), y*bytesPerRow);
+        for (let mip = 0; mip < mipCount; mip++) {
+          const bw = format === 'r8unorm' ? alignUp(cw, 256) : alignUp(cw*4, 256);
+          if (format === 'r8unorm') {
+            const slice = mip === 0 ? curDataR : prevR;
+            // For base we already have, for mips we have generated
+            const padded = new Uint8Array(bw * ch);
+            for (let y = 0; y < ch; y++) {
+              padded.set(slice.subarray(y*cw, (y+1)*cw), y*bw);
             }
-            device.queue.writeTexture({ texture: tex, origin: { x:0, y:0, z:l } }, padded, { bytesPerRow, rowsPerImage: h }, { width:w, height:h, depthOrArrayLayers:1 });
+            device.queue.writeTexture(
+              { texture: tex, origin: { x:0, y:0, z:l }, mipLevel: mip },
+              padded,
+              { bytesPerRow: bw, rowsPerImage: ch },
+              { width: cw, height: ch, depthOrArrayLayers: 1 }
+            );
+            // Generate next
+            if (mip + 1 < mipCount) {
+              const nxt = downsampleR8(slice, cw, ch);
+              prevR = nxt.data;
+              cw = nxt.w; ch = nxt.h;
+            }
+          } else {
+            const slice = mip === 0 ? curDataRGBA : prevRGBA;
+            // Handle padding
+            if (bw === cw*4) {
+              device.queue.writeTexture(
+                { texture: tex, origin: { x:0, y:0, z:l }, mipLevel: mip },
+                slice,
+                { bytesPerRow: cw*4, rowsPerImage: ch },
+                { width: cw, height: ch, depthOrArrayLayers: 1 }
+              );
+            } else {
+              const padded = new Uint8Array(bw * ch);
+              for (let y = 0; y < ch; y++) {
+                padded.set(slice.subarray(y*cw*4, (y+1)*cw*4), y*bw);
+              }
+              device.queue.writeTexture(
+                { texture: tex, origin: { x:0, y:0, z:l }, mipLevel: mip },
+                padded,
+                { bytesPerRow: bw, rowsPerImage: ch },
+                { width: cw, height: ch, depthOrArrayLayers: 1 }
+              );
+            }
+            if (mip + 1 < mipCount) {
+              const nxt = downsampleRGBA8(slice, cw, ch);
+              prevRGBA = nxt.data;
+              // Reset cw/ch for next iteration from nxt
+              cw = nxt.w; ch = nxt.h;
+            }
           }
         }
       }
