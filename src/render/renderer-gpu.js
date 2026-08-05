@@ -120,14 +120,13 @@ export class GPURenderer {
     this.compositeProgram = pComp || createProgram(gl, vsComposite, fsComposite);
     if (!this.compositeProgram) console.warn('Composite compile failed');
 
-    // Debug programs – lazy, null until first Digit6 press, to keep startup under ~2s even with heavy damaged noise
+    // Debug programs – lazy, null until first Digit6 press. Mode 6 old (MossR+PuddleB) removed as requested.
     this.debugMossNoiseProgram = null;
     this.debugMossEnvProgram = null;
     this.debugMossMaterialProgram = null;
     this.debugMossCombinedProgram = null;
     this.debugMossProgram = null;
     this.debugPuddleProgram = null;
-    this.debugCombinedProgram = null;
     this.debugDamagedProgram = null;
     this.debugDamagedNoiseProgram = null;
     this.uLocDebugMossNoise = null;
@@ -136,17 +135,15 @@ export class GPURenderer {
     this.uLocDebugMossCombined = null;
     this.uLocDebugMoss = null;
     this.uLocDebugPuddle = null;
-    this.uLocDebugCombined = null;
     this.uLocDebugDamaged = null;
     this.uLocDebugDamagedNoise = null;
-    // keep fs sources for lazy compile
+    // keep fs sources for lazy compile – combined removed
     this._debugFsSources = {
       mossNoise: fsDebugMossNoise,
       mossEnv: fsDebugMossEnv,
       mossMaterial: fsDebugMossMaterial,
       mossCombined: fsDebugMossCombined,
       puddle: fsDebugPuddle,
-      combined: fsDebugCombined,
       damaged: fsDebugDamaged,
       damagedNoise: fsDebugDamagedNoise
     };
@@ -811,7 +808,7 @@ export class GPURenderer {
   setCornerEnabled(v) { this.cornerEnabled = v ? 1 : 0; }
   setModifiersEnabled(v){ this.modifiersEnabled = v ? 1 : 0; }
   setSSREnabled(v){ this.ssrEnabled = v ? 1 : 0; }
-  setPBRDebugMode(v) { this.pbrDebugMode = Math.max(0, Math.min(9, v | 0)); }
+  setPBRDebugMode(v) { this.pbrDebugMode = Math.max(0, Math.min(7, v | 0)); }
   // Toggle wrappers used by Game._onKeyDown (Digit1-0)
   toggleGridDebug(){ this.gridDebug = this.gridDebug ? 0 : 1; return this.gridDebug; }
   toggleLighting(){ this.lightingEnabled = this.lightingEnabled ? 0 : 1; return this.lightingEnabled; }
@@ -823,11 +820,10 @@ export class GPURenderer {
   toggleModifiers(){ this.modifiersEnabled = this.modifiersEnabled ? 0 : 1; return this.modifiersEnabled; }
   toggleSSR(){ this.ssrEnabled = this.ssrEnabled ? 0 : 1; return this.ssrEnabled; }
   cycleSSRDebug(){ this.ssrDebugMode = (this.ssrDebugMode + 1) % 4; return this.ssrDebugMode; }
-  // Cycle v21: 0=Normal,1=Moss noise,2=Moss nearwall/env,3=Moss material,4=Moss combined,5=Puddle,6=Moss R + Puddle B,7=Damaged combined,8=Damaged noise
+  // Cycle v26: 0=Normal,1=Moss noise,2=Moss env,3=Moss material,4=Moss combined,5=Puddle,6=Damaged combined,7=Damaged noise — mode 6 old (Moss R+Puddle B) removed
   cyclePBRDebug() {
-    const next = (this.pbrDebugMode + 1) % 9;
+    const next = (this.pbrDebugMode + 1) % 8;
     this.pbrDebugMode = next;
-    // trigger lazy compile for next mode in background
     try { if (next !== 0 && this.gl) this._ensureDebugProgram(this.gl, next); } catch {}
     return this.pbrDebugMode;
   }
@@ -853,16 +849,15 @@ export class GPURenderer {
       } catch {}
       return null;
     };
-    // Mode mapping to source & program fields
+    // Mode mapping - mode 6 old (combined MossR+PuddleB) removed, 6=damaged,7=damagedNoise
     const map = {
       1: { key: 'mossNoise', progField: 'debugMossNoiseProgram', locField: 'uLocDebugMossNoise' },
       2: { key: 'mossEnv', progField: 'debugMossEnvProgram', locField: 'uLocDebugMossEnv' },
       3: { key: 'mossMaterial', progField: 'debugMossMaterialProgram', locField: 'uLocDebugMossMaterial' },
       4: { key: 'mossCombined', progField: 'debugMossCombinedProgram', locField: 'uLocDebugMossCombined', legacyProg: 'debugMossProgram', legacyLoc: 'uLocDebugMoss' },
       5: { key: 'puddle', progField: 'debugPuddleProgram', locField: 'uLocDebugPuddle' },
-      6: { key: 'combined', progField: 'debugCombinedProgram', locField: 'uLocDebugCombined' },
-      7: { key: 'damaged', progField: 'debugDamagedProgram', locField: 'uLocDebugDamaged' },
-      8: { key: 'damagedNoise', progField: 'debugDamagedNoiseProgram', locField: 'uLocDebugDamagedNoise' }
+      6: { key: 'damaged', progField: 'debugDamagedProgram', locField: 'uLocDebugDamaged' },
+      7: { key: 'damagedNoise', progField: 'debugDamagedNoiseProgram', locField: 'uLocDebugDamagedNoise' }
     };
     const entry = map[mode];
     if (!entry) return;
@@ -1137,7 +1132,7 @@ void main(){ v_uv = a_pos*0.5+0.5; gl_Position = vec4(a_pos,0.0,1.0); }`;
     if (this.pbrDebugMode !== 0) {
       try { this._ensureDebugProgram(gl, this.pbrDebugMode); } catch {}
     }
-    // Swap shaders for debug - v21 moss decomposed + damaged: 0 Normal,1 mossNoise,2 mossEnv,3 mossMat,4 mossCombined,5 puddle,6 combined,7 damaged,8 damagedNoise
+    // Swap shaders for debug - v26: 0 Normal,1 mossNoise,2 mossEnv,3 mossMat,4 mossCombined,5 puddle,6 damaged,7 damagedNoise — mode 6 old (MossR+PuddleB) removed
     let curProg = this.program;
     let curULoc = this.uLoc;
     if (this.pbrDebugMode === 1 && this.debugMossNoiseProgram) { curProg = this.debugMossNoiseProgram; curULoc = this.uLocDebugMossNoise || this.uLoc; }
@@ -1145,9 +1140,8 @@ void main(){ v_uv = a_pos*0.5+0.5; gl_Position = vec4(a_pos,0.0,1.0); }`;
     else if (this.pbrDebugMode === 3 && this.debugMossMaterialProgram) { curProg = this.debugMossMaterialProgram; curULoc = this.uLocDebugMossMaterial || this.uLoc; }
     else if (this.pbrDebugMode === 4 && this.debugMossCombinedProgram) { curProg = this.debugMossCombinedProgram; curULoc = this.uLocDebugMossCombined || this.uLoc; }
     else if (this.pbrDebugMode === 5 && this.debugPuddleProgram) { curProg = this.debugPuddleProgram; curULoc = this.uLocDebugPuddle || this.uLoc; }
-    else if (this.pbrDebugMode === 6 && this.debugCombinedProgram) { curProg = this.debugCombinedProgram; curULoc = this.uLocDebugCombined || this.uLoc; }
-    else if (this.pbrDebugMode === 7 && this.debugDamagedProgram) { curProg = this.debugDamagedProgram; curULoc = this.uLocDebugDamaged || this.uLoc; }
-    else if (this.pbrDebugMode === 8 && this.debugDamagedNoiseProgram) { curProg = this.debugDamagedNoiseProgram; curULoc = this.uLocDebugDamagedNoise || this.uLoc; }
+    else if (this.pbrDebugMode === 6 && this.debugDamagedProgram) { curProg = this.debugDamagedProgram; curULoc = this.uLocDebugDamaged || this.uLoc; }
+    else if (this.pbrDebugMode === 7 && this.debugDamagedNoiseProgram) { curProg = this.debugDamagedNoiseProgram; curULoc = this.uLocDebugDamagedNoise || this.uLoc; }
     // legacy fallback: old mode1 stored as debugMossProgram (combined)
     else if (this.pbrDebugMode === 1 && this.debugMossProgram) { curProg = this.debugMossProgram; curULoc = this.uLocDebugMoss || this.uLoc; }
     // fallback to main if lazy compile still pending / failed
