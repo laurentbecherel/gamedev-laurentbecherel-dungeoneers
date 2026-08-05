@@ -94,6 +94,13 @@ export function generateModifierMap(dungeon, config) {
   const puddleThreshold = genCfg.puddleThreshold ?? 0.55;
   const puddleFeather = genCfg.puddleFeather ?? 0.11;
   const puddleBoost = genCfg.debugPuddleBoost ?? 1.1;
+  const damagedThreshold = genCfg.damagedThreshold ?? 0.78;
+  const damagedFeather = genCfg.damagedFeather ?? 0.06;
+  const damagedBoost = genCfg.damagedBoost ?? 0.85;
+  const damagedScaleLarge = genCfg.damagedScaleLarge ?? 0.09;
+  const damagedScaleMed = genCfg.damagedScaleMed ?? 0.22;
+  const damagedScaleSmall = genCfg.damagedScaleSmall ?? 0.55;
+  const damagedScaleCrack = genCfg.damagedScaleCrack ?? 0.16;
   const roleWeights = genCfg.roleWeights || DEFAULT_ROLE_WEIGHTS;
 
   const roomGrid = new Int16Array(size).fill(-1);
@@ -221,13 +228,59 @@ export function generateModifierMap(dungeon, config) {
       mossI = Math.max(0, Math.min(1, mossI));
     }
 
+    // Damaged – chaotic scarring: multi-scale warped FBM + ridged cracks + cross scratches
+    const roleDamaged = rw.damaged ?? 0.0;
+    let damagedI = 0;
+    if (roleDamaged > 0.001) {
+      // domain warp for chaos
+      const wx = fbm(xc * 0.11, yc * 0.11, seed+611, 2) * 1.4;
+      const wy = fbm(xc * 0.11 + 7.3, yc * 0.11 + 3.1, seed+612, 2) * 1.4;
+      // large chips / gouges
+      const largeD = fbm((xc+wx) * damagedScaleLarge, (yc+wy) * damagedScaleLarge, seed+614, 4);
+      // medium damage patches
+      const medD = fbm((xc+wx*0.6) * damagedScaleMed + 13.1, (yc+wy*0.6) * damagedScaleMed + 7.7, seed+615, 3);
+      // fine grit
+      const smallD = fbm(xc * damagedScaleSmall, yc * damagedScaleSmall, seed+616, 2);
+      // crack / ridge – ridged noise = sharp cracks
+      const crackRaw = fbm((xc+wx) * damagedScaleCrack, (yc+wy) * damagedScaleCrack, seed+617, 2);
+      let ridge = 1.0 - Math.abs(crackRaw * 2.0 - 1.0);
+      ridge = Math.pow(ridge, 2.0); // sharpen
+      // cross scratches (anisotropic)
+      const scratchA = fbm(xc * 0.75, yc * 0.25, seed+618, 2);
+      const scratchB = fbm(xc * 0.25, yc * 0.75, seed+619, 2);
+      let scratch = scratchA * scratchB; // cross
+      scratch = Math.pow(scratch, 0.7);
+
+      // chaotic combined – weights mirror shader defaults but CPU side for cell biome gating
+      let combinedD = largeD * 0.45 + medD * 0.28 + smallD * 0.15 + ridge * 0.38 + scratch * 0.22;
+      // per-cell hash jitter for extra chaos
+      combinedD += (hash2i(x, y, seed+621) - 0.5) * 0.07;
+      combinedD = Math.max(0, Math.min(1, combinedD));
+
+      const lowD = damagedThreshold - damagedFeather;
+      const highD = damagedThreshold + damagedFeather;
+      let tD = (combinedD - lowD) / Math.max(0.0001, highD - lowD);
+      tD = Math.max(0, Math.min(1, tD));
+      tD = smooth(tD);
+      // shape biased by small detail and ridge emphasis
+      const shapeD = tD * (0.55 + 0.45 * smallD) * (0.60 + 0.40 * (ridge * 1.2));
+
+      // damaged on both floors and walls, slightly boosted near walls (battle damage on walls)
+      const wallBoostD = isWallCell(x,y) ? 0.15 : (isNearWall(x,y) ? 1.18 : 1.0);
+      const globalD = fbm(xc * globalNoiseScale * 1.1, yc * globalNoiseScale * 1.1, seed+622, 2);
+
+      damagedI = roleDamaged * shapeD * wallBoostD * (0.50 + 0.50 * globalD) * damagedBoost;
+      // allow floors too, don't zero them like puddle
+      damagedI = Math.max(0, Math.min(1, damagedI));
+    }
+
     const envI = envField[i]; // smooth 0..1 wall proximity + corners, feathered via blur + LINEAR tex filtering
 
     data[i*4 + MOD_CHANNELS.MOSS] = Math.round(mossI*255);
     data[i*4 + MOD_CHANNELS.WATER] = 0;
     data[i*4 + MOD_CHANNELS.PUDDLE] = Math.round(puddleI*255);
     data[i*4 + MOD_CHANNELS.DUST] = Math.round(envI*255);
-    data2[i*4 + MOD2_CHANNELS.DAMAGED] = 0;
+    data2[i*4 + MOD2_CHANNELS.DAMAGED] = Math.round(damagedI*255);
     data2[i*4 + MOD2_CHANNELS.BLOOD] = 0;
   }
   return { data, data2, w, h, enabled:true, packing: MOD_PACKING };

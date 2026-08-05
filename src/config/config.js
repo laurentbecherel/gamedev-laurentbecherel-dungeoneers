@@ -42,6 +42,17 @@ export const CONFIG_PATHS = {
   'main':           ['config/main']
 };
 
+function fetchWithTimeout(url, opts={}, timeoutMs=5000){
+  const controller = typeof AbortController !== 'undefined' ? new AbortController() : null;
+  const signal = controller ? controller.signal : undefined;
+  let timer = null;
+  if(controller && timeoutMs>0){
+    timer = setTimeout(()=>{ try{ controller.abort(); }catch{} }, timeoutMs);
+  }
+  const fetchOpts = signal ? {...opts, signal} : opts;
+  return fetch(url, fetchOpts).finally(()=>{ if(timer) clearTimeout(timer); });
+}
+
 async function _fetchFromCandidates(candidates){
   for(const p of candidates){
     const fullName = p.split('/').pop();
@@ -49,12 +60,18 @@ async function _fetchFromCandidates(candidates){
     // check pathCache
     if(_pathCache[p]) return { path: p, data: clone(_pathCache[p]) };
     try{
-      const r = await fetch('/api/assets/' + p);
-      if(!r.ok) continue;
+      console.log('[config] fetching candidate', p);
+      const r = await fetchWithTimeout('/api/assets/' + p, {}, 5000);
+      if(!r.ok){
+        console.warn('[config] candidate not ok', p, r.status);
+        continue;
+      }
       const j = await r.json();
       _pathCache[p] = clone(j);
+      console.log('[config] candidate ok', p);
       return { path: p, data: clone(j) };
     }catch(e){
+      console.warn('[config] candidate fetch failed', p, e?.name, e?.message);
       continue;
     }
   }
@@ -94,14 +111,16 @@ async function _saveConfig(logicalName, cfg){
 export async function getConfig(){
   if(_cache) return clone(_cache);
   try{
-    const r = await fetch('/api/assets/config/main');
-    if(!r.ok) throw 0;
+    console.log('[config] fetching config/main');
+    const r = await fetchWithTimeout('/api/assets/config/main', {}, 5000);
+    if(!r.ok) throw new Error('main not ok '+r.status);
     _cache = await r.json();
     _caches['main'] = clone(_cache);
     _pathCache['config/main'] = clone(_cache);
+    console.log('[config] config/main ok');
     return clone(_cache);
   }catch(e){
-    console.error('getConfig failed — config asset must exist at src/assets/config/main.json', e);
+    console.error('getConfig failed — config asset must exist at src/assets/config/main.json', e?.name, e?.message, e);
     throw e;
   }
 }
@@ -166,10 +185,30 @@ export async function saveFogConfig(cfg){
 // Batch load all rendering configs at once for Game init
 export async function getAllRenderConfigs(){
   const names = ['rendering','palette','pom','pbr','ao','lighting','shadows','chamfer','corners','raymarch','fog','generator','map','materials-proc','material-assignments','material-modifiers','ssr','player','debug','discovery','sprites','light-types','particles'];
-  const promises = names.map(n => _fetchConfig(n).catch(()=>null));
-  const results = await Promise.all(promises);
+  console.log('[config] getAllRenderConfigs start', names.length, 'configs');
+  const promises = names.map(async (n) => {
+    try{
+      const v = await _fetchConfig(n);
+      console.log('[config] loaded', n);
+      return v;
+    }catch(e){
+      console.warn('[config] failed to load', n, e?.message);
+      return null;
+    }
+  });
+  // overall timeout: if any fetch hangs forever, we don't want to hang forever – race with 15s timeout
+  const timeout = new Promise((_, rej) => setTimeout(()=>rej(new Error('getAllRenderConfigs timeout after 15s')), 15000));
+  let results;
+  try{
+    results = await Promise.race([Promise.all(promises), timeout]);
+  }catch(e){
+    console.error('[config] getAllRenderConfigs timeout or error', e);
+    // return partial nulls
+    results = await Promise.all(promises.map(p=>p.catch(()=>null)));
+  }
   const out = {};
   names.forEach((n,i)=> out[n]=results[i]);
+  console.log('[config] getAllRenderConfigs done, loaded', Object.values(out).filter(Boolean).length, '/', names.length);
   // also legacy flat aliases for convenience
   out['materials-proc'] = out['materials-proc'] || null;
   out['material-assignments'] = out['material-assignments'] || null;
@@ -182,19 +221,24 @@ export async function getAsset(c,n){
   // check logical cache if c is config and n matches logical name
   if(_caches[n] && (c==='config' || c.startsWith('config/'))) return clone(_caches[n]);
   if(_pathCache[key]) return clone(_pathCache[key]);
-  const r=await fetch('/api/assets/'+c+'/'+n);
-  if(!r.ok) return null;
-  const j = await r.json();
-  _pathCache[key]=clone(j);
-  // if this path corresponds to a logical config, cache it logically too
-  for(const [logical, cands] of Object.entries(CONFIG_PATHS)){
-    if(cands.includes(key)){
-      _caches[logical]=clone(j);
-      break;
+  try{
+    const r=await fetchWithTimeout('/api/assets/'+c+'/'+n, {}, 5000);
+    if(!r.ok) return null;
+    const j = await r.json();
+    _pathCache[key]=clone(j);
+    // if this path corresponds to a logical config, cache it logically too
+    for(const [logical, cands] of Object.entries(CONFIG_PATHS)){
+      if(cands.includes(key)){
+        _caches[logical]=clone(j);
+        break;
+      }
     }
+    if(c==='config' && n==='main') _cache=clone(j);
+    return clone(j);
+  }catch(e){
+    console.warn('[config] getAsset failed', key, e?.name, e?.message);
+    return null;
   }
-  if(c==='config' && n==='main') _cache=clone(j);
-  return clone(j);
 }
 export async function saveAsset(c,n,d){
   const key = c + '/' + n;

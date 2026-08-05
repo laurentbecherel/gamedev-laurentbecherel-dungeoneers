@@ -1,4 +1,4 @@
-// Scene rendering helpers - v15 moss decomposed debug
+// Scene rendering helpers - v21 damaged decomposed + POM integration
 export const glslScene = `
 // Grid debug colors
 vec3 getGridColor(in vec2 world, in bool isCeil) {
@@ -37,12 +37,9 @@ vec3 debugFinalPuddleMask(in vec3 worldPos, in float matHeight, in float ao) {
   return clamp(col, 0.0, 1.0);
 }
 
-// Moss decomposed debug - v15 uses new pipeline helpers from modifiers.glsl
-// Legacy entry (combined) kept for compatibility
+// Moss legacy
 vec3 debugFinalMossMask(in vec3 worldPos, in float matHeight, in float ao) {
-  // For legacy we now compute final mask with dummy rough=0.7 and isFloor based on Z
-  float isFloor = step(worldPos.z, 0.6); // floor if low Z
-  // Need rough - sample approx 0.7 if not provided
+  float isFloor = step(worldPos.z, 0.6);
   float rough = 0.7;
   float finalM = mossFinalMask(worldPos, matHeight, ao, rough, isFloor);
   float edge = finalM * (1.0 - finalM) * 4.0;
@@ -52,7 +49,6 @@ vec3 debugFinalMossMask(in vec3 worldPos, in float matHeight, in float ao) {
   return clamp(bg + inside + edgeCol, 0.0, 1.0);
 }
 
-// New decomposed debug functions - wrappers around modifier colored helpers
 vec3 debugMossNoiseMask(in vec3 worldPos) {
   float m = mossNoiseShape(worldPos);
   float raw = mossNoiseRaw(worldPos);
@@ -66,7 +62,7 @@ vec3 debugMossNoiseMask(in vec3 worldPos) {
 vec3 debugMossEnvMask(in vec3 worldPos, in float isFloorSurface) {
   float e = mossEnvMask(worldPos, isFloorSurface);
   float edge = e * (1.0 - e) * 2.5;
-  vec3 inside = vec3(0.85, 0.75, 0.15) * e * 1.2; // yellow for env
+  vec3 inside = vec3(0.85, 0.75, 0.15) * e * 1.2;
   vec3 edgeCol = vec3(1.0, 0.95, 0.45) * edge * 0.6;
   vec3 bg = vec3(0.02,0.02,0.03);
   vec3 col = bg + inside + edgeCol;
@@ -91,17 +87,43 @@ vec3 debugMossCombinedMask(in vec3 worldPos, in float matHeight, in float ao, in
   return clamp(bg + c + edgeCol, 0.0, 1.0);
 }
 
+// Damaged debug
+vec3 debugDamagedMask(in vec3 worldPos, float matHeight, float ao, float rough, float isFloor) {
+  float f = damagedFinalMask(worldPos, matHeight, ao, rough, isFloor);
+  float edge = f * (1.0 - f) * 5.0;
+  vec3 inside = vec3(0.85, 0.22, 0.18) * f * 2.2;
+  vec3 edgeCol = vec3(1.0, 0.55, 0.25) * edge * 0.95;
+  vec3 ridge = vec3(1.0, 0.85, 0.2) * damagedRidgeRaw(worldPos) * f * 0.6;
+  vec3 bg = vec3(0.02,0.02,0.03);
+  return clamp(bg + inside + edgeCol + ridge, 0.0, 1.0);
+}
+vec3 debugDamagedNoiseMask(in vec3 worldPos) {
+  float m = damagedNoiseShape(worldPos);
+  float raw = damagedNoiseRaw(worldPos);
+  float ridge = damagedRidgeRaw(worldPos);
+  float edge = m * (1.0 - m) * 3.5;
+  vec3 inside = vec3(0.85, 0.22, 0.18) * m * (0.5 + 0.7*raw + 0.4*ridge) * 1.8;
+  vec3 edgeCol = vec3(1.0, 0.65, 0.25) * edge * 0.85 + vec3(1.0,0.9,0.2)*ridge*m*0.5;
+  vec3 bg = vec3(0.02,0.02,0.03);
+  return clamp(bg + inside + edgeCol, 0.0, 1.0);
+}
+
 vec3 shadeHorizontalCell(in vec2 horizWorld, in vec2 horizUV, in float matId, in float count, in vec2 ray, in float eyeZ, in float heightAtRay, in bool isCeil, out float outDist) {
   float layer = clampLayer(matId, count);
   vec2 uv = horizUV;
   float pomEn = float(u_pomEnabled);
   float isCeilF = float(isCeil);
+  vec3 worldPosForPOM = vec3(horizWorld, heightAtRay);
+  float isFloorSurfaceForPOM = 1.0;
+
+  // POM with damaged integration – dramatic parallax
   vec3 viewDirCeil = normalize(vec3(-ray, 0.5));
-  vec2 poCeil = pomOffsetArray(u_ceilHeight, uv, layer, viewDirCeil, u_pomCeil, u_pomSteps);
+  vec2 poCeil = pomOffsetArrayDamaged(u_ceilHeight, uv, layer, viewDirCeil, u_pomCeil, u_pomSteps, worldPosForPOM, isFloorSurfaceForPOM);
   vec3 viewDirFloor = normalize(vec3(-ray, 0.8));
-  vec2 poFloor = pomOffsetArray(u_floorHeight, uv, layer, viewDirFloor, u_pomFloor, u_pomSteps);
+  vec2 poFloor = pomOffsetArrayDamaged(u_floorHeight, uv, layer, viewDirFloor, u_pomFloor, u_pomSteps, worldPosForPOM, isFloorSurfaceForPOM);
   vec2 po = mix(poFloor, poCeil, isCeilF);
   uv = mix(uv, uv + po, pomEn);
+
   vec3 albedoRaw; vec3 normalRaw; float heightVal; vec4 rma; vec3 Nw;
   if (isCeil) {
     albedoRaw = sampleCeilAlbedo(layer, uv);
@@ -187,7 +209,9 @@ vec3 shadeWallCell(in float wallU, in float wallV, in float matId, in float wc, 
   vec3 viewDir = normalize(vec3(u_playerPos, u_playerHeight) - worldPos);
   vec3 viewTS = vec3(dot(viewDir, tangent), dot(viewDir, bitangent), dot(viewDir, Ngeom));
   float pomEn = float(u_pomEnabled);
-  vec2 poWall = pomOffsetArray(u_wallHeight, uv, layer, viewTS, u_pomWall, u_pomSteps);
+  float isFloorSurface = 0.0;
+  // Damaged-aware POM – breaks material dramatically
+  vec2 poWall = pomOffsetArrayDamaged(u_wallHeight, uv, layer, viewTS, u_pomWall, u_pomSteps, worldPos, isFloorSurface);
   vec2 uvPOM = mix(uv, uv + poWall, pomEn);
   vec3 albedoRaw = sampleWallAlbedo(layer, uvPOM);
   vec3 normalRaw = sampleWallNormalRaw(layer, uvPOM);
@@ -218,7 +242,6 @@ vec3 shadeWallCell(in float wallU, in float wallV, in float matId, in float wc, 
   Nw = mix(NwBefore, Nw, vertEn);
   albedoRaw = mix(albedoBefore, albedoRaw, vertEn);
   rmaW = mix(rmaBefore, rmaW, vertEn);
-  float isFloorSurface = 0.0;
   applyModifiers(albedoRaw, Nw, rmaW.r, rmaW.g, rmaW.a, worldPos, heightVal, isFloorSurface);
 
   vec3 color = pbrShade(albedoRaw, Nw, rmaW.r, rmaW.g, rmaW.a, emissiveW, worldPos, viewDir);
