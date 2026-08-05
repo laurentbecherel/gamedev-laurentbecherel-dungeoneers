@@ -178,8 +178,30 @@ const FRAME_OFFSETS = {
   renderWallDarken: 520,
   renderEyeFactor: 524,
   ssrDebugMode: 528,
+  ssrSteps: 532,
+  ssrBinarySteps: 536,
+  ssrMaxDistance: 540,
+  ssrThickness: 544,
+  ssrStride: 548,
+  ssrJitter: 552,
+  ssrDepthBias: 556,
+  ssrZThicknessScale: 560,
+  ssrMinPuddleMask: 564,
+  ssrNormalThreshold: 568,
+  ssrMaxGrazingAngle: 572,
+  ssrEdgeFadeStart: 576,
+  ssrEdgeFadeEnd: 580,
+  ssrDistanceFadeStart: 584,
+  ssrDistanceFadeEnd: 588,
+  ssrFresnelPower: 592,
+  ssrFresnelMin: 596,
+  ssrFresnelMax: 600,
+  ssrBlendStrength: 604,
+  ssrPuddleMaskInfluence: 608,
+  ssrTintStrength: 612,
+  ssrAdditiveBoost: 616,
 };
-const FRAME_UNIFORM_SIZE = 560;
+const FRAME_UNIFORM_SIZE = 640;
 
 function packFrameUniforms(buf, cfg) {
   const dv = new DataView(buf);
@@ -308,6 +330,28 @@ function packFrameUniforms(buf, cfg) {
   wF32(FRAME_OFFSETS.renderWallDarken, cfg.renderWallDarken ?? 0.85);
   wF32(FRAME_OFFSETS.renderEyeFactor, cfg.renderEyeFactor ?? 0.15);
   wI32(FRAME_OFFSETS.ssrDebugMode, cfg.ssrDebugMode ?? 0);
+  wI32(FRAME_OFFSETS.ssrSteps, cfg.ssrSteps ?? 48);
+  wI32(FRAME_OFFSETS.ssrBinarySteps, cfg.ssrBinarySteps ?? 6);
+  wF32(FRAME_OFFSETS.ssrMaxDistance, cfg.ssrMaxDistance ?? 12.0);
+  wF32(FRAME_OFFSETS.ssrThickness, cfg.ssrThickness ?? 2.0);
+  wF32(FRAME_OFFSETS.ssrStride, cfg.ssrStride ?? 1.08);
+  wF32(FRAME_OFFSETS.ssrJitter, cfg.ssrJitter ?? 0.02);
+  wF32(FRAME_OFFSETS.ssrDepthBias, cfg.ssrDepthBias ?? 0.06);
+  wF32(FRAME_OFFSETS.ssrZThicknessScale, cfg.ssrZThicknessScale ?? 0.15);
+  wF32(FRAME_OFFSETS.ssrMinPuddleMask, cfg.ssrMinPuddleMask ?? 0.1);
+  wF32(FRAME_OFFSETS.ssrNormalThreshold, cfg.ssrNormalThreshold ?? 0.35);
+  wF32(FRAME_OFFSETS.ssrMaxGrazingAngle, cfg.ssrMaxGrazingAngle ?? 0.92);
+  wF32(FRAME_OFFSETS.ssrEdgeFadeStart, cfg.ssrEdgeFadeStart ?? 1.15);
+  wF32(FRAME_OFFSETS.ssrEdgeFadeEnd, cfg.ssrEdgeFadeEnd ?? 1.35);
+  wF32(FRAME_OFFSETS.ssrDistanceFadeStart, cfg.ssrDistanceFadeStart ?? 12.0);
+  wF32(FRAME_OFFSETS.ssrDistanceFadeEnd, cfg.ssrDistanceFadeEnd ?? 35.0);
+  wF32(FRAME_OFFSETS.ssrFresnelPower, cfg.ssrFresnelPower ?? 2.2);
+  wF32(FRAME_OFFSETS.ssrFresnelMin, cfg.ssrFresnelMin ?? 0.25);
+  wF32(FRAME_OFFSETS.ssrFresnelMax, cfg.ssrFresnelMax ?? 1.0);
+  wF32(FRAME_OFFSETS.ssrBlendStrength, cfg.ssrBlendStrength ?? 4.0);
+  wF32(FRAME_OFFSETS.ssrPuddleMaskInfluence, cfg.ssrPuddleMaskInfluence ?? 0.7);
+  wF32(FRAME_OFFSETS.ssrTintStrength, cfg.ssrTintStrength ?? 0.1);
+  wF32(FRAME_OFFSETS.ssrAdditiveBoost, cfg.ssrAdditiveBoost ?? 0.15);
 }
 
 // LightData as 40 vec4: 5 per light
@@ -948,8 +992,8 @@ export class GPURenderer {
     const pipelineLayoutRaymarch = device.createPipelineLayout({ bindGroupLayouts: [bgl0, bgl1, bgl2], label:'pl_raymarch' });
     // Fix: SSR originally included 16 material textures + 3 SSR textures = 19 >16 limit. Now only use frame + samplers + SSR textures = 3 textures
     const pipelineLayoutSSR = device.createPipelineLayout({ bindGroupLayouts: [bgl0, bgl2, bgl3], label:'pl_ssr' });
-    // Composite only needs comp textures + sampler (2 groups)
-    const pipelineLayoutComposite = device.createPipelineLayout({ bindGroupLayouts: [bglComp, bgl2], label:'pl_comp' });
+    // Composite now needs frame (for live-edit fade params) + comp textures + sampler
+    const pipelineLayoutComposite = device.createPipelineLayout({ bindGroupLayouts: [bgl0, bglComp, bgl2], label:'pl_comp' });
     // Quantize needs frame + quant textures + sampler
     const pipelineLayoutQuant = device.createPipelineLayout({ bindGroupLayouts: [bgl0, bglQuant, bgl2], label:'pl_quant' });
 
@@ -1846,6 +1890,28 @@ export class GPURenderer {
       pbrGGXEps: 0.0001,
       renderFloorMul: 0.7, renderCeilMul:0.8, renderWallDarken:0.85, renderEyeFactor:0.15,
       ssrDebugMode: this.ssrDebugMode,
+      ssrSteps: getDeep(cfg, ['ssr.rayMarch.steps','ssr.steps'], 48),
+      ssrBinarySteps: getDeep(cfg, ['ssr.rayMarch.binarySteps','ssr.binarySteps'], 6),
+      ssrMaxDistance: getDeep(cfg, ['ssr.rayMarch.maxDistance','ssr.maxDistance'], 12.0),
+      ssrThickness: getDeep(cfg, ['ssr.rayMarch.thickness','ssr.thickness'], 2.0),
+      ssrStride: getDeep(cfg, ['ssr.rayMarch.stride','ssr.stride'], 1.08),
+      ssrJitter: getDeep(cfg, ['ssr.rayMarch.jitter','ssr.jitter'], 0.02),
+      ssrDepthBias: getDeep(cfg, ['ssr.rayMarch.depthBias','ssr.depthBias'], 0.06),
+      ssrZThicknessScale: getDeep(cfg, ['ssr.rayMarch.zThicknessScale','ssr.zThicknessScale'], 0.15),
+      ssrMinPuddleMask: getDeep(cfg, ['ssr.gating.minPuddleMask','ssr.minPuddleMask'], 0.1),
+      ssrNormalThreshold: getDeep(cfg, ['ssr.gating.normalThreshold','ssr.normalThreshold'], 0.35),
+      ssrMaxGrazingAngle: getDeep(cfg, ['ssr.gating.maxGrazingAngle','ssr.maxGrazingAngle'], 0.92),
+      ssrEdgeFadeStart: getDeep(cfg, ['ssr.fade.edgeFadeStart','ssr.edgeFadeStart'], 1.15),
+      ssrEdgeFadeEnd: getDeep(cfg, ['ssr.fade.edgeFadeEnd','ssr.edgeFadeEnd'], 1.35),
+      ssrDistanceFadeStart: getDeep(cfg, ['ssr.fade.distanceFadeStart','ssr.distanceFadeStart'], 12.0),
+      ssrDistanceFadeEnd: getDeep(cfg, ['ssr.fade.distanceFadeEnd','ssr.distanceFadeEnd'], 35.0),
+      ssrFresnelPower: getDeep(cfg, ['ssr.fade.fresnelPower','ssr.fresnelPower'], 2.2),
+      ssrFresnelMin: getDeep(cfg, ['ssr.fade.fresnelMin','ssr.fresnelMin'], 0.25),
+      ssrFresnelMax: getDeep(cfg, ['ssr.fade.fresnelMax','ssr.fresnelMax'], 1.0),
+      ssrBlendStrength: getDeep(cfg, ['ssr.fade.blendStrength','ssr.composition.blendStrength','ssr.blendStrength'], 4.0),
+      ssrPuddleMaskInfluence: getDeep(cfg, ['ssr.fade.puddleMaskInfluence','ssr.puddleMaskInfluence'], 0.7),
+      ssrTintStrength: getDeep(cfg, ['ssr.composition.tintStrength','ssr.tintStrength'], 0.1),
+      ssrAdditiveBoost: getDeep(cfg, ['ssr.composition.additiveBoost','ssr.additiveBoost'], 0.15),
     };
 
     // Write frame uniform
@@ -1961,9 +2027,10 @@ export class GPURenderer {
           colorAttachments: [{ view: compView, clearValue:{ r:0,g:0,b:0,a:1 }, loadOp:'clear', storeOp:'store' }]
         });
         compPass.setPipeline(this.pipelines.composite);
-        // Composite layout [compTextures, samplers] = groups 0,1 (no frame to keep under texture limit)
-        compPass.setBindGroup(0, this.bindGroups.composite);
-        compPass.setBindGroup(1, this.bindGroups.samplers);
+        // Composite layout now [frame, compTextures, samplers] for live-edit fade params
+        compPass.setBindGroup(0, this.bindGroups.frame);
+        compPass.setBindGroup(1, this.bindGroups.composite);
+        compPass.setBindGroup(2, this.bindGroups.samplers);
         compPass.draw(3,1,0,0);
         compPass.end();
       } catch(e){ console.warn('[WebGPU] SSR/composite failed', e); }

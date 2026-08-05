@@ -159,7 +159,29 @@ struct FrameUniforms {
   renderWallDarken: f32,
   renderEyeFactor: f32,
   ssrDebugMode: i32,
-  _padEnd: vec3<i32>,
+  ssrSteps: i32,
+  ssrBinarySteps: i32,
+  ssrMaxDistance: f32,
+  ssrThickness: f32,
+  ssrStride: f32,
+  ssrJitter: f32,
+  ssrDepthBias: f32,
+  ssrZThicknessScale: f32,
+  ssrMinPuddleMask: f32,
+  ssrNormalThreshold: f32,
+  ssrMaxGrazingAngle: f32,
+  ssrEdgeFadeStart: f32,
+  ssrEdgeFadeEnd: f32,
+  ssrDistanceFadeStart: f32,
+  ssrDistanceFadeEnd: f32,
+  ssrFresnelPower: f32,
+  ssrFresnelMin: f32,
+  ssrFresnelMax: f32,
+  ssrBlendStrength: f32,
+  ssrPuddleMaskInfluence: f32,
+  ssrTintStrength: f32,
+  ssrAdditiveBoost: f32,
+  _padEnd: vec2<i32>,
 };
 
 struct LightEntry {
@@ -823,7 +845,29 @@ struct FrameUniforms {
   renderWallDarken: f32,
   renderEyeFactor: f32,
   ssrDebugMode: i32,
-  _padEnd: vec3<i32>,
+  ssrSteps: i32,
+  ssrBinarySteps: i32,
+  ssrMaxDistance: f32,
+  ssrThickness: f32,
+  ssrStride: f32,
+  ssrJitter: f32,
+  ssrDepthBias: f32,
+  ssrZThicknessScale: f32,
+  ssrMinPuddleMask: f32,
+  ssrNormalThreshold: f32,
+  ssrMaxGrazingAngle: f32,
+  ssrEdgeFadeStart: f32,
+  ssrEdgeFadeEnd: f32,
+  ssrDistanceFadeStart: f32,
+  ssrDistanceFadeEnd: f32,
+  ssrFresnelPower: f32,
+  ssrFresnelMin: f32,
+  ssrFresnelMax: f32,
+  ssrBlendStrength: f32,
+  ssrPuddleMaskInfluence: f32,
+  ssrTintStrength: f32,
+  ssrAdditiveBoost: f32,
+  _padEnd: vec2<i32>,
 };
 
 @group(0) @binding(3) var<uniform> frame: FrameUniforms;
@@ -908,8 +952,8 @@ fn traceScreenSpaceRaySSR_Full(startUV: vec2<f32>, N: vec3<f32>, V: vec3<f32>, l
     let sampledDepthNorm: f32 = gSmpl.b;
     if (sampledDepthNorm < 0.001) { tRay += tStep; tStep = tStep * stride; continue; }
     let sampledN: vec3<f32> = octaDecodeSSR(gSmpl.rg);
-    if (sampledN.z > 0.80) { tRay += tStep; tStep = tStep * stride; continue; }
-    if (uv.y < 0.25) { tRay += tStep; tStep = tStep * stride; continue; }
+    // Reject floor re-hit only – keep walls and ceiling (fix from 48e9608, d557895). 0.60 strict like WebGL2.
+    if (sampledN.z > 0.60) { tRay += tStep; tStep = tStep * stride; continue; }
     let sampledLin: f32 = sampledDepthNorm * frame.ssrDepthRange;
     let depthDiff: f32 = fwDist - sampledLin;
     let curThickness: f32 = thickness + tRay * zThicknessScale * 0.08;
@@ -926,7 +970,7 @@ fn traceScreenSpaceRaySSR_Full(startUV: vec2<f32>, N: vec3<f32>, V: vec3<f32>, l
         let midDepthNorm: f32 = midG.b;
         if (midDepthNorm < 0.001) { lowT = midT; continue; }
         let midN: vec3<f32> = octaDecodeSSR(midG.rg);
-        if (midN.z > 0.80) { lowT = midT; continue; }
+        if (midN.z > 0.60) { lowT = midT; continue; }
         let midLin: f32 = midDepthNorm * frame.ssrDepthRange;
         let midDiff: f32 = midProj.z - midLin;
         if (abs(midDiff) < curThickness) { highT = midT; } else { lowT = midT; }
@@ -936,7 +980,8 @@ fn traceScreenSpaceRaySSR_Full(startUV: vec2<f32>, N: vec3<f32>, V: vec3<f32>, l
       let finalUVFlip: vec2<f32> = vec2<f32>(finalProj.x, 1.0 - finalProj.y);
       let finalG: vec4<f32> = textureSampleLevel(gNormalDepthTex, nearestSampler, finalUVFlip, 0.0);
       let finalN: vec3<f32> = octaDecodeSSR(finalG.rg);
-      if (finalG.b > 0.001 && finalN.z <= 0.80 && finalProj.y > 0.25) {
+      // Final must not be floor – rely on normal only, no uv.y threshold (fix 48e9608)
+      if (finalG.b > 0.001 && finalN.z <= 0.60) {
         res.hitUV = finalProj.xy;
         res.color = textureSampleLevel(sceneTex, nearestSampler, finalUVFlip, 0.0).rgb;
         res.rayLength = highT;
@@ -949,25 +994,22 @@ fn traceScreenSpaceRaySSR_Full(startUV: vec2<f32>, N: vec3<f32>, V: vec3<f32>, l
     tStep = tStep * stride;
   }
 
-  if (res.hit < 0.5 && puddleMask > 0.01) {
+  // Fallback – fix 15f7f7e: remove clamp that sampled screen edge causing stretched columns.
+  // Only accept if inside screen and depth/normal valid (wall/ceiling), otherwise miss.
+  if (res.hit < 0.5 && puddleMask > 0.02) {
     let fallbackW: vec3<f32> = worldPos + R * (maxDistance * 0.5);
     let fProj: vec3<f32> = worldToScreenUVSSR_Full(fallbackW, camPos, eyeZ, playerAngle, planeLen, resolution, bobPixels);
-    let fUV: vec2<f32> = clamp(fProj.xy, vec2<f32>(0.0), vec2<f32>(1.0));
-    // Always show reflection for puddles, even if normal/depth check fails, to ensure SSR visible
+    let fUV: vec2<f32> = fProj.xy;
     if (fUV.x >= 0.0 && fUV.x <= 1.0 && fUV.y >= 0.0 && fUV.y <= 1.0) {
-      // Flip for texture sampling
       let fUVFlip: vec2<f32> = vec2<f32>(fUV.x, 1.0 - fUV.y);
       let fG: vec4<f32> = textureSampleLevel(gNormalDepthTex, nearestSampler, fUVFlip, 0.0);
-      var sampleCol: vec3<f32> = textureSampleLevel(sceneTex, nearestSampler, fUVFlip, 0.0).rgb;
-      if (fG.b > 0.001) {
-        res.color = sampleCol * 0.75;
-        res.hit = 0.6;
-      } else {
-        res.color = sampleCol * 0.5 + vec3<f32>(0.15, 0.18, 0.25);
-        res.hit = 0.4;
+      let fN: vec3<f32> = octaDecodeSSR(fG.rg);
+      if (fG.b > 0.001 && fN.z <= 0.60) {
+        res.color = textureSampleLevel(sceneTex, nearestSampler, fUVFlip, 0.0).rgb * 0.7;
+        res.hit = 0.5;
+        res.hitUV = fUV;
+        res.rayLength = maxDistance * 0.5;
       }
-      res.hitUV = fUV;
-      res.rayLength = maxDistance * 0.5;
     }
   }
   return res;
@@ -990,10 +1032,10 @@ fn fs_main(@location(0) v_uv: vec2<f32>) -> SSRFSOut {
 
   var out: SSRFSOut;
 
-  // gating thresholds from ssr.json – lowered for WebGPU parity (was 0.10, now 0.01 to ensure visibility)
-  let minPuddleMask: f32 = 0.01;
-  let normalThreshold: f32 = 0.05;
-  let maxGrazingAngle: f32 = 0.99;
+  // gating thresholds from ssr.json � live-editable via frame uniform
+  let minPuddleMask: f32 = frame.ssrMinPuddleMask;
+  let normalThreshold: f32 = frame.ssrNormalThreshold;
+  let maxGrazingAngle: f32 = frame.ssrMaxGrazingAngle;
 
   // debug modes
   if (frame.ssrDebugMode == 1) {
@@ -1025,20 +1067,21 @@ fn fs_main(@location(0) v_uv: vec2<f32>) -> SSRFSOut {
   let NdotV: f32 = clamp(dot(N, V), 0.0, 1.0);
   if (NdotV < (1.0 - maxGrazingAngle)) { out.color = vec4<f32>(0.0); return out; }
 
-  let steps: i32 = 48;
-  let binarySteps: i32 = 6;
-  let maxDistance: f32 = 12.0;
-  let thickness: f32 = 2.0;
-  let stride: f32 = 1.08;
-  let jitter: f32 = 0.02;
-  let depthBias: f32 = 0.06;
-  let zThicknessScale: f32 = 0.15;
+  // Live-editable from ssr.json via frame uniform (fix for hardcoded regression)
+  let steps: i32 = frame.ssrSteps;
+  let binarySteps: i32 = frame.ssrBinarySteps;
+  let maxDistance: f32 = frame.ssrMaxDistance;
+  let thickness: f32 = frame.ssrThickness;
+  let stride: f32 = frame.ssrStride;
+  let jitter: f32 = frame.ssrJitter;
+  let depthBias: f32 = frame.ssrDepthBias;
+  let zThicknessScale: f32 = frame.ssrZThicknessScale;
 
   let r: SSRResult_Full = traceScreenSpaceRaySSR_Full(v_uv, N, V, linearDepth, puddleMask, 0.04, resolution, steps, binarySteps, maxDistance, thickness, stride, jitter, depthBias, zThicknessScale, frame.playerPos, 0.5, frame.playerAngle, planeLen, frame.bobPixels);
 
-  let edgeFadeStart: f32 = 1.15; let edgeFadeEnd: f32 = 1.35;
-  let distFadeStart: f32 = 12.0; let distFadeEnd: f32 = 35.0;
-  let fresnelPower: f32 = 2.2; let fresnelMin: f32 = 0.25; let fresnelMax: f32 = 1.0;
+  let edgeFadeStart: f32 = frame.ssrEdgeFadeStart; let edgeFadeEnd: f32 = frame.ssrEdgeFadeEnd;
+  let distFadeStart: f32 = frame.ssrDistanceFadeStart; let distFadeEnd: f32 = frame.ssrDistanceFadeEnd;
+  let fresnelPower: f32 = frame.ssrFresnelPower; let fresnelMin: f32 = frame.ssrFresnelMin; let fresnelMax: f32 = frame.ssrFresnelMax;
 
   let edgeFade: f32 = 1.0 - smoothstep(edgeFadeStart, edgeFadeEnd, max(abs(r.hitUV.x - 0.5), abs(r.hitUV.y - 0.5)) * 2.0);
   let distFade: f32 = 1.0 - smoothstep(distFadeStart, distFadeEnd, r.rayLength);
@@ -1065,10 +1108,28 @@ export const fsCompositeWgsl = `
 struct CompOut {
   @location(0) color: vec4<f32>,
 };
-@group(0) @binding(0) var sceneTex: texture_2d<f32>;
-@group(0) @binding(1) var ssrTex: texture_2d<f32>;
-@group(0) @binding(2) var gNormalDepthTex: texture_2d<f32>;
-@group(1) @binding(0) var nearestSampler: sampler;
+struct FrameUniforms {
+  resolution: vec2<f32>, playerPos: vec2<f32>, playerAngle: f32, fov: f32, playerHeight: f32, bobPixels: f32,
+  mapSize: vec2<f32>, time: f32, wallCount: f32, floorCount: f32, ceilCount: f32, ssrDepthRange: f32,
+  authentic: i32, bandLevels: i32, gridDebug: i32, lightingEnabled: i32, pbrEnabled: i32, pomEnabled: i32, pbrDebugMode: i32,
+  fogEnabled: i32, modifiersEnabled: i32, numLights: i32, _pad0: i32,
+  ambientColor: vec3<f32>, _padAC: f32, ambientLevel: f32, worldAmbientMul: f32, sunDir: vec2<f32>, sunDirZ: f32, sunIntensity: f32,
+  sunColor: vec3<f32>, _padSC: f32, fogBase: f32, fogSquared: f32, fogColor: vec3<f32>, _padFC: f32,
+  pomWall: f32, pomFloor: f32, pomCeil: f32, pomSteps: i32, pomMaxOffset: f32, pomMinVz: f32, pomMinEffVz: f32, pomFadeStart: f32, pomFadeEnd: f32,
+  aoSun: f32, aoPoint: f32, aoAmbient: f32, _padAO: f32,
+  chamferEnabled: i32, chamferFloorSize: f32, chamferCeilSize: f32, chamferWallSize: f32, chamferCornerRadius: f32, chamferDarken: f32, chamferRoundCorners: i32,
+  chamferBlendFloor: f32, chamferBlendWall: f32, chamferRough: f32, chamferFloor: f32, chamferCeil: f32, chamferWall: f32,
+  chamferTrimFloor: f32, chamferTrimCeil: f32, chamferTrimWall: f32, chamferTrimFloorAlt: f32, chamferTrimCeilAlt: f32, chamferCreviceEnd: f32, chamferCreviceSmoothEnd: f32, chamferTrimStart: f32, chamferTrimMid: f32, chamferTrimEnd: f32,
+  chamferGridEnabled: i32, chamferGridFloorSize: f32, chamferGridCeilSize: f32, chamferGridFloorDarken: f32, chamferGridCeilDarken: f32, chamferGridFloorTrim: f32, chamferGridCeilTrim: f32, chamferGridFloorRough: f32, chamferGridCeilRough: f32, chamferGridFloorBlend: f32, chamferGridCeilBlend: f32, chamferGridCreviceEnd: f32, chamferGridCreviceSmoothEnd: f32, chamferGridTrimStart: f32, chamferGridTrimMid: f32, chamferGridTrimEnd: f32,
+  cornerEnabled: i32, cornerRadius: f32, cornerMode: i32, cornerInner: i32, cornerBandNear: f32, cornerBandFarExtra: f32, cornerBandFarFactor: f32, cornerSectorThresh: f32, cornerNormalMix: f32, cornerAlbedoBoost: f32, cornerRoughMul: f32, cornerAoMul: f32,
+  shadowBiasN: f32, shadowBiasDir: f32, shadowSunFactor: f32, shadowPointFactor: f32, shadowSunMax: f32, shadowPointEps: f32, shadowNormalThresh: f32,
+  pbrEmissiveAlbedoMul: f32, pbrEmissiveStrength: f32, pbrF0: f32, pbrAttenQuad: f32, pbrGGXEps: f32, renderFloorMul: f32, renderCeilMul: f32, renderWallDarken: f32, renderEyeFactor: f32, ssrDebugMode: i32, ssrSteps: i32, ssrBinarySteps: i32, ssrMaxDistance: f32, ssrThickness: f32, ssrStride: f32, ssrJitter: f32, ssrDepthBias: f32, ssrZThicknessScale: f32, ssrMinPuddleMask: f32, ssrNormalThreshold: f32, ssrMaxGrazingAngle: f32, ssrEdgeFadeStart: f32, ssrEdgeFadeEnd: f32, ssrDistanceFadeStart: f32, ssrDistanceFadeEnd: f32, ssrFresnelPower: f32, ssrFresnelMin: f32, ssrFresnelMax: f32, ssrBlendStrength: f32, ssrPuddleMaskInfluence: f32, ssrTintStrength: f32, ssrAdditiveBoost: f32, _padEnd: vec2<i32>,
+};
+@group(0) @binding(3) var<uniform> frame: FrameUniforms;
+@group(1) @binding(0) var sceneTex: texture_2d<f32>;
+@group(1) @binding(1) var ssrTex: texture_2d<f32>;
+@group(1) @binding(2) var gNormalDepthTex: texture_2d<f32>;
+@group(2) @binding(0) var nearestSampler: sampler;
 
 @fragment
 fn fs_main(@location(0) v_uv: vec2<f32>) -> CompOut {
@@ -1078,12 +1139,12 @@ fn fs_main(@location(0) v_uv: vec2<f32>) -> CompOut {
   let g: vec4<f32> = textureSample(gNormalDepthTex, nearestSampler, uvFlip);
   let puddleMask: f32 = g.a;
 
-  // config defaults from ssr.json composition – puddle-only with boosted visibility
-  let minPuddleMask: f32 = 0.02;
-  let puddleMaskInfluence: f32 = 0.35;
-  let tintStrength: f32 = 0.05;
-  let blendStrength: f32 = 4.5;
-  let additiveBoost: f32 = 0.38;
+  // Live-editable from ssr.json via frame uniform
+  let minPuddleMask: f32 = frame.ssrMinPuddleMask;
+  let puddleMaskInfluence: f32 = frame.ssrPuddleMaskInfluence;
+  let tintStrength: f32 = frame.ssrTintStrength;
+  let blendStrength: f32 = frame.ssrBlendStrength;
+  let additiveBoost: f32 = frame.ssrAdditiveBoost;
   let tint: vec3<f32> = vec3<f32>(0.4, 0.5, 0.65);
 
   var fade: f32 = refl.a;
@@ -1127,7 +1188,7 @@ struct FrameUniforms {
   chamferGridEnabled: i32, chamferGridFloorSize: f32, chamferGridCeilSize: f32, chamferGridFloorDarken: f32, chamferGridCeilDarken: f32, chamferGridFloorTrim: f32, chamferGridCeilTrim: f32, chamferGridFloorRough: f32, chamferGridCeilRough: f32, chamferGridFloorBlend: f32, chamferGridCeilBlend: f32, chamferGridCreviceEnd: f32, chamferGridCreviceSmoothEnd: f32, chamferGridTrimStart: f32, chamferGridTrimMid: f32, chamferGridTrimEnd: f32,
   cornerEnabled: i32, cornerRadius: f32, cornerMode: i32, cornerInner: i32, cornerBandNear: f32, cornerBandFarExtra: f32, cornerBandFarFactor: f32, cornerSectorThresh: f32, cornerNormalMix: f32, cornerAlbedoBoost: f32, cornerRoughMul: f32, cornerAoMul: f32,
   shadowBiasN: f32, shadowBiasDir: f32, shadowSunFactor: f32, shadowPointFactor: f32, shadowSunMax: f32, shadowPointEps: f32, shadowNormalThresh: f32,
-  pbrEmissiveAlbedoMul: f32, pbrEmissiveStrength: f32, pbrF0: f32, pbrAttenQuad: f32, pbrGGXEps: f32, renderFloorMul: f32, renderCeilMul: f32, renderWallDarken: f32, renderEyeFactor: f32, ssrDebugMode: i32, _padEnd: vec3<i32>,
+  pbrEmissiveAlbedoMul: f32, pbrEmissiveStrength: f32, pbrF0: f32, pbrAttenQuad: f32, pbrGGXEps: f32, renderFloorMul: f32, renderCeilMul: f32, renderWallDarken: f32, renderEyeFactor: f32, ssrDebugMode: i32, ssrSteps: i32, ssrBinarySteps: i32, ssrMaxDistance: f32, ssrThickness: f32, ssrStride: f32, ssrJitter: f32, ssrDepthBias: f32, ssrZThicknessScale: f32, ssrMinPuddleMask: f32, ssrNormalThreshold: f32, ssrMaxGrazingAngle: f32, ssrEdgeFadeStart: f32, ssrEdgeFadeEnd: f32, ssrDistanceFadeStart: f32, ssrDistanceFadeEnd: f32, ssrFresnelPower: f32, ssrFresnelMin: f32, ssrFresnelMax: f32, ssrBlendStrength: f32, ssrPuddleMaskInfluence: f32, ssrTintStrength: f32, ssrAdditiveBoost: f32, _padEnd: vec2<i32>,
 };
 struct QuantOut { @location(0) color: vec4<f32>, };
 @group(1) @binding(0) var sceneTex: texture_2d<f32>;
