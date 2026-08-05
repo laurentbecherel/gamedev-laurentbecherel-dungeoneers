@@ -677,11 +677,10 @@ export class GPURenderer {
     // Old blueNoise used REPEAT + NEAREST, scene/gBuffer used CLAMP + NEAREST.
     // To cover both, we make nearest sampler REPEAT (fract() in shader makes clamp vs repeat moot for material UVs)
     // and keep a clamp variant if needed. For pixelated canvas upscale via CSS, we also ensure nearest filtering.
-    // Retro look with moire fix: magnification stays chunky (nearest), minification trilinear (linear/linear) – Doom/PSX retro ports do this
     this.samplers.nearest = device.createSampler({
-      magFilter: 'nearest', minFilter: 'linear', mipmapFilter: 'linear',
+      magFilter: 'nearest', minFilter: 'nearest', mipmapFilter: 'nearest',
       addressModeU: 'repeat', addressModeV: 'repeat', addressModeW: 'clamp-to-edge',
-      label: 'nearest-repeat-trilinear-min'
+      label: 'nearest-repeat'
     });
     this.samplers.nearestClamp = device.createSampler({
       magFilter: 'nearest', minFilter: 'nearest', mipmapFilter: 'nearest',
