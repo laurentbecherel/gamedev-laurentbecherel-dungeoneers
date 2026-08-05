@@ -445,28 +445,71 @@ vec3 debugMossCombinedCol(vec3 worldPos, float matHeight, float ao, float rough,
 }
 
 
-// --- damaged cheap 2D mul-only (new) - breaks height/normal/rough/AO, preserves albedo ---
+// --- damaged v26 chaotic multi-octave 2D, mul-only, breaks height/normal/rough/AO/POM, preserves albedo ---
+// Uses all damaged UBO slots (22-33) for tunability, same as moss decomposed pattern
 float damagedBiomeMask(vec2 w){ return texture(u_modifierMap2, w/u_mapSize).r; }
+
+// 2D hash already defined above, reuse valueNoise2D
+
 float damagedNoiseRaw(vec3 w){
+  // base scale and warp
   float base = mossDefault(modDamagedNoise.x,2.2);
-  vec2 p = w.xy*base + vec2(13.7,5.1) + vec2(w.z*0.25,w.z*0.15);
-  float n1 = valueNoise2D(p);
-  float n2 = valueNoise2D(p*2.3+vec2(5.1,2.9));
-  float crack = valueNoise2D(p*3.2+vec2(19.1,7.7));
-  float ridge = 1.0 - abs(crack*2.0-1.0);
-  ridge = ridge*ridge * mossDefault(modDamagedCrack.x,1.0);
-  float scratch = valueNoise2D(w.xy*mossDefault(modDamagedCrack.y,8.5)) * valueNoise2D(vec2(w.y,w.x)*5.7);
-  float lW = mossDefault(modDamagedWeights.x,0.45);
-  float mW = mossDefault(modDamagedWeights.y,0.28);
-  float cW = mossDefault(modDamagedWeights.w,0.38);
-  float sW = mossDefault(modDamagedCrack.z,0.22);
-  return clamp(n1*lW + n2*mW + ridge*cW + scratch*sW,0.0,1.0);
+  float warpS = mossDefault(modDamagedNoise.w,0.35);
+  vec2 wp = w.xy * base + vec2(13.7,5.1) + vec2(w.z*0.25,w.z*0.15);
+  // cheap domain warp – 2D fbm, no 3D
+  float warp1 = fbm2D_2(wp*0.35 + vec2(1.1,2.2)) * warpS;
+  float warp2 = fbm2D_2(wp*0.35 + vec2(7.7,3.1)) * warpS;
+  vec2 p = wp + vec2(warp1, warp2) * 1.2;
+
+  float dScalesZero = step(length(modDamagedScales),0.0001);
+  float lSc = mix(modDamagedScales.x,1.0,dScalesZero);
+  float mSc = mix(modDamagedScales.y,2.4,dScalesZero);
+  float sSc = mix(modDamagedScales.z,5.8,dScalesZero);
+  float crackSc = mix(modDamagedScales.w,3.2,dScalesZero);
+
+  // multi-octave: large = fbm multi, medium/small single, crack ridged, scratch cross
+  float nLarge = fbm2D_3(p * lSc + vec2(w.z*0.20, w.z*0.12));
+  float nMed = valueNoise2D(p * mSc + vec2(11.3,23.7) + vec2(w.z*0.4,0.0));
+  float nSmall = valueNoise2D(p * sSc + vec2(5.1,2.9) + vec2(w.z*0.6,0.0));
+
+  float crackRaw = valueNoise2D(p * crackSc + vec2(19.1,7.7) + vec2(w.z*0.7,0.0));
+  float ridge = 1.0 - abs(crackRaw*2.0-1.0);
+  ridge = ridge*ridge; // cheap pow, no var pow
+  float ridgeStr = mossDefault(modDamagedCrack.x,1.0);
+  ridge *= ridgeStr;
+
+  // second crack at different angle for cross-hatch chaos
+  float crack2 = valueNoise2D(p * crackSc*1.7 + vec2(7.7,19.1) + vec2(w.z*0.25, w.z*0.5));
+  float ridge2 = 1.0 - abs(crack2*2.0-1.0);
+  ridge2 = ridge2*ridge2 * ridgeStr * 0.6;
+
+  // scratch grain – cross product of two anisotropic noises
+  float scratchSc = mossDefault(modDamagedCrack.y,8.5);
+  float nA = valueNoise2D(w.xy * scratchSc + vec2(w.z*0.7,0.0));
+  float nB = valueNoise2D(vec2(w.y,w.x) * scratchSc*0.7 + vec2(17.0,3.1) + vec2(0.0,w.z*0.3));
+  float scratch = nA * nB;
+  float scratchDet = valueNoise2D(w.xy * scratchSc*1.7 + vec2(3.1,7.7) + vec2(w.z*0.4));
+  scratch = scratch*0.7 + scratchDet*0.3;
+
+  // weights from UBO – chaotic balance
+  float dWZero = step(length(modDamagedWeights),0.0001);
+  float lW = mix(modDamagedWeights.x,0.45,dWZero);
+  float mW = mix(modDamagedWeights.y,0.28,dWZero);
+  float sW = mix(modDamagedWeights.z,0.15,dWZero);
+  float cW = mix(modDamagedWeights.w,0.38,dWZero);
+  float sWc = mix(modDamagedCrack.z,0.22,dWZero);
+
+  float combined = nLarge*lW + nMed*mW + nSmall*sW + ridge*cW + ridge2*cW*0.5 + scratch*sWc;
+  return clamp(combined,0.0,1.0);
 }
 float damagedRidgeRaw(vec3 w){
-  vec2 p = w.xy*mossDefault(modDamagedNoise.x,2.2)*mossDefault(modDamagedScales.w,3.2)+vec2(19.1,7.7);
+  // primary ridge + secondary for more chaotic height
+  vec2 p = w.xy*mossDefault(modDamagedNoise.x,2.2)*mossDefault(modDamagedScales.w,3.2)+vec2(19.1,7.7)+vec2(w.z*0.4,w.z*0.25);
   float r = valueNoise2D(p);
   float ridge = 1.0-abs(r*2.0-1.0);
-  return ridge*ridge;
+  float r2 = valueNoise2D(p*1.7+vec2(7.7,19.1));
+  float ridge2 = 1.0-abs(r2*2.0-1.0);
+  return ridge*ridge*0.7 + ridge2*ridge2*0.3;
 }
 float damagedNoiseShape(vec3 w){
   float th = mossDefault(modDamagedNoise.y,0.78);
@@ -474,6 +517,7 @@ float damagedNoiseShape(vec3 w){
   return smoothstep(th-fe, th+fe, damagedNoiseRaw(w));
 }
 float damagedEnvMask(vec3 w, float isFloor){
+  // Z middle bias – battle damage more in middle, less at extreme top/bottom, tunable via final.envBase
   float eBase = mossDefault(modDamagedFinal.y,0.25);
   float bot = 1.0 - smoothstep(0.0,0.18,w.z)*0.10;
   float top = 1.0 - smoothstep(0.70,1.15,w.z)*0.30;
@@ -499,26 +543,31 @@ float damagedFinalMask(vec3 w, float mh, float ao, float ro, float isFloor){
   f = clamp(f*boost,0.0,1.0);
   float contrast = mossDefault(modDamagedGlobal.x,1.35);
   f = clamp((f-0.5)*contrast+0.5,0.0,1.0);
-  f = f*f*(3.0-2.0*f);
+  f = f*f*(3.0-2.0*f); // cheap smooth, no var pow
   return f;
 }
 float damagedHeightOffset(vec3 w, float s){
+  // mul-only height: pits negative, ridges positive, chips random, scratch carves
   float has = step(0.001,s);
-  float depth = mossDefault(modDamagedSurface.x,-0.38);
-  float pitVar = mossDefault(modDamagedSurface.y,0.32);
-  float ridgeH = mossDefault(modDamagedSurface.z,0.18);
+  float dSZero = step(length(modDamagedSurface),0.0001);
+  float depth = mix(modDamagedSurface.x,-0.38,dSZero);
+  float pitVar = mix(modDamagedSurface.y,0.32,dSZero);
+  float ridgeH = mix(modDamagedSurface.z,0.18,dSZero);
   float raw = damagedNoiseRaw(w);
   float ridge = damagedRidgeRaw(w);
-  float pit = depth + (raw-0.5)*pitVar*1.2;
+  float scratch = valueNoise2D(w.xy*mossDefault(modDamagedCrack.y,8.5));
+  float pit = depth + (raw-0.5)*pitVar*1.2 - scratch*0.08;
   return (pit*0.85 + ridge*ridgeH*0.35) * s * has;
 }
 vec2 pomOffsetArrayDamaged(sampler2DArray hm, vec2 uv, float layer, vec3 vTS, float str, int steps, vec3 wPos, float isFloor){
+  // single call to original POM loop + cheap extra damaged parallax — no duplicate loop
   vec2 base = pomOffsetArray(hm, uv, layer, vTS, str, steps);
   vec2 mUV = wPos.xy / u_mapSize;
   ivec2 ci = ivec2(floor(wPos.xy));
   float inB = step(0.0,float(ci.x))*step(0.0,float(ci.y))*step(float(ci.x),u_mapSize.x-1.0)*step(float(ci.y),u_mapSize.y-1.0);
   float cell = texture(u_modifierMap2, mUV).r * float(u_modifiersEnabled) * inB;
   float has = step(0.001, cell);
+  // use noiseShape (cheap) for POM depth, not full finalMask, to keep link fast but still chaotic
   float dMask = damagedNoiseShape(wPos) * has * cell;
   float depth = mossDefault(modDamagedSurface.x,-0.38);
   float pomBoost = mossDefault(modDamagedGlobal2.z,1.4);
