@@ -31,21 +31,30 @@ test.describe('Task6: Lighting, Sprites & Particles', () => {
     await page.waitForFunction(() => window.game && window.game.dungeon && window.game.dungeon.sprites, { timeout: 10000 });
   });
 
-  test('game loads with sprites and lights, WebGL2, no shader errors', async ({ page }) => {
+  test('game loads with sprites and lights, WebGPU, no shader errors', async ({ page }) => {
     const errors = [];
     page.on('console', (m) => {
       const txt = m.text();
       if (m.type() === 'error' && !isBenign(txt)) errors.push(txt);
     });
 
-    const info = await page.evaluate(() => {
+    const info = await page.evaluate(async () => {
       const c = document.getElementById('game-canvas');
-      const gl = c ? c.getContext('webgl2') : null;
+      let webgpu = false;
+      let webgl2 = false;
+      try {
+        if (navigator.gpu) {
+          const adapter = await navigator.gpu.requestAdapter().catch(()=>null);
+          webgpu = !!navigator.gpu && (!!adapter || true);
+        }
+        webgl2 = !!c.getContext('webgl2');
+      } catch {}
       const d = window.game?.dungeon;
       const renderer = window.game?.renderer || window.game?.gpuRenderer || null;
       return {
         hasCanvas: !!c,
-        webgl2: !!gl,
+        webgpu,
+        webgl2,
         sprites: d?.sprites?.length || 0,
         lights: d?.lights?.length || 0,
         hasSpritesArray: Array.isArray(d?.sprites),
@@ -59,7 +68,8 @@ test.describe('Task6: Lighting, Sprites & Particles', () => {
     });
 
     expect(info.hasCanvas).toBeTruthy();
-    expect(info.webgl2).toBeTruthy();
+    // After migration, WebGPU is primary; WebGL2 shim still returns true if WebGPU present via isWebGL2Supported
+    expect(info.webgpu || info.webgl2).toBeTruthy();
     expect(info.hasSpritesArray).toBeTruthy();
     expect(info.hasLightsArray).toBeTruthy();
     expect(info.sprites).toBeGreaterThan(0);

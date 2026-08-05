@@ -268,7 +268,7 @@ test('BroadcastChannel preview-only instant without PUT', async ({ browser }) =>
   await context.close();
 });
 
-test('materials-proc live atlas rebuild without WebGL errors', async ({ browser }) => {
+test('materials-proc live atlas rebuild without WebGPU errors', async ({ browser }) => {
   const context = await browser.newContext();
   const gamePage = await context.newPage();
   const editorPage = await context.newPage();

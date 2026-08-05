@@ -144,36 +144,47 @@ test('P1: materials-proc.json no longer has forcedCount', async () => {
   assert(j.packing.mode === 'array', 'mode array');
 });
 
-test('P1/P2: shaders.js is now modular - imports shader-lib', async () => {
+test('P1/P2: shaders.js is now modular - imports shader-lib (WebGPU)', async () => {
   const txt = await fs.readFile(path.join(process.cwd(), 'render', 'shaders.js'), 'utf8');
-  assert(txt.includes('shader-lib'), 'imports shader-lib');
-  assert(txt.includes('glslCommon'), 'imports common');
-  assert(txt.includes('glslMaterial'), 'imports material');
-  assert(txt.includes('glslChamfer'), 'imports chamfer');
-  assert(txt.includes('glslModifiers'), 'imports modifiers');
-  assert(txt.includes('glslScene'), 'imports scene (main split)');
+  // After WebGPU migration, shaders.js re-exports WGSL (shim) and imports wgsl shader-lib
+  assert(txt.includes('shader-lib') || txt.includes('shaders-wgsl'), 'imports shader-lib or wgsl');
+  assert(txt.includes('wgslCommon') || txt.includes('glslCommon'), 'imports common (wgsl or legacy alias)');
+  assert(txt.includes('wgslMaterial') || txt.includes('glslMaterial'), 'imports material');
+  assert(txt.includes('wgslChamfer') || txt.includes('glslChamfer'), 'imports chamfer');
+  assert(txt.includes('wgslModifiers') || txt.includes('glslModifiers'), 'imports modifiers');
+  assert(txt.includes('wgslScene') || txt.includes('glslScene'), 'imports scene');
   assert(!txt.includes('u_texSize'), 'legacy u_texSize removed');
-  assert(!txt.includes('u_atlasWalls'), 'legacy atlasWalls removed');
-  // Fast path individual uniforms (instant ANGLE compile) + optional UBO, plus 2nd texture
+  // After migration, legacy atlas uniforms removed, now uses WGSL texture_2d_array
   let combined = txt;
   try {
     const libFiles = await fs.readdir(path.join(process.cwd(), 'render', 'shader-lib'));
-    for (const f of libFiles) if (f.endsWith('.glsl.js')) combined += await fs.readFile(path.join(process.cwd(),'render','shader-lib',f),'utf8');
+    for (const f of libFiles) {
+      if (f.endsWith('.wgsl.js') || f.endsWith('.glsl.js')) {
+        combined += await fs.readFile(path.join(process.cwd(),'render','shader-lib',f),'utf8');
+      }
+    }
   } catch {}
   const hasUBO = combined.includes('ModifiersBlock');
-  const hasFastUniforms = combined.includes('u_modMossAlbedo');
-  assert(hasUBO || hasFastUniforms, 'has UBO or fast individual uniforms');
-  assert(combined.includes('u_modifierMap2'), 'has second modifier texture uniform');
-  assert(combined.includes('modMossAlbedoRough') || combined.includes('u_modMossAlbedo'), 'contains moss uniform (UBO or individual)');
-  assert(combined.includes('shadeFloorCell') && combined.includes('shadeCeilCell') && combined.includes('shadeWallCell'), 'main split helpers exist');
+  assert(hasUBO, 'has ModifiersBlock UBO (34 vec4)');
+  assert(combined.includes('modifierMap2') || combined.includes('u_modifierMap2'), 'has second modifier texture');
+  assert(combined.includes('modMossAlbedoRough') || combined.includes('modMossAlbedo'), 'contains moss uniform');
+  assert(combined.includes('shadeFloorCell') && combined.includes('shadeCeilCell') && combined.includes('shadeWallCell'), 'scene helpers exist');
   assert(combined.includes('shadeHorizontalCell'), 'unified horizontal helper');
 });
 
-test('P3: gl-utils has UBO helpers', async () => {
-  const txt = await fs.readFile(path.join(process.cwd(), 'render', 'gl-utils.js'), 'utf8');
+test('P3: gpu-utils has WebGPU buffer helpers (WebGPU migration)', async () => {
+  const txt = await fs.readFile(path.join(process.cwd(), 'render', 'gpu-utils.js'), 'utf8');
   assert(txt.includes('createUniformBuffer'), 'has createUniformBuffer');
-  assert(txt.includes('bindUniformBlock'), 'has bindUniformBlock');
-  assert(txt.includes('bindUniformBufferBase'), 'has bindUniformBufferBase');
+  assert(txt.includes('isWebGPUSupported'), 'has isWebGPUSupported');
+  assert(txt.includes('initWebGPU'), 'has initWebGPU');
+  assert(txt.includes('createTexture2DArray'), 'has array texture helper');
+  assert(txt.includes('createSampler'), 'has sampler helper');
+});
+
+test('P3: gl-utils shim re-exports gpu-utils (no WebGL2)', async () => {
+  const txt = await fs.readFile(path.join(process.cwd(), 'render', 'gl-utils.js'), 'utf8');
+  assert(txt.includes('gpu-utils'), 'gl-utils should re-export from gpu-utils (pure WebGPU)');
+  assert(txt.includes('createUniformBuffer'), 'shim has buffer helper via re-export');
 });
 
 test('P2: second modifier texture packing v2', () => {

@@ -27,7 +27,7 @@ test('chamfer.json includes grid tile chamfer grid section', async ({ page }) =>
   expect(cfg.grid.ceilDarken).toBeLessThanOrEqual(0.98);
 });
 
-test('game loads WebGL2 with grid chamfer, no console errors', async ({ page }) => {
+test('game loads WebGPU with grid chamfer, no console errors', async ({ page }) => {
   const errors = [];
   page.on('console', m => {
     const txt = m.text();

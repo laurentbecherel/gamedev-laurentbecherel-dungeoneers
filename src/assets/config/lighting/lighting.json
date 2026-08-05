@@ -1,17 +1,17 @@
 {
   "version": 3,
   "ambient": {
-    "level": 0.1,
+    "level": 0.36,
     "color": [
       1,
       1,
       1
     ],
-    "worldMul": 1,
+    "worldMul": 0.38,
     "note": "ambient = ambientColor * albedo * ambientLevel * worldAmbientMul * aoAmbient"
   },
   "sun": {
-    "intensity": 0,
+    "intensity": 1.5,
     "color": [
       1,
       1,

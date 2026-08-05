@@ -6,6 +6,16 @@ export default defineConfig({
   retries: process.env.CI ? 2 : 0,
   workers: process.env.CI ? 1 : undefined,
   reporter: 'html',
-  use: { baseURL: 'http://localhost:8005', trace: 'on-first-retry' },
+  use: {
+    baseURL: 'http://localhost:8005',
+    trace: 'on-first-retry',
+    launchOptions: {
+      args: [
+        '--enable-unsafe-webgpu',
+        '--enable-unsafe-swiftshader',
+        '--enable-features=WebGPU,WebGPU-developer-features'
+      ]
+    }
+  },
   webServer: { command: 'node server/server.js', url: 'http://localhost:8005', reuseExistingServer: false, timeout: 15000, env: { PORT: '8005' } }
 });

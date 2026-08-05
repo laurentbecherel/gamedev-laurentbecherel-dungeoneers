@@ -5,7 +5,7 @@
 
 import { getConfig, getAllRenderConfigs, getAsset, invalidateCache } from "../config/config.js";
 import { generateDungeon } from "../world/dungeon/index.js";
-import { GPURenderer, isWebGL2Supported } from "../render/renderer-gpu.js";
+import { GPURenderer, isWebGPUSupported, isWebGL2Supported } from "../render/renderer-gpu.js";
 import { Player } from "../entities/player.js";
 import { Input } from "../systems/input.js";
 import { UI } from "../ui/ui.js";
@@ -540,10 +540,14 @@ export class Game {
     try { window._gameEarly = this; window.game = this; } catch(e) {}
 
     this.cfg = await this._loadAllConfigs();
-    if (!isWebGL2Supported()) {
-      this.hud.textContent = "WebGL2 not supported";
-      this.hud.style.display = "block";
-      throw new Error("WebGL2 not supported");
+    if (!isWebGPUSupported()) {
+      if (!isWebGL2Supported()) {
+        this.hud.textContent = "WebGPU not supported – use Chrome 113+ with WebGPU";
+        this.hud.style.display = "block";
+        throw new Error("WebGPU not supported");
+      } else {
+        console.warn('[Game] WebGPU not detected, but WebGL2 present – proceeding with WebGPU renderer (will fail if adapter missing)');
+      }
     }
     await this._loadMapFont(this.cfg?.map);
     const debugCfg = this.cfg?.debug || {};

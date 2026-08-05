@@ -1,13 +1,18 @@
 import { Game } from "./core/game.js";
-import { isWebGL2Supported } from "./render/renderer-gpu.js";
+import { isWebGPUSupported, isWebGL2Supported } from "./render/renderer-gpu.js";
 
 (async () => {
   const canvas = document.getElementById("game-canvas");
   const hud = document.getElementById("game-hud");
-  if (!isWebGL2Supported()) {
-    hud.textContent = "WebGL2 not supported — please use a modern browser";
-    hud.style.display = "block";
-    return;
+  if (!isWebGPUSupported()) {
+    // Fallback message – WebGPU required after migration, but also check WebGL2 for old browsers
+    if (!isWebGL2Supported()) {
+      hud.textContent = "WebGPU not supported — please use Chrome 113+ / Edge 113+ with WebGPU enabled. WebGL2 fallback no longer available.";
+      hud.style.display = "block";
+      return;
+    } else {
+      console.warn('WebGPU not detected but WebGL2 is present – attempting WebGPU via legacy shim, may fail');
+    }
   }
   const game = new Game(canvas);
   try { window.game = game; console.log("Game exposed early in main.js"); } catch(e) {}
