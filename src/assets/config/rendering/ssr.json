@@ -15,17 +15,17 @@
     "note": "Only floor where puddle mask > min gets SSR"
   },
   "rayMarch": {
-    "steps": 48,
-    "binarySteps": 6,
-    "maxDistance": 12,
-    "thickness": 2,
-    "stride": 1.08,
-    "jitter": 0.02,
-    "depthBias": 0.06,
-    "zThicknessScale": 0.15,
+    "steps": 64,
+    "binarySteps": 8,
+    "maxDistance": 16,
+    "thickness": 3.0,
+    "stride": 1.04,
+    "jitter": 0.01,
+    "depthBias": 0.08,
+    "zThicknessScale": 0.2,
     "maxRayAngle": 0.995,
     "worldExpire": 24,
-    "note": "More steps, less jitter (mirror), thicker for 8-bit depth, less stride growth"
+    "note": "Increased from 48 to 64 to reach far walls after chamfer/corners restore, thicker and less stride to avoid skipping thin walls that caused vertical stretch at grazing angles"
   },
   "reprojection": {
     "viewSpace": false,

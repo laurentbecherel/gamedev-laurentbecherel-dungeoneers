@@ -999,12 +999,14 @@ fn traceScreenSpaceRaySSR_Full(startUV: vec2<f32>, N: vec3<f32>, V: vec3<f32>, l
   }
 
   // Fallback – fix 15f7f7e: remove clamp that sampled screen edge causing stretched columns.
-  // Only accept if inside screen and depth/normal valid (wall/ceiling), otherwise miss.
+  // After 268421c chamfer/corners restore, far walls need more reach – use 0.8*maxDistance and stricter edge margin
+  // to avoid vertical stretch at grazing angles.
   if (res.hit < 0.5 && puddleMask > 0.02) {
-    let fallbackW: vec3<f32> = worldPos + R * (maxDistance * 0.5);
+    let fallbackW: vec3<f32> = worldPos + R * (maxDistance * 0.85);
     let fProj: vec3<f32> = worldToScreenUVSSR_Full(fallbackW, camPos, eyeZ, playerAngle, planeLen, resolution, bobPixels);
     let fUV: vec2<f32> = fProj.xy;
-    if (fUV.x >= 0.0 && fUV.x <= 1.0 && fUV.y >= 0.0 && fUV.y <= 1.0) {
+    // Require well inside screen (not edge) to prevent column stretch from edge sampling
+    if (fUV.x >= 0.05 && fUV.x <= 0.95 && fUV.y >= 0.10 && fUV.y <= 0.90) {
       let fUVFlip: vec2<f32> = vec2<f32>(fUV.x, 1.0 - fUV.y);
       let fG: vec4<f32> = textureSampleLevel(gNormalDepthTex, nearestSampler, fUVFlip, 0.0);
       let fN: vec3<f32> = octaDecodeSSR(fG.rg);
@@ -1012,7 +1014,7 @@ fn traceScreenSpaceRaySSR_Full(startUV: vec2<f32>, N: vec3<f32>, V: vec3<f32>, l
         res.color = textureSampleLevel(sceneTex, nearestSampler, fUVFlip, 0.0).rgb * 0.7;
         res.hit = 0.5;
         res.hitUV = fUV;
-        res.rayLength = maxDistance * 0.5;
+        res.rayLength = maxDistance * 0.85;
       }
     }
   }

@@ -94,8 +94,8 @@ fn traceScreenSpaceRaySSR(startUV: vec2<f32>, N: vec3<f32>, V: vec3<f32>, linear
     if (sampledDepthNorm < 0.001) { tRay += tStep; tStep = tStep * stride; continue; }
     let sampledN: vec3<f32> = octaDecodeSSR(gSmpl.rg);
     if (sampledN.z > 0.60) { tRay += tStep; tStep = tStep * stride; continue; }
-    // Use ssrDepthRange from config (was hardcoded 20.0 – regression)
-    let sampledLin: f32 = sampledDepthNorm * frame.ssrDepthRange;
+    // Use maxDistance for thickness test (small lib, no frame uniform – use param, main Full path uses frame.ssrDepthRange)
+    let sampledLin: f32 = sampledDepthNorm * maxDistance;
     let depthDiff: f32 = fwDist - sampledLin;
     let curThickness: f32 = thickness + tRay * zThicknessScale * 0.08;
     if (abs(depthDiff) < curThickness) {
@@ -116,7 +116,7 @@ fn traceScreenSpaceRaySSR(startUV: vec2<f32>, N: vec3<f32>, V: vec3<f32>, linear
         if (midDepthNorm < 0.001) { lowT = midT; continue; }
         let midN: vec3<f32> = octaDecodeSSR(midG.rg);
         if (midN.z > 0.60) { lowT = midT; continue; }
-        let midLin: f32 = midDepthNorm * frame.ssrDepthRange;
+        let midLin: f32 = midDepthNorm * maxDistance;
         let midDiff: f32 = midProj.z - midLin;
         if (abs(midDiff) < curThickness) { highT = midT; } else { lowT = midT; }
       }
@@ -138,12 +138,12 @@ fn traceScreenSpaceRaySSR(startUV: vec2<f32>, N: vec3<f32>, V: vec3<f32>, linear
     tStep = tStep * stride;
   }
 
-  // Fix 15f7f7e: remove clamp to avoid stretched columns sampling screen edge
+  // Fix 15f7f7e + 268421c re-fix: no clamp, stricter edge margin, 0.85*maxDistance to reach far walls
   if (res.hit < 0.5 && puddleMask > 0.02) {
-    let fallbackW: vec3<f32> = worldPos + R * (maxDistance * 0.5);
+    let fallbackW: vec3<f32> = worldPos + R * (maxDistance * 0.85);
     let fProj: vec3<f32> = worldToScreenUVSSR(fallbackW, camPos, eyeZ, playerAngle, planeLen, resolution, bobPixels);
     let fUV: vec2<f32> = fProj.xy;
-    if (fUV.x >= 0.0 && fUV.x <= 1.0 && fUV.y >= 0.0 && fUV.y <= 1.0) {
+    if (fUV.x >= 0.05 && fUV.x <= 0.95 && fUV.y >= 0.10 && fUV.y <= 0.90) {
       let fUVFlip: vec2<f32> = vec2<f32>(fUV.x, 1.0 - fUV.y);
       let fG: vec4<f32> = textureSampleLevel(gNormalDepthTex, nearestSampler, fUVFlip, 0.0);
       let fN: vec3<f32> = octaDecodeSSR(fG.rg);
@@ -151,7 +151,7 @@ fn traceScreenSpaceRaySSR(startUV: vec2<f32>, N: vec3<f32>, V: vec3<f32>, linear
         res.color = textureSampleLevel(sceneTex, nearestSampler, fUVFlip, 0.0).rgb * 0.7;
         res.hit = 0.5;
         res.hitUV = fUV;
-        res.rayLength = maxDistance * 0.5;
+        res.rayLength = maxDistance * 0.85;
       }
     }
   }
