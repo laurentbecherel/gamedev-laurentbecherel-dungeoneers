@@ -1028,6 +1028,27 @@ export class GPURenderer {
       throw e; // trigger wrapper fallback
     }
 
+    // PBR Debug pipelines (key 6) – lazy, like WebGL2: null until first Digit6 press to avoid startup stall
+    // Store layout/module for lazy creation, don't compile 7 extra pipelines in init
+    this._pipelineLayoutRaymarch = pipelineLayoutRaymarch;
+    this._vsModRay = vsModRay;
+    this._createModule = createModule;
+    this._checkShaderCompilation = checkShaderCompilation;
+    this._debugPBRSourceCache = [
+      null, // 0 = normal
+      fsDebugMossNoiseWgsl,
+      fsDebugMossEnvWgsl,
+      fsDebugMossMaterialWgsl,
+      fsDebugMossCombinedWgsl,
+      fsDebugPuddleWgsl,
+      fsDebugDamagedWgsl,
+      fsDebugDamagedNoiseWgsl
+    ];
+    this.pipelines.debugPBR = [];
+    this.pipelines.debugPBR[0] = this.pipelines.raymarch; // 0 alias
+    for (let i = 1; i < 8; i++) this.pipelines.debugPBR[i] = null;
+    console.log('[WebGPU] PBR debug pipelines lazy – init fast path (5 pipelines only)');
+
     // SSR pipeline
     const vsModSSR = vsModRay; // reuse
     const fsModSSR = createModule(fsSSRwgsl, 'fsSSR');
@@ -1444,7 +1465,7 @@ export class GPURenderer {
   setCornerEnabled(v) { this.cornerEnabled = v ? 1 : 0; }
   setModifiersEnabled(v){ this.modifiersEnabled = v ? 1 : 0; }
   setSSREnabled(v){ this.ssrEnabled = v ? 1 : 0; }
-  setPBRDebugMode(v) { this.pbrDebugMode = Math.max(0, Math.min(7, v|0)); }
+  setPBRDebugMode(v) { this.pbrDebugMode = Math.max(0, Math.min(7, v | 0)); }
   toggleGridDebug(){ this.gridDebug = this.gridDebug ? 0 : 1; return this.gridDebug; }
   toggleLighting(){ this.lightingEnabled = this.lightingEnabled ? 0 : 1; return this.lightingEnabled; }
   togglePBR(){ this.pbrEnabled = this.pbrEnabled ? 0 : 1; return this.pbrEnabled; }
@@ -1454,10 +1475,48 @@ export class GPURenderer {
   toggleCorner(){ this.cornerEnabled = this.cornerEnabled ? 0 : 1; return this.cornerEnabled; }
   toggleModifiers(){ this.modifiersEnabled = this.modifiersEnabled ? 0 : 1; return this.modifiersEnabled; }
   toggleSSR(){ this.ssrEnabled = this.ssrEnabled ? 0 : 1; return this.ssrEnabled; }
-  cycleSSRDebug(){ this.ssrDebugMode = (this.ssrDebugMode + 1) % 4; return this.ssrDebugMode; }
+  // Fix: old WebGL2 had %4 but HUD lists 9 modes (0 OFF + 8 debug). Restore 9 for O to reach all modes.
+  cycleSSRDebug(){ this.ssrDebugMode = (this.ssrDebugMode + 1) % 9; return this.ssrDebugMode; }
+  _ensureDebugPipeline(mode) {
+    if (!this.device) return null;
+    mode = mode | 0;
+    if (mode <= 0 || mode >= 8) return this.pipelines.raymarch;
+    if (this.pipelines.debugPBR && this.pipelines.debugPBR[mode]) return this.pipelines.debugPBR[mode];
+    const src = this._debugPBRSourceCache && this._debugPBRSourceCache[mode];
+    if (!src) return this.pipelines.raymarch;
+    try {
+      const device = this.device;
+      const mod = this._createModule ? this._createModule(src, `fsDebugPBR_${mode}`) : device.createShaderModule({ code: src, label: `fsDebugPBR_${mode}` });
+      if (this._checkShaderCompilation) this._checkShaderCompilation(device, mod, `fsDebugPBR_${mode}`).catch(()=>{});
+      const pipe = device.createRenderPipeline({
+        layout: this._pipelineLayoutRaymarch,
+        vertex: { module: this._vsModRay, entryPoint: 'vs_main' },
+        fragment: {
+          module: mod,
+          entryPoint: 'fs_main',
+          targets: [
+            { format: 'rgba8unorm' },
+            { format: 'rgba8unorm' }
+          ]
+        },
+        primitive: { topology: 'triangle-list' },
+        label: `debugPBR_${mode}`
+      });
+      if (!this.pipelines.debugPBR) this.pipelines.debugPBR = [];
+      this.pipelines.debugPBR[mode] = pipe;
+      console.log(`[WebGPU] lazy compiled PBR debug pipeline ${mode}`);
+      return pipe;
+    } catch (e) {
+      console.warn(`[WebGPU] PBR debug pipeline ${mode} failed`, e);
+      return this.pipelines.raymarch;
+    }
+  }
+
   cyclePBRDebug() {
     const next = (this.pbrDebugMode + 1) % 8;
     this.pbrDebugMode = next;
+    // Lazy compile on first use – restores old WebGL2 behavior to keep init fast
+    try { if (next !== 0) this._ensureDebugPipeline(next); } catch {}
     return this.pbrDebugMode;
   }
   isReady() { return this.ready && (!!this.device || !!this._fallback2D); }
@@ -1976,14 +2035,34 @@ export class GPURenderer {
     const sceneView = this.sceneTex.createView();
     const gNormalView = this.gNormalDepthTex.createView();
 
-    // GBuffer pass
+    // --- Debug mode routing (restores WebGL2 mutual exclusivity) ---
+    const isPBRDebug = (this.pbrDebugMode | 0) !== 0;
+    const isSSRDebug = (this.ssrDebugMode | 0) !== 0;
+    // SSR should NOT run when PBR debug active (old: ssrShouldRun && pbrDebug==0)
+    const ssrShouldRun = !!this.ssrEnabled && !isPBRDebug && !!this.pipelines.ssr && !!this.pipelines.composite;
+
+    // GBuffer pass – pick debug PBR pipeline when active
+    let raymarchPipeline = this.pipelines.raymarch;
+    if (isPBRDebug) {
+      const dbgIdx = this.pbrDebugMode | 0;
+      // Lazy ensure – compile on demand to keep init fast (old WebGL2 did same)
+      try {
+        const ensured = this._ensureDebugPipeline(dbgIdx);
+        if (ensured) raymarchPipeline = ensured;
+        else {
+          const dbgPipe = this.pipelines.debugPBR && this.pipelines.debugPBR[dbgIdx];
+          if (dbgPipe) raymarchPipeline = dbgPipe;
+        }
+      } catch {}
+    }
+
     const gPass = encoder.beginRenderPass({
       colorAttachments: [
         { view: sceneView, clearValue:{ r:0,g:0,b:0,a:1 }, loadOp:'clear', storeOp:'store' },
         { view: gNormalView, clearValue:{ r:0.5,g:0.5,b:0,a:0 }, loadOp:'clear', storeOp:'store' }
       ]
     });
-    gPass.setPipeline(this.pipelines.raymarch);
+    gPass.setPipeline(raymarchPipeline);
     gPass.setBindGroup(0, this.bindGroups.frame);
     gPass.setBindGroup(1, this.bindGroups.materials);
     gPass.setBindGroup(2, this.bindGroups.samplers);
@@ -2028,15 +2107,14 @@ export class GPURenderer {
       } catch(e){ console.warn('[WebGPU] sprite pass error', e); }
     }
 
-    // SSR pass
-    if (this.ssrEnabled && this.pipelines.ssr && this.pipelines.composite) {
+    // SSR pass – skipped when PBR debug active (WebGL2 parity: ssrShouldRun includes pbrDebug==0)
+    if (ssrShouldRun) {
       try {
         const ssrView = this.ssrTex.createView();
         const ssrPass = encoder.beginRenderPass({
           colorAttachments: [{ view: ssrView, clearValue:{ r:0,g:0,b:0,a:0 }, loadOp:'clear', storeOp:'store' }]
         });
         ssrPass.setPipeline(this.pipelines.ssr);
-        // Updated layout for SSR: [frame, samplers, ssrTextures] = 3 groups (reduced from 19 textures to 3)
         ssrPass.setBindGroup(0, this.bindGroups.frame);
         ssrPass.setBindGroup(1, this.bindGroups.samplers);
         ssrPass.setBindGroup(2, this.bindGroups.ssr);
@@ -2048,7 +2126,6 @@ export class GPURenderer {
           colorAttachments: [{ view: compView, clearValue:{ r:0,g:0,b:0,a:1 }, loadOp:'clear', storeOp:'store' }]
         });
         compPass.setPipeline(this.pipelines.composite);
-        // Composite layout now [frame, compTextures, samplers] for live-edit fade params
         compPass.setBindGroup(0, this.bindGroups.frame);
         compPass.setBindGroup(1, this.bindGroups.composite);
         compPass.setBindGroup(2, this.bindGroups.samplers);
@@ -2057,7 +2134,9 @@ export class GPURenderer {
       } catch(e){ console.warn('[WebGPU] SSR/composite failed', e); }
     }
 
-    // Quantize to canvas – final pass
+    // Quantize to canvas – final pass – mirrors WebGL2 isDebug branch:
+    // if PBR debug -> sceneTex (debug raymarch) ; if SSR debug -> compositeTex (contains SSR debug viz)
+    // else normal: composite if SSR ran else scene
     const canvasTex = this.context.getCurrentTexture();
     const canvasView = canvasTex.createView();
     const finalPass = encoder.beginRenderPass({
@@ -2065,9 +2144,17 @@ export class GPURenderer {
     });
     finalPass.setPipeline(this.pipelines.quantize);
     finalPass.setBindGroup(0, this.bindGroups.frame);
-    // Choose quantize texture: if composite used and ssr enabled, use composite, else scene
-    const useComposite = this.ssrEnabled && this.pipelines.composite;
-    finalPass.setBindGroup(1, useComposite ? this.bindGroups.quantizeComposite : this.bindGroups.quantize);
+    // Restore WebGL2 final texture selection:
+    // isDebug && ssrShouldRun -> compositeTex ; otherwise composite if ssrShouldRun else scene
+    let finalIsComposite;
+    if (isPBRDebug) {
+      finalIsComposite = false; // PBR debug always shows pure scene debug (no SSR overlay)
+    } else if (isSSRDebug && ssrShouldRun) {
+      finalIsComposite = true; // SSR debug shows composite which contains reflection viz directly (fsComposite outputs reflection for debug)
+    } else {
+      finalIsComposite = ssrShouldRun;
+    }
+    finalPass.setBindGroup(1, finalIsComposite ? this.bindGroups.quantizeComposite : this.bindGroups.quantize);
     finalPass.setBindGroup(2, this.bindGroups.samplers);
     finalPass.draw(3,1,0,0);
     finalPass.end();

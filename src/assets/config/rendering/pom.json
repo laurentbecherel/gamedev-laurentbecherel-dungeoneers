@@ -2,7 +2,7 @@
   "version": 1,
   "enabled": true,
   "strength": {
-    "wall": 0.06,
+    "wall": 0.061,
     "floor": 0.07,
     "ceil": 0.035,
     "note": "Parallax scale = texture-space UV offset max. Higher = deeper extrusion"

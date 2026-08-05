@@ -594,7 +594,7 @@ fn fs_main(@location(0) v_uv: vec2<f32>, @builtin(position) fragPos: vec4<f32>) 
         let floorUV: vec2<f32> = fract(floorWorld);
         let matId: f32 = fetchFloorMatId(vec2<i32>(floor(floorWorld)));
         let shade = shadeFloorCell(floorWorld, floorUV, matId, fc, ray, eyeZ, 0.0);
-        finalColor = shade.color; perpDist = shade.dist;
+        finalColor = shade.color; perpDist = dist;
       } else {
         var dist: f32 = (1.15 - eyeZ) / max(0.0001, horizon - vNorm) * resolution.x / resolution.y * 0.5 / tan(u_fov * 0.5);
         dist = max(dist, 0.001);
@@ -602,7 +602,7 @@ fn fs_main(@location(0) v_uv: vec2<f32>, @builtin(position) fragPos: vec4<f32>) 
         let ceilUV: vec2<f32> = fract(ceilWorld);
         let matId: f32 = fetchCeilMatId(vec2<i32>(floor(ceilWorld)));
         let shade = shadeCeilCell(ceilWorld, ceilUV, matId, cc, ray, eyeZ, 1.15);
-        finalColor = shade.color; perpDist = shade.dist;
+        finalColor = shade.color; perpDist = dist;
       }
     } else {
       let wallV: f32 = clamp(wallV_raw, 0.0, 1.0);
@@ -634,7 +634,7 @@ fn fs_main(@location(0) v_uv: vec2<f32>, @builtin(position) fragPos: vec4<f32>) 
       let floorUV: vec2<f32> = fract(floorWorld);
       let matId: f32 = fetchFloorMatId(vec2<i32>(floor(floorWorld)));
       let shade = shadeFloorCell(floorWorld, floorUV, matId, fc, ray, eyeZ2, floorH);
-      finalColor = shade.color; perpDist = shade.dist;
+      finalColor = shade.color; perpDist = dist;
     } else {
       var ceilH: f32 = 1.15; var dist: f32 = 0.001; var ceilWorld: vec2<f32> = vec2<f32>(0.0);
       for (var it: i32 = 0; it < 3; it++) {
@@ -651,7 +651,7 @@ fn fs_main(@location(0) v_uv: vec2<f32>, @builtin(position) fragPos: vec4<f32>) 
       let ceilUV: vec2<f32> = fract(ceilWorld);
       let matId: f32 = fetchCeilMatId(vec2<i32>(floor(ceilWorld)));
       let shade = shadeCeilCell(ceilWorld, ceilUV, matId, cc, ray, eyeZ2, ceilH);
-      finalColor = shade.color; perpDist = shade.dist;
+      finalColor = shade.color; perpDist = dist;
     }
   }
 
@@ -998,7 +998,7 @@ fn traceScreenSpaceRaySSR_Full(startUV: vec2<f32>, N: vec3<f32>, V: vec3<f32>, l
     tStep = tStep * stride;
   }
 
-  // Fallback � fixed: no clamp, edge margin to avoid stretch columns
+  // Fallback � fixed: no clamp, edge margin to avoid stretch columns
   if (res.hit < 0.5 && puddleMask > 0.02) {
     let fallbackW: vec3<f32> = worldPos + R * (maxDistance * 0.85);
     let fProj: vec3<f32> = worldToScreenUVSSR_Full(fallbackW, camPos, eyeZ, playerAngle, planeLen, resolution, bobPixels);
@@ -1150,9 +1150,18 @@ fn fs_main(@location(0) v_uv: vec2<f32>) -> CompOut {
   let additiveBoost: f32 = frame.ssrAdditiveBoost;
   let tint: vec3<f32> = frame.ssrTint;
 
+  // DEBUG BRANCH: restore WebGL2 behavior – when ssrDebugMode 1..8, bypass puddle gating and output refl directly
+  // This is what makes O give pure visualizations instead of overlay
+  if (frame.ssrDebugMode != 0) {
+    // For modes 1..8, old composite did: outColor = vec4(reflection,1.0) ignoring base and fade
+    // reflection here is refl.rgb already containing debug viz from fsSSR (PuddleMask, Depth, Normal, etc.)
+    var outDbg: CompOut;
+    outDbg.color = vec4<f32>(refl.rgb, 1.0);
+    return outDbg;
+  }
+
   var fade: f32 = refl.a;
   if (puddleMask < minPuddleMask) {
-    // keep base where no puddle, but still allow debug? For normal mode, skip SSR
     var outNoSSR: CompOut;
     outNoSSR.color = vec4<f32>(baseCol.rgb, baseCol.a);
     return outNoSSR;
@@ -1204,7 +1213,9 @@ struct QuantOut { @location(0) color: vec4<f32>, };
 fn fs_main(@location(0) v_uv: vec2<f32>) -> QuantOut {
   let uvFlip: vec2<f32> = vec2<f32>(v_uv.x, 1.0 - v_uv.y);
   var sc: vec4<f32> = textureSample(sceneTex, nearestSampler, uvFlip);
-  if (frame.authentic == 0 || frame.pbrDebugMode != 0) {
+  // Restore WebGL2 parity: bypass palette quant when either PBR debug OR SSR debug active
+  // Old quant shader checked pbrDebugMode !=0 ; old renderer also forced authentic=0 for SSR debug path.
+  if (frame.authentic == 0 || frame.pbrDebugMode != 0 || frame.ssrDebugMode != 0) {
     var out: QuantOut; out.color = sc; return out;
   }
   let lutCoord: vec2<i32> = vec2<i32>(i32(sc.r * 31.99) + i32(sc.g * 31.99) * 32, i32(sc.b * 31.99));
@@ -1488,29 +1499,98 @@ fn fs_main(
 }
 `;
 
-// Debug FS generators
+// Debug FS generators – restore WebGL2 exact fetching for material masks (mode 3,4,6)
 function makeDebugFS(mode) {
+  // This mirrors the old GLSL fsDebug* logic, now in WGSL, fetching actual height/AO/rough from array textures
+  // to ensure parity with 632b7f2.
   return fsRaymarchWgsl.replace(
     'out.color = vec4<f32>(finalColor, 1.0);',
     `
+    // --- debug world pos reconstruction (same as old GLSL) ---
     var dbgWPos: vec3<f32>;
     var dbgIsFloor: f32;
+    var dbgWallU: f32 = 0.0;
+    var dbgWallV: f32 = gWallV_raw;
     let vN: f32 = fragCoord.y / resolution.y;
     var dbgFloorWorld: vec2<f32> = u_playerPos + ray * perpDist;
     if (hit == 1) {
       let wV: f32 = gWallV_raw;
-      if (wV >= 0.0 && wV <= 1.0) { dbgWPos = vec3<f32>(hitPos, (1.0 - wV) * 1.15); dbgIsFloor = 0.0; }
-      else { if (vN > 0.5) { dbgWPos = vec3<f32>(u_playerPos + ray * perpDist, 0.0); dbgIsFloor = 1.0; } else { dbgWPos = vec3<f32>(u_playerPos + ray * perpDist, 1.15); dbgIsFloor = 1.0; } }
-    } else { if (vN > 0.5) { dbgWPos = vec3<f32>(u_playerPos + ray * perpDist, 0.0); dbgIsFloor = 1.0; } else { dbgWPos = vec3<f32>(u_playerPos + ray * perpDist, 1.15); dbgIsFloor = 1.0; } }
-    var dbgCol: vec3<f32>;
-    if (${mode} == 1) { dbgCol = debugMossNoiseCol(dbgWPos); }
-    else if (${mode} == 2) { dbgCol = debugMossEnvCol(dbgWPos, dbgIsFloor); }
-    else if (${mode} == 3) { dbgCol = debugMossMaterialCol(0.5, 0.85, 0.7); }
-    else if (${mode} == 4) { dbgCol = debugMossCombinedCol(dbgWPos, 0.5, 0.85, 0.7, dbgIsFloor); }
-    else if (${mode} == 5) { dbgCol = debugFinalPuddleMask(dbgWPos, 0.5, 1.0); }
-    else if (${mode} == 6) { dbgCol = debugDamagedMask(dbgWPos, 0.5, 0.85, 0.7, dbgIsFloor); }
-    else if (${mode} == 7) { dbgCol = debugDamagedNoiseCol(dbgWPos); }
-    else { dbgCol = finalColor; }
+      if (wV >= 0.0 && wV <= 1.0) {
+        dbgWPos = vec3<f32>(hitPos, (1.0 - wV) * 1.15);
+        dbgIsFloor = 0.0;
+        var wU: f32 = 0.0;
+        if (side == 0) { wU = hitPos.y - floor(hitPos.y); } else { wU = hitPos.x - floor(hitPos.x); }
+        if ((side == 0 && ray.x > 0.0) || (side == 1 && ray.y < 0.0)) { wU = 1.0 - wU; }
+        dbgWallU = wU;
+        dbgWallV = wV;
+      } else {
+        if (vN > 0.5) { dbgWPos = vec3<f32>(u_playerPos + ray * perpDist, 0.0); dbgIsFloor = 1.0; }
+        else { dbgWPos = vec3<f32>(u_playerPos + ray * perpDist, 1.15); dbgIsFloor = 1.0; }
+      }
+    } else {
+      if (vN > 0.5) { dbgWPos = vec3<f32>(u_playerPos + ray * perpDist, 0.0); dbgIsFloor = 1.0; }
+      else { dbgWPos = vec3<f32>(u_playerPos + ray * perpDist, 1.15); dbgIsFloor = 1.0; }
+    }
+
+    var dbgCol: vec3<f32> = finalColor;
+
+    if (${mode} == 1) {
+      // Moss noise – world pos only
+      dbgCol = debugMossNoiseMask(dbgWPos);
+    } else if (${mode} == 2) {
+      // Moss env – world + isFloor
+      dbgCol = debugMossEnvMask(dbgWPos, dbgIsFloor);
+    } else if (${mode} == 3 || ${mode} == 4 || ${mode} == 6) {
+      // Modes needing material: fetch actual height/AO/rough from arrays (parity with 632b7f2)
+      var dbgMatHeight: f32 = 0.5;
+      var dbgAo: f32 = 0.85;
+      var dbgRough: f32 = 0.7;
+      if (dbgIsFloor > 0.5) {
+        if (vN > 0.5) {
+          let fcCell: vec2<i32> = vec2<i32>(floor(dbgFloorWorld));
+          let matId: f32 = fetchFloorMatId(fcCell);
+          let layer: i32 = clampLayer(matId, fc);
+          let uv: vec2<f32> = fract(dbgFloorWorld);
+          dbgMatHeight = sampleFloorHeight(layer, uv);
+          let rma: vec4<f32> = sampleFloorRMA(layer, uv);
+          dbgAo = rma.a;
+          dbgRough = rma.r;
+        } else {
+          let ccCell: vec2<i32> = vec2<i32>(floor(dbgFloorWorld));
+          let matId: f32 = fetchCeilMatId(ccCell);
+          let layer: i32 = clampLayer(matId, cc);
+          let uv: vec2<f32> = fract(dbgFloorWorld);
+          dbgMatHeight = sampleCeilHeight(layer, uv);
+          let rma: vec4<f32> = sampleCeilRMA(layer, uv);
+          dbgAo = rma.a;
+          dbgRough = rma.r;
+        }
+      } else {
+        let matId: f32 = max(1.0, cellType);
+        let layer: i32 = clampLayer(matId, wc);
+        let uv: vec2<f32> = vec2<f32>(dbgWallU, clamp(dbgWallV, 0.0, 1.0));
+        dbgMatHeight = sampleWallHeight(layer, uv);
+        let rma: vec4<f32> = sampleWallRMA(layer, uv);
+        dbgAo = rma.a;
+        dbgRough = rma.r;
+      }
+
+      if (${mode} == 3) {
+        dbgCol = debugMossMaterialMask(dbgMatHeight, dbgAo, dbgRough);
+      } else if (${mode} == 4) {
+        dbgCol = debugMossCombinedMask(dbgWPos, dbgMatHeight, dbgAo, dbgRough, dbgIsFloor);
+      } else if (${mode} == 6) {
+        dbgCol = debugDamagedMask(dbgWPos, dbgMatHeight, dbgAo, dbgRough, dbgIsFloor);
+      }
+    } else if (${mode} == 5) {
+      // Puddle mask – floor only logic preserved, uses computePuddleMaskTweakable via debugFinalPuddleMask
+      dbgCol = debugFinalPuddleMask(dbgWPos, 0.5, 1.0);
+    } else if (${mode} == 7) {
+      dbgCol = debugDamagedNoiseMask(dbgWPos);
+    } else {
+      dbgCol = finalColor;
+    }
+
     out.color = vec4<f32>(dbgCol, 1.0);
     `
   );
