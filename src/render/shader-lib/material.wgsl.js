@@ -1,8 +1,5 @@
 export const wgslMaterial = `
-// ----- material helpers (array path) – respects rendering.json textureFilter via nearestSampler for pixelated style
-// Old WebGL2 used NEAREST filter for material arrays when textureFilter=nearest (default), giving chunky pixelated look
-// WebGPU migration regression used linearSampler always, losing pixelated style – fixed to use nearestSampler when nearest
-// For moire reduction (Doom/PSX retro): mag nearest (chunky), min/mipmap linear trilinear with mipmaps
+// ----- material helpers (array path) – uses textureSampleLevel with explicit LOD to restore bilinear filtering like old GLSL texture()
 fn decodeNormal(enc: vec3<f32>) -> vec3<f32> {
   return normalize(enc * 2.0 - 1.0);
 }
@@ -15,64 +12,44 @@ fn clampLayer(id: f32, count: f32) -> i32 {
   return i32(l);
 }
 
-// Helper to compute mip LOD from distance – keeps close chunky (lod 0), far uses higher mips to reduce moire
-fn calcMipLOD(dist: f32) -> f32 {
-  // dist ~1 => lod 0, dist ~4 => lod ~1.6, dist ~8 => lod ~2.4 etc.
-  // Scale tuned for 64x64 base and retro look – preserves chunky mag up close, smooths far
-  let d = max(dist, 0.5);
-  let lod = log2(d) * 1.1;
-  return clamp(lod, 0.0, 6.0);
+// Restore bilinear filtering via textureSampleLevel (explicit LOD 0) – allowed in non-uniform flow in WGSL fragment
+fn sampleWallAlbedo(layer: i32, uv: vec2<f32>) -> vec3<f32> {
+  return textureSampleLevel(wallAlbedo, linearSampler, uv, u32(layer), 0.0).rgb;
+}
+fn sampleWallNormalRaw(layer: i32, uv: vec2<f32>) -> vec3<f32> {
+  return textureSampleLevel(wallNormal, linearSampler, uv, u32(layer), 0.0).rgb;
+}
+fn sampleWallHeight(layer: i32, uv: vec2<f32>) -> f32 {
+  return textureSampleLevel(wallHeight, linearSampler, uv, u32(layer), 0.0).r;
+}
+fn sampleWallRMA(layer: i32, uv: vec2<f32>) -> vec4<f32> {
+  return textureSampleLevel(wallRoughMetal, linearSampler, uv, u32(layer), 0.0);
 }
 
-fn sampleWallAlbedo(layer: i32, uv: vec2<f32>, dist: f32) -> vec3<f32> {
-  let lod = calcMipLOD(dist);
-  return textureSampleLevel(wallAlbedo, nearestSampler, uv, u32(layer), lod).rgb;
+fn sampleFloorAlbedo(layer: i32, uv: vec2<f32>) -> vec3<f32> {
+  return textureSampleLevel(floorAlbedo, linearSampler, uv, u32(layer), 0.0).rgb;
 }
-fn sampleWallNormalRaw(layer: i32, uv: vec2<f32>, dist: f32) -> vec3<f32> {
-  let lod = calcMipLOD(dist);
-  return textureSampleLevel(wallNormal, nearestSampler, uv, u32(layer), lod).rgb;
+fn sampleFloorNormalRaw(layer: i32, uv: vec2<f32>) -> vec3<f32> {
+  return textureSampleLevel(floorNormal, linearSampler, uv, u32(layer), 0.0).rgb;
 }
-fn sampleWallHeight(layer: i32, uv: vec2<f32>, dist: f32) -> f32 {
-  let lod = calcMipLOD(dist);
-  return textureSampleLevel(wallHeight, nearestSampler, uv, u32(layer), lod).r;
+fn sampleFloorHeight(layer: i32, uv: vec2<f32>) -> f32 {
+  return textureSampleLevel(floorHeight, linearSampler, uv, u32(layer), 0.0).r;
 }
-fn sampleWallRMA(layer: i32, uv: vec2<f32>, dist: f32) -> vec4<f32> {
-  let lod = calcMipLOD(dist);
-  return textureSampleLevel(wallRoughMetal, nearestSampler, uv, u32(layer), lod);
+fn sampleFloorRMA(layer: i32, uv: vec2<f32>) -> vec4<f32> {
+  return textureSampleLevel(floorRoughMetal, linearSampler, uv, u32(layer), 0.0);
 }
 
-fn sampleFloorAlbedo(layer: i32, uv: vec2<f32>, dist: f32) -> vec3<f32> {
-  let lod = calcMipLOD(dist);
-  return textureSampleLevel(floorAlbedo, nearestSampler, uv, u32(layer), lod).rgb;
+fn sampleCeilAlbedo(layer: i32, uv: vec2<f32>) -> vec3<f32> {
+  return textureSampleLevel(ceilAlbedo, linearSampler, uv, u32(layer), 0.0).rgb;
 }
-fn sampleFloorNormalRaw(layer: i32, uv: vec2<f32>, dist: f32) -> vec3<f32> {
-  let lod = calcMipLOD(dist);
-  return textureSampleLevel(floorNormal, nearestSampler, uv, u32(layer), lod).rgb;
+fn sampleCeilNormalRaw(layer: i32, uv: vec2<f32>) -> vec3<f32> {
+  return textureSampleLevel(ceilNormal, linearSampler, uv, u32(layer), 0.0).rgb;
 }
-fn sampleFloorHeight(layer: i32, uv: vec2<f32>, dist: f32) -> f32 {
-  let lod = calcMipLOD(dist);
-  return textureSampleLevel(floorHeight, nearestSampler, uv, u32(layer), lod).r;
+fn sampleCeilHeight(layer: i32, uv: vec2<f32>) -> f32 {
+  return textureSampleLevel(ceilHeight, linearSampler, uv, u32(layer), 0.0).r;
 }
-fn sampleFloorRMA(layer: i32, uv: vec2<f32>, dist: f32) -> vec4<f32> {
-  let lod = calcMipLOD(dist);
-  return textureSampleLevel(floorRoughMetal, nearestSampler, uv, u32(layer), lod);
-}
-
-fn sampleCeilAlbedo(layer: i32, uv: vec2<f32>, dist: f32) -> vec3<f32> {
-  let lod = calcMipLOD(dist);
-  return textureSampleLevel(ceilAlbedo, nearestSampler, uv, u32(layer), lod).rgb;
-}
-fn sampleCeilNormalRaw(layer: i32, uv: vec2<f32>, dist: f32) -> vec3<f32> {
-  let lod = calcMipLOD(dist);
-  return textureSampleLevel(ceilNormal, nearestSampler, uv, u32(layer), lod).rgb;
-}
-fn sampleCeilHeight(layer: i32, uv: vec2<f32>, dist: f32) -> f32 {
-  let lod = calcMipLOD(dist);
-  return textureSampleLevel(ceilHeight, nearestSampler, uv, u32(layer), lod).r;
-}
-fn sampleCeilRMA(layer: i32, uv: vec2<f32>, dist: f32) -> vec4<f32> {
-  let lod = calcMipLOD(dist);
-  return textureSampleLevel(ceilRoughMetal, nearestSampler, uv, u32(layer), lod);
+fn sampleCeilRMA(layer: i32, uv: vec2<f32>) -> vec4<f32> {
+  return textureSampleLevel(ceilRoughMetal, linearSampler, uv, u32(layer), 0.0);
 }
 
 fn fetchFloorMatId(cell: vec2<i32>) -> f32 {

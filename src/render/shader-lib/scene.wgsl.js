@@ -108,9 +108,6 @@ fn shadeHorizontalCell(horizWorld: vec2<f32>, horizUV: vec2<f32>, matId: f32, co
   let worldPosForPOM: vec3<f32> = vec3<f32>(horizWorld, heightAtRay);
   let isFloorSurfaceForPOM: f32 = 1.0;
 
-  // Distance for mip LOD – computed before sampling so we can use trilinear to reduce moire
-  let distForMip: f32 = distance(horizWorld, frame.playerPos);
-
   // POM with damaged integration
   let viewDirCeil: vec3<f32> = normalize(vec3<f32>(-ray, 0.5));
   let poCeil: vec2<f32> = pomOffsetArrayDamaged(ceilHeight, uv, layer, viewDirCeil, frame.pomCeil, frame.pomSteps, worldPosForPOM, isFloorSurfaceForPOM);
@@ -125,19 +122,19 @@ fn shadeHorizontalCell(horizWorld: vec2<f32>, horizUV: vec2<f32>, matId: f32, co
   var rma: vec4<f32>;
   var Nw: vec3<f32>;
   if (isCeil) {
-    albedoRaw = sampleCeilAlbedo(layer, uv, distForMip);
-    normalRaw = sampleCeilNormalRaw(layer, uv, distForMip);
+    albedoRaw = sampleCeilAlbedo(layer, uv);
+    normalRaw = sampleCeilNormalRaw(layer, uv);
     let nt: vec3<f32> = decodeNormal(normalRaw);
     Nw = normalize(vec3<f32>(nt.x, -nt.y, -nt.z));
-    heightVal = sampleCeilHeight(layer, uv, distForMip);
-    rma = sampleCeilRMA(layer, uv, distForMip);
+    heightVal = sampleCeilHeight(layer, uv);
+    rma = sampleCeilRMA(layer, uv);
   } else {
-    albedoRaw = sampleFloorAlbedo(layer, uv, distForMip);
-    normalRaw = sampleFloorNormalRaw(layer, uv, distForMip);
+    albedoRaw = sampleFloorAlbedo(layer, uv);
+    normalRaw = sampleFloorNormalRaw(layer, uv);
     let nt: vec3<f32> = decodeNormal(normalRaw);
     Nw = normalize(vec3<f32>(nt.xy, nt.z));
-    heightVal = sampleFloorHeight(layer, uv, distForMip);
-    rma = sampleFloorRMA(layer, uv, distForMip);
+    heightVal = sampleFloorHeight(layer, uv);
+    rma = sampleFloorRMA(layer, uv);
   }
 
   var ao: f32 = rma.a;
@@ -218,19 +215,17 @@ fn shadeWallCell(wallU: f32, wallV: f32, matId: f32, wc: f32, side: i32, stepDir
 
   let worldPos: vec3<f32> = vec3<f32>(hitPos.x, hitPos.y, (1.0 - wallV) * 1.15);
   let viewDir: vec3<f32> = normalize(vec3<f32>(frame.playerPos, frame.playerHeight) - worldPos);
-  let distForMip: f32 = distance(hitPos, frame.playerPos);
   let viewTS: vec3<f32> = vec3<f32>(dot(viewDir, tangent), dot(viewDir, bitangent), dot(viewDir, Ngeom));
   let pomEn: f32 = f32(frame.pomEnabled);
   let isFloorSurface: f32 = 0.0;
-  // For POM height sampling we need distance-based LOD too, but use same dist for simplicity
   let poWall: vec2<f32> = pomOffsetArrayDamaged(wallHeight, uv, layer, viewTS, frame.pomWall, frame.pomSteps, worldPos, isFloorSurface);
   var uvPOM: vec2<f32> = mix(uv, uv + poWall, pomEn);
 
-  var albedoRaw: vec3<f32> = sampleWallAlbedo(layer, uvPOM, distForMip);
-  var normalRaw: vec3<f32> = sampleWallNormalRaw(layer, uvPOM, distForMip);
+  var albedoRaw: vec3<f32> = sampleWallAlbedo(layer, uvPOM);
+  var normalRaw: vec3<f32> = sampleWallNormalRaw(layer, uvPOM);
   var normalTSw: vec3<f32> = decodeNormal(normalRaw);
-  var heightVal: f32 = sampleWallHeight(layer, uvPOM, distForMip);
-  var rmaW: vec4<f32> = sampleWallRMA(layer, uvPOM, distForMip);
+  var heightVal: f32 = sampleWallHeight(layer, uvPOM);
+  var rmaW: vec4<f32> = sampleWallRMA(layer, uvPOM);
 
   let emissiveAlbedoMul: f32 = select(0.8, frame.pbrEmissiveAlbedoMul, frame.pbrEmissiveAlbedoMul > 0.0);
   let emissiveStrength: f32 = select(2.5, frame.pbrEmissiveStrength, frame.pbrEmissiveStrength > 0.0);
