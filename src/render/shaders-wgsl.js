@@ -998,7 +998,23 @@ fn traceScreenSpaceRaySSR_Full(startUV: vec2<f32>, N: vec3<f32>, V: vec3<f32>, l
     tStep = tStep * stride;
   }
 
-  // Fallback disabled for stretch test – no reflection if miss
+  // Fallback – fixed: no clamp, edge margin to avoid stretch columns
+  if (res.hit < 0.5 && puddleMask > 0.02) {
+    let fallbackW: vec3<f32> = worldPos + R * (maxDistance * 0.85);
+    let fProj: vec3<f32> = worldToScreenUVSSR_Full(fallbackW, camPos, eyeZ, playerAngle, planeLen, resolution, bobPixels);
+    let fUV: vec2<f32> = fProj.xy;
+    if (fUV.x >= 0.05 && fUV.x <= 0.95 && fUV.y >= 0.10 && fUV.y <= 0.90) {
+      let fUVFlip: vec2<f32> = vec2<f32>(fUV.x, 1.0 - fUV.y + bobPixels / max(1.0, resolution.y));
+      let fG: vec4<f32> = textureSampleLevel(gNormalDepthTex, nearestSampler, fUVFlip, 0.0);
+      let fN: vec3<f32> = octaDecodeSSR(fG.rg);
+      if (fG.b > 0.001 && fN.z <= 0.60) {
+        res.color = textureSampleLevel(sceneTex, nearestSampler, fUVFlip, 0.0).rgb * 0.7;
+        res.hit = 0.5;
+        res.hitUV = fUV;
+        res.rayLength = maxDistance * 0.85;
+      }
+    }
+  }
   return res;
 }
 
