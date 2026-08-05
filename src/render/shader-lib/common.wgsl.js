@@ -157,7 +157,7 @@ fn resolveWallHit(W: vec2<i32>, side: i32, stepDir: vec2<i32>, ray: vec2<f32>, c
     if (side == 0) {
       cornerCoord = f32(W.y) + select(1.0, 0.0, k == 0);
       coordAlong = outHp.y;
-      P = vec2<f32>(f32(W.x) + select(0.0, 1.0, stepDir.x > 0), cornerCoord);
+      P = vec2<f32>(f32(W.x) + select(1.0, 0.0, stepDir.x > 0), cornerCoord);
       interiorDir = vec2<f32>(f32(stepDir.x), f32(-off));
       roomDir = vec2<f32>(f32(-stepDir.x), f32(-off));
       E = vec2<i32>(W.x - stepDir.x, W.y);
@@ -166,7 +166,7 @@ fn resolveWallHit(W: vec2<i32>, side: i32, stepDir: vec2<i32>, ray: vec2<f32>, c
     } else {
       cornerCoord = f32(W.x) + select(1.0, 0.0, k == 0);
       coordAlong = outHp.x;
-      P = vec2<f32>(cornerCoord, f32(W.y) + select(0.0, 1.0, stepDir.y > 0));
+      P = vec2<f32>(cornerCoord, f32(W.y) + select(1.0, 0.0, stepDir.y > 0));
       interiorDir = vec2<f32>(f32(-off), f32(stepDir.y));
       roomDir = vec2<f32>(f32(-off), f32(-stepDir.y));
       E = vec2<i32>(W.x, W.y - stepDir.y);

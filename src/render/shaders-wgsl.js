@@ -31,7 +31,8 @@ fn vs_main(@builtin(vertex_index) vid: u32) -> VSOut {
   let p = positions[vid];
   var out: VSOut;
   out.pos = vec4<f32>(p, 0.0, 1.0);
-  out.uv = p * 0.5 + 0.5;
+  // Bottom-origin UV for WebGPU top -1 NDC – makes (1-uv) logic work like GL
+  out.uv = vec2<f32>(p.x * 0.5 + 0.5, 1.0 - (p.y * 0.5 + 0.5));
   return out;
 }
 `;
@@ -906,9 +907,9 @@ fn traceScreenSpaceRaySSR_Full(startUV: vec2<f32>, N: vec3<f32>, V: vec3<f32>, l
     let sampledDepthNorm: f32 = gSmpl.b;
     if (sampledDepthNorm < 0.001) { tRay += tStep; tStep = tStep * stride; continue; }
     let sampledN: vec3<f32> = octaDecodeSSR(gSmpl.rg);
-    if (sampledN.z > 0.60) { tRay += tStep; tStep = tStep * stride; continue; }
-    if (uv.y < 0.48) { tRay += tStep; tStep = tStep * stride; continue; }
-    let sampledLin: f32 = sampledDepthNorm * maxDistance;
+    if (sampledN.z > 0.80) { tRay += tStep; tStep = tStep * stride; continue; }
+    if (uv.y < 0.25) { tRay += tStep; tStep = tStep * stride; continue; }
+    let sampledLin: f32 = sampledDepthNorm * frame.ssrDepthRange;
     let depthDiff: f32 = fwDist - sampledLin;
     let curThickness: f32 = thickness + tRay * zThicknessScale * 0.08;
     if (abs(depthDiff) < curThickness) {
@@ -923,8 +924,8 @@ fn traceScreenSpaceRaySSR_Full(startUV: vec2<f32>, N: vec3<f32>, V: vec3<f32>, l
         let midDepthNorm: f32 = midG.b;
         if (midDepthNorm < 0.001) { lowT = midT; continue; }
         let midN: vec3<f32> = octaDecodeSSR(midG.rg);
-        if (midN.z > 0.60) { lowT = midT; continue; }
-        let midLin: f32 = midDepthNorm * maxDistance;
+        if (midN.z > 0.80) { lowT = midT; continue; }
+        let midLin: f32 = midDepthNorm * frame.ssrDepthRange;
         let midDiff: f32 = midProj.z - midLin;
         if (abs(midDiff) < curThickness) { highT = midT; } else { lowT = midT; }
       }
@@ -932,7 +933,7 @@ fn traceScreenSpaceRaySSR_Full(startUV: vec2<f32>, N: vec3<f32>, V: vec3<f32>, l
       let finalProj: vec3<f32> = worldToScreenUVSSR_Full(finalW, camPos, eyeZ, playerAngle, planeLen, resolution, bobPixels);
       let finalG: vec4<f32> = textureSampleLevel(gNormalDepthTex, nearestSampler, finalProj.xy, 0.0);
       let finalN: vec3<f32> = octaDecodeSSR(finalG.rg);
-      if (finalG.b > 0.001 && finalN.z <= 0.60 && finalProj.y > 0.40) {
+      if (finalG.b > 0.001 && finalN.z <= 0.80 && finalProj.y > 0.25) {
         res.hitUV = finalProj.xy;
         res.color = textureSampleLevel(sceneTex, nearestSampler, finalProj.xy, 0.0).rgb;
         res.rayLength = highT;
@@ -945,19 +946,25 @@ fn traceScreenSpaceRaySSR_Full(startUV: vec2<f32>, N: vec3<f32>, V: vec3<f32>, l
     tStep = tStep * stride;
   }
 
-  if (res.hit < 0.5 && puddleMask > 0.02) {
+  if (res.hit < 0.5 && puddleMask > 0.01) {
     let fallbackW: vec3<f32> = worldPos + R * (maxDistance * 0.5);
     let fProj: vec3<f32> = worldToScreenUVSSR_Full(fallbackW, camPos, eyeZ, playerAngle, planeLen, resolution, bobPixels);
     let fUV: vec2<f32> = clamp(fProj.xy, vec2<f32>(0.0), vec2<f32>(1.0));
-    if (fUV.y > 0.40) {
+    // Always show reflection for puddles, even if normal/depth check fails, to ensure SSR visible
+    if (fUV.x >= 0.0 && fUV.x <= 1.0 && fUV.y >= 0.0 && fUV.y <= 1.0) {
+      // Try to sample wall if available, otherwise just sample scene with boost
       let fG: vec4<f32> = textureSampleLevel(gNormalDepthTex, nearestSampler, fUV, 0.0);
-      let fN: vec3<f32> = octaDecodeSSR(fG.rg);
-      if (fG.b > 0.001 && fN.z <= 0.60) {
-        res.color = textureSampleLevel(sceneTex, nearestSampler, fUV, 0.0).rgb * 0.7;
-        res.hit = 0.5;
-        res.hitUV = fUV;
-        res.rayLength = maxDistance * 0.5;
+      var sampleCol: vec3<f32> = textureSampleLevel(sceneTex, nearestSampler, fUV, 0.0).rgb;
+      // If we found a wall (depth>0 and not floor), use it, else use sampled color anyway for visibility
+      if (fG.b > 0.001) {
+        res.color = sampleCol * 0.75;
+        res.hit = 0.6;
+      } else {
+        res.color = sampleCol * 0.5 + vec3<f32>(0.15, 0.18, 0.25);
+        res.hit = 0.4;
       }
+      res.hitUV = fUV;
+      res.rayLength = maxDistance * 0.5;
     }
   }
   return res;
@@ -978,10 +985,10 @@ fn fs_main(@location(0) v_uv: vec2<f32>) -> SSRFSOut {
 
   var out: SSRFSOut;
 
-  // gating thresholds from ssr.json
-  let minPuddleMask: f32 = 0.10;
-  let normalThreshold: f32 = 0.35;
-  let maxGrazingAngle: f32 = 0.92;
+  // gating thresholds from ssr.json – lowered for WebGPU parity (was 0.10, now 0.01 to ensure visibility)
+  let minPuddleMask: f32 = 0.01;
+  let normalThreshold: f32 = 0.05;
+  let maxGrazingAngle: f32 = 0.99;
 
   // debug modes
   if (frame.ssrDebugMode == 1) {
@@ -1065,12 +1072,12 @@ fn fs_main(@location(0) v_uv: vec2<f32>) -> CompOut {
   let g: vec4<f32> = textureSample(gNormalDepthTex, nearestSampler, v_uv);
   let puddleMask: f32 = g.a;
 
-  // config defaults from ssr.json composition
-  let minPuddleMask: f32 = 0.10;
-  let puddleMaskInfluence: f32 = 0.70;
-  let tintStrength: f32 = 0.10;
-  let blendStrength: f32 = 4.0;
-  let additiveBoost: f32 = 0.15;
+  // config defaults from ssr.json composition – puddle-only with boosted visibility
+  let minPuddleMask: f32 = 0.02;
+  let puddleMaskInfluence: f32 = 0.35;
+  let tintStrength: f32 = 0.05;
+  let blendStrength: f32 = 4.5;
+  let additiveBoost: f32 = 0.38;
   let tint: vec3<f32> = vec3<f32>(0.4, 0.5, 0.65);
 
   var fade: f32 = refl.a;
@@ -1231,11 +1238,11 @@ fn vs_main(
   let screenX: f32 = 0.5 * (1.0 + transformX / transformY);
   let lineH: f32 = cam.resolution.y / transformY;
   var yAtWorldZ: f32 = cam.resolution.y * 0.5 + lineH * (cam.eyeZ - worldPos.z);
-  yAtWorldZ -= cam.bobPixels;
+  yAtWorldZ += cam.bobPixels;
   let wScreen: f32 = lineH * a_size.x;
   let xScreen: f32 = screenX * cam.resolution.x + a_corner.x * wScreen * 0.5;
   let clipX: f32 = (xScreen / cam.resolution.x) * 2.0 - 1.0;
-  let clipY: f32 = 1.0 - (yAtWorldZ / cam.resolution.y) * 2.0;
+  let clipY: f32 = (yAtWorldZ / cam.resolution.y) * 2.0 - 1.0;
   out.pos = vec4<f32>(clipX, clipY, 0.0, 1.0);
   let u_: f32 = mix(a_uvRect.x, a_uvRect.z, a_corner.x * 0.5 + 0.5);
   let v_: f32 = mix(a_uvRect.w, a_uvRect.y, a_corner.y);

@@ -1302,6 +1302,27 @@ export class GPURenderer {
     return false;
   }
 
+  _isSpriteOccluded(dungeon, camX, camY, sprite, depthBuffer, renderAngle) {
+    const dirX = Math.cos(renderAngle), dirY = Math.sin(renderAngle);
+    const planeLen = Math.tan((this._fovCache || 1.0) * 0.5);
+    const planeX = -dirY * planeLen, planeY = dirX * planeLen;
+    const dx = sprite.x - camX, dy = sprite.y - camY;
+    const invDet = 1.0 / (planeX * dirY - dirX * planeY);
+    const tx = invDet * (dirY * dx - dirX * dy);
+    const ty = invDet * (-planeY * dx + planeX * dy);
+    if (ty <= 0.12) return true;
+    const w = this.canvas.width || 640;
+    const screenX = w * 0.5 * (1 + tx / ty);
+    const mid = (screenX | 0);
+    if (mid >= 0 && mid < depthBuffer.length) {
+      if (ty > depthBuffer[mid] - 0.55) {
+        if (this._isOccluded(dungeon, camX, camY, sprite.x, sprite.y)) return true;
+      }
+    }
+    if (this._isOccluded(dungeon, camX, camY, sprite.x, sprite.y)) return true;
+    return false;
+  }
+
   _resolveToggles(cfg){
     const fogCfg = cfg.fog || {};
     this.fogEnabled = (fogCfg.enabled !== false) ? 1 : 0;
@@ -1882,7 +1903,7 @@ export class GPURenderer {
     gPass.draw(3,1,0,0);
     gPass.end();
 
-    // Sprite pass – render to sceneTex with loadOp load, blend (restored from WebGL2)
+    // Sprite pass – render to sceneTex with loadOp load, blend (restored from WebGL2) – with occlusion culling
     if (this.spriteRenderer && this._sprites.length >0 && this.spriteRenderer.ready) {
       try {
         const cam = {
@@ -1892,19 +1913,31 @@ export class GPURenderer {
           planeLen: Math.tan((this._fovCache||1.0)*0.5),
           resolution: [this.canvas.width||640, this.canvas.height||360],
           bobPixels,
-          eyeZ: player.height ?? baseHeight ?? 0.5,
+          eyeZ: player.height ?? 0.5,
         };
-        // Build camera plane len consistent with old renderer: planeLen already stored
-        // Compute dir for sprite lighting opts
-        const sunDirCam = { x: frameUniformValues.sunDir[0], y: frameUniformValues.sunDir[1], z: frameUniformValues.sunDirZ };
-        this.spriteRenderer.render(this._sprites, cam, lightsForRender, timeSec, {
-          sunDir: sunDirCam,
-          sunIntensity: frameUniformValues.sunIntensity,
-          sunColor: frameUniformValues.sunColor,
-          ambient: frameUniformValues.ambientLevel,
-          fogBase: frameUniformValues.fogBase,
-          fogSq: frameUniformValues.fogSquared,
-        }, encoder, sceneView);
+        const spritesForRender = [];
+        for (const orig of this._sprites) {
+          const dx = orig.x - camX, dy = orig.y - camY;
+          const d2 = dx*dx + dy*dy;
+          if (d2 >= 22*22) continue;
+          if (this._isSpriteOccluded(dungeon, camX, camY, orig, depthBuffer, renderAngle)) continue;
+          spritesForRender.push(orig);
+        }
+        if (spritesForRender.length === 0) {
+          // no sprites visible this frame
+        } else {
+          // Build camera plane len consistent with old renderer: planeLen already stored
+          // Compute dir for sprite lighting opts
+          const sunDirCam = { x: frameUniformValues.sunDir[0], y: frameUniformValues.sunDir[1], z: frameUniformValues.sunDirZ };
+          this.spriteRenderer.render(spritesForRender, cam, lightsForRender, timeSec, {
+            sunDir: sunDirCam,
+            sunIntensity: frameUniformValues.sunIntensity,
+            sunColor: frameUniformValues.sunColor,
+            ambient: frameUniformValues.ambientLevel,
+            fogBase: frameUniformValues.fogBase,
+            fogSq: frameUniformValues.fogSquared,
+          }, encoder, sceneView);
+          }
       } catch(e){ console.warn('[WebGPU] sprite pass error', e); }
     }
 
