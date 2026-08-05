@@ -1342,6 +1342,8 @@ fn vs_main(
 `;
 
 export const fsSpriteWgsl = `
+// Fix WebGL2->WebGPU parity: Old WebGL2 sprites used NEAREST filter for pixelated style (material arrays NEAREST)
+// Now using nearestSampler for albedo (and normal/orm) to restore chunky pixel look
 @group(1) @binding(0) var albedoTex: texture_2d<f32>;
 @group(1) @binding(1) var normalTex: texture_2d<f32>;
 @group(1) @binding(2) var ormTex: texture_2d<f32>;
@@ -1383,10 +1385,12 @@ fn fs_main(
   @location(7) v_rimStrength: f32,
   @location(8) v_dist: f32
 ) -> @location(0) vec4<f32> {
-  let albedoS: vec4<f32> = textureSample(albedoTex, linearSampler, v_uv);
+  // Use nearestSampler for albedo to restore pixelated style (was linearSampler which blurred)
+  let albedoS: vec4<f32> = textureSample(albedoTex, nearestSampler, v_uv);
   if (albedoS.a < 0.08) { discard; }
   var albedo: vec3<f32> = albedoS.rgb;
-  var normalEnc: vec3<f32> = textureSample(normalTex, linearSampler, v_uv).rgb;
+  // Normals and ORM can stay linear for smoother lighting, but for full pixelated parity use nearest
+  var normalEnc: vec3<f32> = textureSample(normalTex, nearestSampler, v_uv).rgb;
   var normalTS: vec3<f32> = decodeNormal(normalEnc);
   normalTS = vec3<f32>(normalTS.xy * v_normalStrength, normalTS.z);
   normalTS = normalize(normalTS);
@@ -1394,7 +1398,7 @@ fn fs_main(
   let bitangent: vec3<f32> = vec3<f32>(0.0,0.0,1.0);
   let geomN: vec3<f32> = normalize(-v_cameraForward + vec3<f32>(0.0,0.0,0.4));
   let N: vec3<f32> = normalize(tangent * normalTS.x + bitangent * normalTS.y + geomN * normalTS.z);
-  let orm: vec3<f32> = textureSample(ormTex, linearSampler, v_uv).rgb;
+  let orm: vec3<f32> = textureSample(ormTex, nearestSampler, v_uv).rgb;
   let ao: f32 = orm.r;
   var roughness: f32 = clamp(orm.g, 0.04, 1.0);
   let metal: f32 = clamp(orm.b, 0.0, 1.0);
