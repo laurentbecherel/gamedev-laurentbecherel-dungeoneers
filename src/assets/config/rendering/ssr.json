@@ -15,14 +15,14 @@
     "note": "Only floor where puddle mask > min gets SSR"
   },
   "rayMarch": {
-    "steps": 48,
+    "steps": 72,
     "binarySteps": 8,
     "maxDistance": 16,
-    "thickness": 1.0,
-    "stride": 1.02,
+    "thickness": 0.5,
+    "stride": 1.01,
     "jitter": 0.01,
     "depthBias": 0.08,
-    "zThicknessScale": 0.1,
+    "zThicknessScale": 0.05,
     "maxRayAngle": 0.995,
     "worldExpire": 24,
     "note": "Increased from 48 to 64 to reach far walls after chamfer/corners restore, thicker and less stride to avoid skipping thin walls that caused vertical stretch at grazing angles"
