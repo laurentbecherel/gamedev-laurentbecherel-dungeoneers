@@ -85,7 +85,7 @@ fn traceScreenSpaceRaySSR(startUV: vec2<f32>, N: vec3<f32>, V: vec3<f32>, linear
     let proj: vec3<f32> = worldToScreenUVSSR(reflectedWorld, camPos, eyeZ, playerAngle, planeLen, resolution, bobPixels);
     let uv: vec2<f32> = proj.xy;
     let fwDist: f32 = proj.z;
-    if (uv.x < -0.15 || uv.x > 1.15 || uv.y < -0.15 || uv.y > 1.15) {
+    if (uv.x < 0.0 || uv.x > 1.0 || uv.y < 0.0 || uv.y > 1.0) {
       tRay += tStep; tStep = tStep * stride; continue;
     }
     let uvFlip: vec2<f32> = vec2<f32>(uv.x, 1.0 - uv.y);
