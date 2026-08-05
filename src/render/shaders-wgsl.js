@@ -950,8 +950,8 @@ fn traceScreenSpaceRaySSR_Full(startUV: vec2<f32>, N: vec3<f32>, V: vec3<f32>, l
     let uv: vec2<f32> = proj.xy;
     let fwDist: f32 = proj.z;
     if (uv.x < -0.15 || uv.x > 1.15 || uv.y < -0.15 || uv.y > 1.15) { tRay += tStep; tStep = tStep * stride; continue; }
-    // Flip Y for WebGPU top-left texture sampling
-    let uvFlip: vec2<f32> = vec2<f32>(uv.x, 1.0 - uv.y);
+    // Flip Y for WebGPU top-left texture sampling + bob correction (sceneTex Y = (1-uv)*res + bob => texV = 1-uv + bob/res)
+    let uvFlip: vec2<f32> = vec2<f32>(uv.x, 1.0 - uv.y + bobPixels / max(1.0, resolution.y));
     let gSmpl: vec4<f32> = textureSampleLevel(gNormalDepthTex, nearestSampler, uvFlip, 0.0);
     let sampledDepthNorm: f32 = gSmpl.b;
     if (sampledDepthNorm < 0.001) { tRay += tStep; tStep = tStep * stride; continue; }
@@ -969,7 +969,7 @@ fn traceScreenSpaceRaySSR_Full(startUV: vec2<f32>, N: vec3<f32>, V: vec3<f32>, l
         let midT: f32 = mix(lowT, highT, 0.5);
         let midW: vec3<f32> = worldPos + R * midT;
         let midProj: vec3<f32> = worldToScreenUVSSR_Full(midW, camPos, eyeZ, playerAngle, planeLen, resolution, bobPixels);
-        let midUVFlip: vec2<f32> = vec2<f32>(midProj.x, 1.0 - midProj.y);
+        let midUVFlip: vec2<f32> = vec2<f32>(midProj.x, 1.0 - midProj.y + bobPixels / max(1.0, resolution.y));
         let midG: vec4<f32> = textureSampleLevel(gNormalDepthTex, nearestSampler, midUVFlip, 0.0);
         let midDepthNorm: f32 = midG.b;
         if (midDepthNorm < 0.001) { lowT = midT; continue; }
@@ -981,7 +981,7 @@ fn traceScreenSpaceRaySSR_Full(startUV: vec2<f32>, N: vec3<f32>, V: vec3<f32>, l
       }
       let finalW: vec3<f32> = worldPos + R * highT;
       let finalProj: vec3<f32> = worldToScreenUVSSR_Full(finalW, camPos, eyeZ, playerAngle, planeLen, resolution, bobPixels);
-      let finalUVFlip: vec2<f32> = vec2<f32>(finalProj.x, 1.0 - finalProj.y);
+      let finalUVFlip: vec2<f32> = vec2<f32>(finalProj.x, 1.0 - finalProj.y + bobPixels / max(1.0, resolution.y));
       let finalG: vec4<f32> = textureSampleLevel(gNormalDepthTex, nearestSampler, finalUVFlip, 0.0);
       let finalN: vec3<f32> = octaDecodeSSR(finalG.rg);
       // Final must not be floor – rely on normal only, no uv.y threshold (fix 48e9608)
@@ -998,26 +998,7 @@ fn traceScreenSpaceRaySSR_Full(startUV: vec2<f32>, N: vec3<f32>, V: vec3<f32>, l
     tStep = tStep * stride;
   }
 
-  // Fallback – fix 15f7f7e: remove clamp that sampled screen edge causing stretched columns.
-  // After 268421c chamfer/corners restore, far walls need more reach – use 0.8*maxDistance and stricter edge margin
-  // to avoid vertical stretch at grazing angles.
-  if (res.hit < 0.5 && puddleMask > 0.02) {
-    let fallbackW: vec3<f32> = worldPos + R * (maxDistance * 0.85);
-    let fProj: vec3<f32> = worldToScreenUVSSR_Full(fallbackW, camPos, eyeZ, playerAngle, planeLen, resolution, bobPixels);
-    let fUV: vec2<f32> = fProj.xy;
-    // Require well inside screen (not edge) to prevent column stretch from edge sampling
-    if (fUV.x >= 0.05 && fUV.x <= 0.95 && fUV.y >= 0.10 && fUV.y <= 0.90) {
-      let fUVFlip: vec2<f32> = vec2<f32>(fUV.x, 1.0 - fUV.y);
-      let fG: vec4<f32> = textureSampleLevel(gNormalDepthTex, nearestSampler, fUVFlip, 0.0);
-      let fN: vec3<f32> = octaDecodeSSR(fG.rg);
-      if (fG.b > 0.001 && fN.z <= 0.60) {
-        res.color = textureSampleLevel(sceneTex, nearestSampler, fUVFlip, 0.0).rgb * 0.7;
-        res.hit = 0.5;
-        res.hitUV = fUV;
-        res.rayLength = maxDistance * 0.85;
-      }
-    }
-  }
+  // Fallback disabled for stretch test � no reflection if miss
   return res;
 }
 
@@ -1028,8 +1009,8 @@ struct SSRFSOut {
 @fragment
 fn fs_main(@location(0) v_uv: vec2<f32>) -> SSRFSOut {
   let resolution: vec2<f32> = frame.resolution;
-  // WebGPU texture origin top-left vs GL bottom-left: flip Y for screen textures
-  let v_uv_flip: vec2<f32> = vec2<f32>(v_uv.x, 1.0 - v_uv.y);
+  // WebGPU texture origin top-left vs GL bottom-left: flip Y + bob correction (texV = 1-uv + bob/res)
+  let v_uv_flip: vec2<f32> = vec2<f32>(v_uv.x, 1.0 - v_uv.y + frame.bobPixels / max(1.0, resolution.y));
   let g: vec4<f32> = textureSample(gNormalDepthTex, nearestSampler, v_uv_flip);
   let depthNorm: f32 = g.b;
   let puddleMask: f32 = g.a;

@@ -110,7 +110,7 @@ fn traceScreenSpaceRaySSR(startUV: vec2<f32>, N: vec3<f32>, V: vec3<f32>, linear
         let midT: f32 = mix(lowT, highT, 0.5);
         let midW: vec3<f32> = worldPos + R * midT;
         let midProj: vec3<f32> = worldToScreenUVSSR(midW, camPos, eyeZ, playerAngle, planeLen, resolution, bobPixels);
-        let midFlip: vec2<f32> = vec2<f32>(midProj.x, 1.0 - midProj.y);
+        let midFlip: vec2<f32> = vec2<f32>(midProj.x, 1.0 - midProj.y + bobPixels / max(1.0, resolution.y));
         let midG: vec4<f32> = textureSampleLevel(gNormalDepthTex, nearestSampler, midFlip, 0.0);
         let midDepthNorm: f32 = midG.b;
         if (midDepthNorm < 0.001) { lowT = midT; continue; }
@@ -122,7 +122,7 @@ fn traceScreenSpaceRaySSR(startUV: vec2<f32>, N: vec3<f32>, V: vec3<f32>, linear
       }
       let finalW: vec3<f32> = worldPos + R * highT;
       let finalProj: vec3<f32> = worldToScreenUVSSR(finalW, camPos, eyeZ, playerAngle, planeLen, resolution, bobPixels);
-      let finalFlip: vec2<f32> = vec2<f32>(finalProj.x, 1.0 - finalProj.y);
+      let finalFlip: vec2<f32> = vec2<f32>(finalProj.x, 1.0 - finalProj.y + bobPixels / max(1.0, resolution.y));
       let finalG: vec4<f32> = textureSampleLevel(gNormalDepthTex, nearestSampler, finalFlip, 0.0);
       let finalN: vec3<f32> = octaDecodeSSR(finalG.rg);
       if (finalG.b > 0.001 && finalN.z <= 0.60) {
@@ -138,23 +138,10 @@ fn traceScreenSpaceRaySSR(startUV: vec2<f32>, N: vec3<f32>, V: vec3<f32>, linear
     tStep = tStep * stride;
   }
 
-  // Fix 15f7f7e + 268421c re-fix: no clamp, stricter edge margin, 0.85*maxDistance to reach far walls
-  if (res.hit < 0.5 && puddleMask > 0.02) {
-    let fallbackW: vec3<f32> = worldPos + R * (maxDistance * 0.85);
-    let fProj: vec3<f32> = worldToScreenUVSSR(fallbackW, camPos, eyeZ, playerAngle, planeLen, resolution, bobPixels);
-    let fUV: vec2<f32> = fProj.xy;
-    if (fUV.x >= 0.05 && fUV.x <= 0.95 && fUV.y >= 0.10 && fUV.y <= 0.90) {
-      let fUVFlip: vec2<f32> = vec2<f32>(fUV.x, 1.0 - fUV.y);
-      let fG: vec4<f32> = textureSampleLevel(gNormalDepthTex, nearestSampler, fUVFlip, 0.0);
-      let fN: vec3<f32> = octaDecodeSSR(fG.rg);
-      if (fG.b > 0.001 && fN.z <= 0.60) {
-        res.color = textureSampleLevel(sceneTex, nearestSampler, fUVFlip, 0.0).rgb * 0.7;
-        res.hit = 0.5;
-        res.hitUV = fUV;
-        res.rayLength = maxDistance * 0.85;
-      }
-    }
-  }
+  // Fallback disabled for stretch test
+  // if (res.hit < 0.5) { ... }
+
+
 
   return res;
 }
