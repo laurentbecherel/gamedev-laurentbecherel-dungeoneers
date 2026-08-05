@@ -31,8 +31,7 @@ fn vs_main(@builtin(vertex_index) vid: u32) -> VSOut {
   let p = positions[vid];
   var out: VSOut;
   out.pos = vec4<f32>(p, 0.0, 1.0);
-  // Bottom-origin UV for WebGPU top -1 NDC – makes (1-uv) logic work like GL
-  out.uv = vec2<f32>(p.x * 0.5 + 0.5, 1.0 - (p.y * 0.5 + 0.5));
+  out.uv = p * 0.5 + 0.5;
   return out;
 }
 `;
@@ -903,7 +902,9 @@ fn traceScreenSpaceRaySSR_Full(startUV: vec2<f32>, N: vec3<f32>, V: vec3<f32>, l
     let uv: vec2<f32> = proj.xy;
     let fwDist: f32 = proj.z;
     if (uv.x < -0.15 || uv.x > 1.15 || uv.y < -0.15 || uv.y > 1.15) { tRay += tStep; tStep = tStep * stride; continue; }
-    let gSmpl: vec4<f32> = textureSampleLevel(gNormalDepthTex, nearestSampler, uv, 0.0);
+    // Flip Y for WebGPU top-left texture sampling
+    let uvFlip: vec2<f32> = vec2<f32>(uv.x, 1.0 - uv.y);
+    let gSmpl: vec4<f32> = textureSampleLevel(gNormalDepthTex, nearestSampler, uvFlip, 0.0);
     let sampledDepthNorm: f32 = gSmpl.b;
     if (sampledDepthNorm < 0.001) { tRay += tStep; tStep = tStep * stride; continue; }
     let sampledN: vec3<f32> = octaDecodeSSR(gSmpl.rg);
@@ -913,14 +914,15 @@ fn traceScreenSpaceRaySSR_Full(startUV: vec2<f32>, N: vec3<f32>, V: vec3<f32>, l
     let depthDiff: f32 = fwDist - sampledLin;
     let curThickness: f32 = thickness + tRay * zThicknessScale * 0.08;
     if (abs(depthDiff) < curThickness) {
-      res.hit = 1.0; res.hitUV = uv; res.color = textureSampleLevel(sceneTex, nearestSampler, uv, 0.0).rgb; res.rayLength = tRay;
+      res.hit = 1.0; res.hitUV = uv; res.color = textureSampleLevel(sceneTex, nearestSampler, uvFlip, 0.0).rgb; res.rayLength = tRay;
       var lowT: f32 = tRay - tStep; var highT: f32 = tRay;
       for (var b: i32 = 0; b < 8; b++) {
         if (b >= binarySteps) { break; }
         let midT: f32 = mix(lowT, highT, 0.5);
         let midW: vec3<f32> = worldPos + R * midT;
         let midProj: vec3<f32> = worldToScreenUVSSR_Full(midW, camPos, eyeZ, playerAngle, planeLen, resolution, bobPixels);
-        let midG: vec4<f32> = textureSampleLevel(gNormalDepthTex, nearestSampler, midProj.xy, 0.0);
+        let midUVFlip: vec2<f32> = vec2<f32>(midProj.x, 1.0 - midProj.y);
+        let midG: vec4<f32> = textureSampleLevel(gNormalDepthTex, nearestSampler, midUVFlip, 0.0);
         let midDepthNorm: f32 = midG.b;
         if (midDepthNorm < 0.001) { lowT = midT; continue; }
         let midN: vec3<f32> = octaDecodeSSR(midG.rg);
@@ -931,11 +933,12 @@ fn traceScreenSpaceRaySSR_Full(startUV: vec2<f32>, N: vec3<f32>, V: vec3<f32>, l
       }
       let finalW: vec3<f32> = worldPos + R * highT;
       let finalProj: vec3<f32> = worldToScreenUVSSR_Full(finalW, camPos, eyeZ, playerAngle, planeLen, resolution, bobPixels);
-      let finalG: vec4<f32> = textureSampleLevel(gNormalDepthTex, nearestSampler, finalProj.xy, 0.0);
+      let finalUVFlip: vec2<f32> = vec2<f32>(finalProj.x, 1.0 - finalProj.y);
+      let finalG: vec4<f32> = textureSampleLevel(gNormalDepthTex, nearestSampler, finalUVFlip, 0.0);
       let finalN: vec3<f32> = octaDecodeSSR(finalG.rg);
       if (finalG.b > 0.001 && finalN.z <= 0.80 && finalProj.y > 0.25) {
         res.hitUV = finalProj.xy;
-        res.color = textureSampleLevel(sceneTex, nearestSampler, finalProj.xy, 0.0).rgb;
+        res.color = textureSampleLevel(sceneTex, nearestSampler, finalUVFlip, 0.0).rgb;
         res.rayLength = highT;
       } else {
         res.hit = 0.0;
@@ -952,10 +955,10 @@ fn traceScreenSpaceRaySSR_Full(startUV: vec2<f32>, N: vec3<f32>, V: vec3<f32>, l
     let fUV: vec2<f32> = clamp(fProj.xy, vec2<f32>(0.0), vec2<f32>(1.0));
     // Always show reflection for puddles, even if normal/depth check fails, to ensure SSR visible
     if (fUV.x >= 0.0 && fUV.x <= 1.0 && fUV.y >= 0.0 && fUV.y <= 1.0) {
-      // Try to sample wall if available, otherwise just sample scene with boost
-      let fG: vec4<f32> = textureSampleLevel(gNormalDepthTex, nearestSampler, fUV, 0.0);
-      var sampleCol: vec3<f32> = textureSampleLevel(sceneTex, nearestSampler, fUV, 0.0).rgb;
-      // If we found a wall (depth>0 and not floor), use it, else use sampled color anyway for visibility
+      // Flip for texture sampling
+      let fUVFlip: vec2<f32> = vec2<f32>(fUV.x, 1.0 - fUV.y);
+      let fG: vec4<f32> = textureSampleLevel(gNormalDepthTex, nearestSampler, fUVFlip, 0.0);
+      var sampleCol: vec3<f32> = textureSampleLevel(sceneTex, nearestSampler, fUVFlip, 0.0).rgb;
       if (fG.b > 0.001) {
         res.color = sampleCol * 0.75;
         res.hit = 0.6;
@@ -977,7 +980,9 @@ struct SSRFSOut {
 @fragment
 fn fs_main(@location(0) v_uv: vec2<f32>) -> SSRFSOut {
   let resolution: vec2<f32> = frame.resolution;
-  let g: vec4<f32> = textureSample(gNormalDepthTex, nearestSampler, v_uv);
+  // WebGPU texture origin top-left vs GL bottom-left: flip Y for screen textures
+  let v_uv_flip: vec2<f32> = vec2<f32>(v_uv.x, 1.0 - v_uv.y);
+  let g: vec4<f32> = textureSample(gNormalDepthTex, nearestSampler, v_uv_flip);
   let depthNorm: f32 = g.b;
   let puddleMask: f32 = g.a;
   let enc: vec2<f32> = g.rg;
@@ -1067,9 +1072,10 @@ struct CompOut {
 
 @fragment
 fn fs_main(@location(0) v_uv: vec2<f32>) -> CompOut {
-  let baseCol: vec4<f32> = textureSample(sceneTex, nearestSampler, v_uv);
-  let refl: vec4<f32> = textureSample(ssrTex, nearestSampler, v_uv);
-  let g: vec4<f32> = textureSample(gNormalDepthTex, nearestSampler, v_uv);
+  let uvFlip: vec2<f32> = vec2<f32>(v_uv.x, 1.0 - v_uv.y);
+  let baseCol: vec4<f32> = textureSample(sceneTex, nearestSampler, uvFlip);
+  let refl: vec4<f32> = textureSample(ssrTex, nearestSampler, uvFlip);
+  let g: vec4<f32> = textureSample(gNormalDepthTex, nearestSampler, uvFlip);
   let puddleMask: f32 = g.a;
 
   // config defaults from ssr.json composition – puddle-only with boosted visibility
@@ -1132,7 +1138,8 @@ struct QuantOut { @location(0) color: vec4<f32>, };
 
 @fragment
 fn fs_main(@location(0) v_uv: vec2<f32>) -> QuantOut {
-  var sc: vec4<f32> = textureSample(sceneTex, nearestSampler, v_uv);
+  let uvFlip: vec2<f32> = vec2<f32>(v_uv.x, 1.0 - v_uv.y);
+  var sc: vec4<f32> = textureSample(sceneTex, nearestSampler, uvFlip);
   if (frame.authentic == 0 || frame.pbrDebugMode != 0) {
     var out: QuantOut; out.color = sc; return out;
   }
@@ -1238,11 +1245,11 @@ fn vs_main(
   let screenX: f32 = 0.5 * (1.0 + transformX / transformY);
   let lineH: f32 = cam.resolution.y / transformY;
   var yAtWorldZ: f32 = cam.resolution.y * 0.5 + lineH * (cam.eyeZ - worldPos.z);
-  yAtWorldZ += cam.bobPixels;
+  yAtWorldZ -= cam.bobPixels;
   let wScreen: f32 = lineH * a_size.x;
   let xScreen: f32 = screenX * cam.resolution.x + a_corner.x * wScreen * 0.5;
   let clipX: f32 = (xScreen / cam.resolution.x) * 2.0 - 1.0;
-  let clipY: f32 = (yAtWorldZ / cam.resolution.y) * 2.0 - 1.0;
+  let clipY: f32 = 1.0 - (yAtWorldZ / cam.resolution.y) * 2.0;
   out.pos = vec4<f32>(clipX, clipY, 0.0, 1.0);
   let u_: f32 = mix(a_uvRect.x, a_uvRect.z, a_corner.x * 0.5 + 0.5);
   let v_: f32 = mix(a_uvRect.w, a_uvRect.y, a_corner.y);

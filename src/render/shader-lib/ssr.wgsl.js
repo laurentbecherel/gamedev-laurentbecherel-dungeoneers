@@ -88,7 +88,8 @@ fn traceScreenSpaceRaySSR(startUV: vec2<f32>, N: vec3<f32>, V: vec3<f32>, linear
     if (uv.x < -0.15 || uv.x > 1.15 || uv.y < -0.15 || uv.y > 1.15) {
       tRay += tStep; tStep = tStep * stride; continue;
     }
-    let gSmpl: vec4<f32> = textureSampleLevel(gNormalDepthTex, nearestSampler, uv, 0.0);
+    let uvFlip: vec2<f32> = vec2<f32>(uv.x, 1.0 - uv.y);
+    let gSmpl: vec4<f32> = textureSampleLevel(gNormalDepthTex, nearestSampler, uvFlip, 0.0);
     let sampledDepthNorm: f32 = gSmpl.b;
     if (sampledDepthNorm < 0.001) { tRay += tStep; tStep = tStep * stride; continue; }
     let sampledN: vec3<f32> = octaDecodeSSR(gSmpl.rg);
@@ -100,7 +101,7 @@ fn traceScreenSpaceRaySSR(startUV: vec2<f32>, N: vec3<f32>, V: vec3<f32>, linear
     if (abs(depthDiff) < curThickness) {
       res.hit = 1.0;
       res.hitUV = uv;
-      res.color = textureSampleLevel(sceneTex, nearestSampler, uv, 0.0).rgb;
+      res.color = textureSampleLevel(sceneTex, nearestSampler, uvFlip, 0.0).rgb;
       res.rayLength = tRay;
       var lowT: f32 = tRay - tStep;
       var highT: f32 = tRay;
@@ -109,7 +110,8 @@ fn traceScreenSpaceRaySSR(startUV: vec2<f32>, N: vec3<f32>, V: vec3<f32>, linear
         let midT: f32 = mix(lowT, highT, 0.5);
         let midW: vec3<f32> = worldPos + R * midT;
         let midProj: vec3<f32> = worldToScreenUVSSR(midW, camPos, eyeZ, playerAngle, planeLen, resolution, bobPixels);
-        let midG: vec4<f32> = textureSampleLevel(gNormalDepthTex, nearestSampler, midProj.xy, 0.0);
+        let midFlip: vec2<f32> = vec2<f32>(midProj.x, 1.0 - midProj.y);
+        let midG: vec4<f32> = textureSampleLevel(gNormalDepthTex, nearestSampler, midFlip, 0.0);
         let midDepthNorm: f32 = midG.b;
         if (midDepthNorm < 0.001) { lowT = midT; continue; }
         let midN: vec3<f32> = octaDecodeSSR(midG.rg);
@@ -120,11 +122,12 @@ fn traceScreenSpaceRaySSR(startUV: vec2<f32>, N: vec3<f32>, V: vec3<f32>, linear
       }
       let finalW: vec3<f32> = worldPos + R * highT;
       let finalProj: vec3<f32> = worldToScreenUVSSR(finalW, camPos, eyeZ, playerAngle, planeLen, resolution, bobPixels);
-      let finalG: vec4<f32> = textureSampleLevel(gNormalDepthTex, nearestSampler, finalProj.xy, 0.0);
+      let finalFlip: vec2<f32> = vec2<f32>(finalProj.x, 1.0 - finalProj.y);
+      let finalG: vec4<f32> = textureSampleLevel(gNormalDepthTex, nearestSampler, finalFlip, 0.0);
       let finalN: vec3<f32> = octaDecodeSSR(finalG.rg);
       if (finalG.b > 0.001 && finalN.z <= 0.80 && finalProj.x > 0.0 && finalProj.x < 1.0 && finalProj.y > 0.25) {
         res.hitUV = finalProj.xy;
-        res.color = textureSampleLevel(sceneTex, nearestSampler, finalProj.xy, 0.0).rgb;
+        res.color = textureSampleLevel(sceneTex, nearestSampler, finalFlip, 0.0).rgb;
         res.rayLength = highT;
       } else {
         res.hit = 0.0;
@@ -140,10 +143,11 @@ fn traceScreenSpaceRaySSR(startUV: vec2<f32>, N: vec3<f32>, V: vec3<f32>, linear
     let fProj: vec3<f32> = worldToScreenUVSSR(fallbackW, camPos, eyeZ, playerAngle, planeLen, resolution, bobPixels);
     let fUV: vec2<f32> = clamp(fProj.xy, vec2<f32>(0.0), vec2<f32>(1.0));
     if (fUV.x >= 0.0 && fUV.x <= 1.0 && fUV.y >= 0.0 && fUV.y <= 1.0) {
-      let fG: vec4<f32> = textureSampleLevel(gNormalDepthTex, nearestSampler, fUV, 0.0);
+      let fUVFlip: vec2<f32> = vec2<f32>(fUV.x, 1.0 - fUV.y);
+      let fG: vec4<f32> = textureSampleLevel(gNormalDepthTex, nearestSampler, fUVFlip, 0.0);
       let fN: vec3<f32> = octaDecodeSSR(fG.rg);
       if (fG.b > 0.001 && fN.z <= 0.80) {
-        res.color = textureSampleLevel(sceneTex, nearestSampler, fUV, 0.0).rgb * 0.7;
+        res.color = textureSampleLevel(sceneTex, nearestSampler, fUVFlip, 0.0).rgb * 0.7;
         res.hit = 0.5;
         res.hitUV = fUV;
         res.rayLength = maxDistance * 0.5;
