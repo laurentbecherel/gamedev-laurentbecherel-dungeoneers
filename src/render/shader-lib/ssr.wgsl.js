@@ -28,7 +28,7 @@ fn worldToScreenUVSSR(worldPos: vec3<f32>, camPos: vec2<f32>, eyeZ: f32, playerA
   let rightY: f32 = dirX;
   var forwardDist: f32 = dx * dirX + dy * dirY;
   let rightDist: f32 = dx * rightX + dy * rightY;
-  if (forwardDist < 0.06) { forwardDist = 0.06; }
+  if (forwardDist < 0.20) { forwardDist = 0.20; }
   let cameraX: f32 = rightDist / forwardDist / max(0.0001, planeLen);
   let uvX: f32 = cameraX * 0.5 + 0.5;
   let fovFactor: f32 = 1.0 / max(0.0001, planeLen);
