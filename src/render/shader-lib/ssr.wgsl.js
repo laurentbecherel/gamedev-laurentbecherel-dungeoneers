@@ -94,7 +94,8 @@ fn traceScreenSpaceRaySSR(startUV: vec2<f32>, N: vec3<f32>, V: vec3<f32>, linear
     if (sampledDepthNorm < 0.001) { tRay += tStep; tStep = tStep * stride; continue; }
     let sampledN: vec3<f32> = octaDecodeSSR(gSmpl.rg);
     if (sampledN.z > 0.60) { tRay += tStep; tStep = tStep * stride; continue; }
-    let sampledLin: f32 = sampledDepthNorm * 20.0;
+    // Use ssrDepthRange from config (was hardcoded 20.0 – regression)
+    let sampledLin: f32 = sampledDepthNorm * frame.ssrDepthRange;
     let depthDiff: f32 = fwDist - sampledLin;
     let curThickness: f32 = thickness + tRay * zThicknessScale * 0.08;
     if (abs(depthDiff) < curThickness) {
@@ -115,7 +116,7 @@ fn traceScreenSpaceRaySSR(startUV: vec2<f32>, N: vec3<f32>, V: vec3<f32>, linear
         if (midDepthNorm < 0.001) { lowT = midT; continue; }
         let midN: vec3<f32> = octaDecodeSSR(midG.rg);
         if (midN.z > 0.60) { lowT = midT; continue; }
-        let midLin: f32 = midDepthNorm * 20.0;
+        let midLin: f32 = midDepthNorm * frame.ssrDepthRange;
         let midDiff: f32 = midProj.z - midLin;
         if (abs(midDiff) < curThickness) { highT = midT; } else { lowT = midT; }
       }

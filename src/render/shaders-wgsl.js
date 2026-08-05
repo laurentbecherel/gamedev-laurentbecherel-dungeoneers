@@ -181,6 +181,8 @@ struct FrameUniforms {
   ssrPuddleMaskInfluence: f32,
   ssrTintStrength: f32,
   ssrAdditiveBoost: f32,
+  ssrTint: vec3<f32>,
+  _padTint: f32,
   _padEnd: vec2<i32>,
 };
 
@@ -867,6 +869,8 @@ struct FrameUniforms {
   ssrPuddleMaskInfluence: f32,
   ssrTintStrength: f32,
   ssrAdditiveBoost: f32,
+  ssrTint: vec3<f32>,
+  _padTint: f32,
   _padEnd: vec2<i32>,
 };
 
@@ -1032,7 +1036,7 @@ fn fs_main(@location(0) v_uv: vec2<f32>) -> SSRFSOut {
 
   var out: SSRFSOut;
 
-  // gating thresholds from ssr.json – live-editable via frame uniform
+  // gating thresholds from ssr.json ï¿½ live-editable via frame uniform
   let minPuddleMask: f32 = frame.ssrMinPuddleMask;
   let normalThreshold: f32 = frame.ssrNormalThreshold;
   let maxGrazingAngle: f32 = frame.ssrMaxGrazingAngle;
@@ -1123,7 +1127,7 @@ struct FrameUniforms {
   chamferGridEnabled: i32, chamferGridFloorSize: f32, chamferGridCeilSize: f32, chamferGridFloorDarken: f32, chamferGridCeilDarken: f32, chamferGridFloorTrim: f32, chamferGridCeilTrim: f32, chamferGridFloorRough: f32, chamferGridCeilRough: f32, chamferGridFloorBlend: f32, chamferGridCeilBlend: f32, chamferGridCreviceEnd: f32, chamferGridCreviceSmoothEnd: f32, chamferGridTrimStart: f32, chamferGridTrimMid: f32, chamferGridTrimEnd: f32,
   cornerEnabled: i32, cornerRadius: f32, cornerMode: i32, cornerInner: i32, cornerBandNear: f32, cornerBandFarExtra: f32, cornerBandFarFactor: f32, cornerSectorThresh: f32, cornerNormalMix: f32, cornerAlbedoBoost: f32, cornerRoughMul: f32, cornerAoMul: f32,
   shadowBiasN: f32, shadowBiasDir: f32, shadowSunFactor: f32, shadowPointFactor: f32, shadowSunMax: f32, shadowPointEps: f32, shadowNormalThresh: f32,
-  pbrEmissiveAlbedoMul: f32, pbrEmissiveStrength: f32, pbrF0: f32, pbrAttenQuad: f32, pbrGGXEps: f32, renderFloorMul: f32, renderCeilMul: f32, renderWallDarken: f32, renderEyeFactor: f32, ssrDebugMode: i32, ssrSteps: i32, ssrBinarySteps: i32, ssrMaxDistance: f32, ssrThickness: f32, ssrStride: f32, ssrJitter: f32, ssrDepthBias: f32, ssrZThicknessScale: f32, ssrMinPuddleMask: f32, ssrNormalThreshold: f32, ssrMaxGrazingAngle: f32, ssrEdgeFadeStart: f32, ssrEdgeFadeEnd: f32, ssrDistanceFadeStart: f32, ssrDistanceFadeEnd: f32, ssrFresnelPower: f32, ssrFresnelMin: f32, ssrFresnelMax: f32, ssrBlendStrength: f32, ssrPuddleMaskInfluence: f32, ssrTintStrength: f32, ssrAdditiveBoost: f32, _padEnd: vec2<i32>,
+  pbrEmissiveAlbedoMul: f32, pbrEmissiveStrength: f32, pbrF0: f32, pbrAttenQuad: f32, pbrGGXEps: f32, renderFloorMul: f32, renderCeilMul: f32, renderWallDarken: f32, renderEyeFactor: f32, ssrDebugMode: i32, ssrSteps: i32, ssrBinarySteps: i32, ssrMaxDistance: f32, ssrThickness: f32, ssrStride: f32, ssrJitter: f32, ssrDepthBias: f32, ssrZThicknessScale: f32, ssrMinPuddleMask: f32, ssrNormalThreshold: f32, ssrMaxGrazingAngle: f32, ssrEdgeFadeStart: f32, ssrEdgeFadeEnd: f32, ssrDistanceFadeStart: f32, ssrDistanceFadeEnd: f32, ssrFresnelPower: f32, ssrFresnelMin: f32, ssrFresnelMax: f32, ssrBlendStrength: f32, ssrPuddleMaskInfluence: f32, ssrTintStrength: f32, ssrAdditiveBoost: f32, ssrTint: vec3<f32>, _padTint: f32, _padEnd: vec2<i32>,
 };
 @group(0) @binding(3) var<uniform> frame: FrameUniforms;
 @group(1) @binding(0) var sceneTex: texture_2d<f32>;
@@ -1145,7 +1149,7 @@ fn fs_main(@location(0) v_uv: vec2<f32>) -> CompOut {
   let tintStrength: f32 = frame.ssrTintStrength;
   let blendStrength: f32 = frame.ssrBlendStrength;
   let additiveBoost: f32 = frame.ssrAdditiveBoost;
-  let tint: vec3<f32> = vec3<f32>(0.4, 0.5, 0.65);
+  let tint: vec3<f32> = frame.ssrTint;
 
   var fade: f32 = refl.a;
   if (puddleMask < minPuddleMask) {
@@ -1188,7 +1192,7 @@ struct FrameUniforms {
   chamferGridEnabled: i32, chamferGridFloorSize: f32, chamferGridCeilSize: f32, chamferGridFloorDarken: f32, chamferGridCeilDarken: f32, chamferGridFloorTrim: f32, chamferGridCeilTrim: f32, chamferGridFloorRough: f32, chamferGridCeilRough: f32, chamferGridFloorBlend: f32, chamferGridCeilBlend: f32, chamferGridCreviceEnd: f32, chamferGridCreviceSmoothEnd: f32, chamferGridTrimStart: f32, chamferGridTrimMid: f32, chamferGridTrimEnd: f32,
   cornerEnabled: i32, cornerRadius: f32, cornerMode: i32, cornerInner: i32, cornerBandNear: f32, cornerBandFarExtra: f32, cornerBandFarFactor: f32, cornerSectorThresh: f32, cornerNormalMix: f32, cornerAlbedoBoost: f32, cornerRoughMul: f32, cornerAoMul: f32,
   shadowBiasN: f32, shadowBiasDir: f32, shadowSunFactor: f32, shadowPointFactor: f32, shadowSunMax: f32, shadowPointEps: f32, shadowNormalThresh: f32,
-  pbrEmissiveAlbedoMul: f32, pbrEmissiveStrength: f32, pbrF0: f32, pbrAttenQuad: f32, pbrGGXEps: f32, renderFloorMul: f32, renderCeilMul: f32, renderWallDarken: f32, renderEyeFactor: f32, ssrDebugMode: i32, ssrSteps: i32, ssrBinarySteps: i32, ssrMaxDistance: f32, ssrThickness: f32, ssrStride: f32, ssrJitter: f32, ssrDepthBias: f32, ssrZThicknessScale: f32, ssrMinPuddleMask: f32, ssrNormalThreshold: f32, ssrMaxGrazingAngle: f32, ssrEdgeFadeStart: f32, ssrEdgeFadeEnd: f32, ssrDistanceFadeStart: f32, ssrDistanceFadeEnd: f32, ssrFresnelPower: f32, ssrFresnelMin: f32, ssrFresnelMax: f32, ssrBlendStrength: f32, ssrPuddleMaskInfluence: f32, ssrTintStrength: f32, ssrAdditiveBoost: f32, _padEnd: vec2<i32>,
+  pbrEmissiveAlbedoMul: f32, pbrEmissiveStrength: f32, pbrF0: f32, pbrAttenQuad: f32, pbrGGXEps: f32, renderFloorMul: f32, renderCeilMul: f32, renderWallDarken: f32, renderEyeFactor: f32, ssrDebugMode: i32, ssrSteps: i32, ssrBinarySteps: i32, ssrMaxDistance: f32, ssrThickness: f32, ssrStride: f32, ssrJitter: f32, ssrDepthBias: f32, ssrZThicknessScale: f32, ssrMinPuddleMask: f32, ssrNormalThreshold: f32, ssrMaxGrazingAngle: f32, ssrEdgeFadeStart: f32, ssrEdgeFadeEnd: f32, ssrDistanceFadeStart: f32, ssrDistanceFadeEnd: f32, ssrFresnelPower: f32, ssrFresnelMin: f32, ssrFresnelMax: f32, ssrBlendStrength: f32, ssrPuddleMaskInfluence: f32, ssrTintStrength: f32, ssrAdditiveBoost: f32, ssrTint: vec3<f32>, _padTint: f32, _padEnd: vec2<i32>,
 };
 struct QuantOut { @location(0) color: vec4<f32>, };
 @group(1) @binding(0) var sceneTex: texture_2d<f32>;
