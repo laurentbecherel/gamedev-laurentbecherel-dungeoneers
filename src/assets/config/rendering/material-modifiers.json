@@ -1,5 +1,5 @@
 {
-  "version": 7,
+  "version": 8,
   "enabled": true,
   "note": "v16 moss decomposed: noise (natural), env/nearwall (corners+seams+room biome), material (AO/Height/Rough combo), combined final. All tunable via JSON/UBO, no hard-coded magic.",
   "noise": {
@@ -16,6 +16,16 @@
     "puddleFeather": 0.12,
     "puddleOctaves": 4,
     "debugPuddleBoost": 1.1,
+    "damaged": {
+      "threshold": 0.52,
+      "feather": 0.18,
+      "boost": 1.45,
+      "wallWeight": 0.88,
+      "scaleLarge": 0.09,
+      "scaleMedium": 0.22,
+      "scaleSmall": 0.55,
+      "scaleCrack": 0.16
+    },
     "blood": {
       "scale": 0.19,
       "threshold": 0.5,
@@ -37,7 +47,7 @@
         "water": 0,
         "puddle": 0.85,
         "blood": 0.05,
-        "damaged": 0
+        "damaged": 0.16
       },
       "exit": {
         "moss": 0.15,
@@ -45,7 +55,7 @@
         "water": 0,
         "puddle": 0.85,
         "blood": 0.2,
-        "damaged": 0
+        "damaged": 0.28
       },
       "guardian": {
         "moss": 0.07,
@@ -53,7 +63,7 @@
         "water": 0,
         "puddle": 0.75,
         "blood": 0.75,
-        "damaged": 0
+        "damaged": 0.9
       },
       "treasure": {
         "moss": 0.12,
@@ -61,7 +71,7 @@
         "water": 0,
         "puddle": 0.8,
         "blood": 0.08,
-        "damaged": 0
+        "damaged": 0.22
       },
       "secret": {
         "moss": 0.35,
@@ -69,7 +79,7 @@
         "water": 0,
         "puddle": 0.8,
         "blood": 0.04,
-        "damaged": 0
+        "damaged": 0.12
       },
       "shrine": {
         "moss": 0.42,
@@ -77,7 +87,7 @@
         "water": 0,
         "puddle": 0.85,
         "blood": 0.18,
-        "damaged": 0
+        "damaged": 0.18
       },
       "hub": {
         "moss": 0.16,
@@ -85,7 +95,7 @@
         "water": 0,
         "puddle": 0.8,
         "blood": 0.32,
-        "damaged": 0
+        "damaged": 0.48
       },
       "armory": {
         "moss": 0.08,
@@ -93,7 +103,7 @@
         "water": 0,
         "puddle": 0.75,
         "blood": 0.42,
-        "damaged": 0
+        "damaged": 0.62
       },
       "hall": {
         "moss": 0.18,
@@ -101,7 +111,7 @@
         "water": 0,
         "puddle": 0.8,
         "blood": 0.16,
-        "damaged": 0
+        "damaged": 0.35
       },
       "corridor": {
         "moss": 0.13,
@@ -109,7 +119,7 @@
         "water": 0,
         "puddle": 0.7,
         "blood": 0.08,
-        "damaged": 0
+        "damaged": 0.25
       }
     }
   },
@@ -184,13 +194,22 @@
     },
     "damaged": {
       "enabled": true,
-      "note": "Chaotic scarring – breaks POM/height/normal/roughness, preserves albedo. Multi-octave warped noise + ridged cracks + scratch grain. Fully tunable via UBO (slots 22-33).",
+      "note": "World-space 3D chips and impact scarring with exposed-stone albedo, height, normal, roughness and AO response. Fully live-tunable via UBO slots 22-33 and 47.",
+      "appearance": {
+        "albedo": [
+          112,
+          104,
+          91
+        ],
+        "colorStrength": 0.46,
+        "desc": "Exposed stone color and its blend strength. Set colorStrength to 0 to preserve host albedo while retaining PBR damage."
+      },
       "noise": {
         "scale": 2.2,
-        "threshold": 0.78,
-        "feather": 0.06,
-        "warpStrength": 0.35,
-        "desc": "Base noise freq – higher threshold = sparser scars. Kept sparse by default so moss unchanged"
+        "threshold": 0.48,
+        "feather": 0.16,
+        "warpStrength": 0.55,
+        "desc": "True 3D damage field. Higher threshold makes scars sparser; feather controls the chipped boundary."
       },
       "scales": {
         "large": 1,
@@ -204,8 +223,7 @@
         "medium": 0.28,
         "small": 0.15,
         "crack": 0.38,
-        "scratch": 0.22,
-        "desc": "Weights of each noise layer – l=blobs/chips, m=mid damage, s=fine grit, crack=ridged cracks, scratch=oriented scratches"
+        "desc": "Weights of the large chips, medium impacts, fine grit and ridged crack layers. Oriented scratch strength lives under crack.scratchWeight."
       },
       "crack": {
         "ridgeStrength": 1,
@@ -222,39 +240,38 @@
         "aoHigh": 1,
         "roughLow": 0,
         "roughHigh": 1,
-        "base": 0.65,
-        "combine": 0.25,
+        "base": 0.72,
+        "combine": 0.35,
         "desc": "Material gating – full 0-1 range by default (damage everywhere on brick). Lower base=strong gating, combine 0=max permissive, 1=mul restrictive"
       },
       "final": {
-        "biomeBase": 0.15,
-        "envBase": 0.25,
-        "matBase": 0.35,
-        "boost": 1.35,
+        "biomeBase": 0.2,
+        "envBase": 0.4,
+        "matBase": 0.55,
+        "boost": 1.5,
         "noiseWeight": 1,
         "envWeight": 0.35,
         "matWeight": 0.6,
-        "biomeWeight": 0.5,
-        "combine": 0.65,
-        "contrast": 1.35,
+        "biomeWeight": 0.8,
+        "combine": 0.46,
+        "contrast": 1.2,
         "brightness": 0,
         "minThreshold": 0,
         "maxThreshold": 1,
-        "power": 1.1,
+        "power": 0.9,
         "desc": "Final combine – biome from modifierMap2.r (per-cell damaged), env=Z height mid bias, mat=AO/height/rough. Combine 0=max any, 0.5=avg, 1=mul all."
       },
       "surface": {
-        "depth": -0.38,
-        "pitVar": 0.32,
-        "ridgeHeight": 0.18,
-        "normalStrength": 0.95,
-        "normalDetail": 0.65,
-        "roughAdd": 0.42,
-        "roughVar": 0.28,
-        "aoStrength": 0.38,
-        "depthBoost": 1,
+        "depth": -0.22,
+        "pitVar": 0.24,
+        "ridgeHeight": 0.1,
+        "normalStrength": 0.72,
+        "normalDetail": 0.55,
+        "roughAdd": 0.24,
+        "roughVar": 0.2,
+        "aoStrength": 0.3,
+        "depthBoost": 1.15,
         "pomBoost": 1.4,
-        "chipChance": 0.55,
         "desc": "Surface impact – depth negative pit depth, pitVar chaotic variation, ridgeHeight positive ridges along cracks, normalStrength dramatic, roughAdd/var chaotic roughness, aoStrength cavity darkening, pomBoost extra POM depth"
       }
     },
@@ -394,6 +411,16 @@
   },
   "docs": {
     "generator": {
+      "damaged": {
+        "threshold": "Coverage cutoff for the coarse room-scale damage field.",
+        "feather": "Softness of transitions between more and less damaged areas.",
+        "boost": "Multiplier applied to each room role's damage weight.",
+        "wallWeight": "Damage retained on wall cells; 1 gives walls and floors equal coarse coverage.",
+        "scaleLarge": "Frequency of broad damaged zones.",
+        "scaleMedium": "Frequency of secondary damaged patches.",
+        "scaleSmall": "Frequency of fine coarse-map breakup.",
+        "scaleCrack": "Frequency of the coarse crack cue."
+      },
       "blood": {
         "scale": "Frequency of the coarse story-placement field; separate from per-pixel splatter scale.",
         "threshold": "Coverage cutoff for blood-bearing cells.",
@@ -408,7 +435,7 @@
         "boost": "Multiplier applied to role dust weights.",
         "wallWeight": "Coarse placement reduction on wall cells."
       },
-      "roleWeights": "Per-room-role story weights. Blood favors guardian/armory/hub; dust favors secret/treasure/shrine. Changes re-bake both modifier maps live."
+      "roleWeights": "Per-room-role story weights. Damage favors guardian, armory, hub and hall areas; blood favors guardian/armory/hub; dust favors secret/treasure/shrine. Changes re-bake both modifier maps live."
     },
     "moss": {
       "noiseScale": {
@@ -636,6 +663,76 @@
         }
       }
     },
+    "damaged": {
+      "enabled": "Master damage toggle. It is a live UBO value and does not require regenerating the dungeon.",
+      "appearance": {
+        "albedo": "0-255 exposed stone/chip color.",
+        "colorStrength": "Bounded albedo blend strength. Zero preserves the original color while keeping damage PBR."
+      },
+      "noise": {
+        "scale": "Frequency of the isotropic 3D damage field.",
+        "threshold": "Higher values produce fewer chipped regions.",
+        "feather": "Softness of damage region boundaries.",
+        "warpStrength": "Amount of 3D domain distortion used to avoid regular blobs."
+      },
+      "scales": {
+        "large": "Large chip frequency relative to the base scale.",
+        "medium": "Medium impact frequency relative to the base scale.",
+        "small": "Fine grit frequency relative to the base scale.",
+        "crack": "Ridged crack frequency relative to the base scale."
+      },
+      "weights": {
+        "large": "Contribution of large chips.",
+        "medium": "Contribution of medium impacts.",
+        "small": "Contribution of fine grit.",
+        "crack": "Contribution of ridged cracks. Scratch contribution is controlled by crack.scratchWeight."
+      },
+      "crack": {
+        "ridgeStrength": "Amplitude of crack ridges.",
+        "scratchScale": "Frequency of directional scratch detail.",
+        "scratchWeight": "Scratch contribution used by the shader.",
+        "edgeSharpen": "Power applied to crack ridges; higher values make thinner cracks.",
+        "detailScale": "Frequency of chip color, normal and roughness variation."
+      },
+      "material": {
+        "heightLow": "Low threshold for the host material height cue.",
+        "heightHigh": "High threshold for the host material height cue.",
+        "aoLow": "Low threshold for the host AO cue.",
+        "aoHigh": "High threshold for the host AO cue.",
+        "roughLow": "Low threshold for the host roughness cue.",
+        "roughHigh": "High threshold for the host roughness cue.",
+        "base": "Minimum material eligibility; higher values let damage cross more materials.",
+        "combine": "0 is permissive, 0.5 averages cues, 1 requires all material cues."
+      },
+      "final": {
+        "biomeBase": "Minimum influence inside a damage-bearing room field.",
+        "envBase": "Minimum wall/floor environment eligibility.",
+        "matBase": "Minimum host-material eligibility.",
+        "boost": "Overall mask gain.",
+        "noiseWeight": "Weight of the 3D chip field.",
+        "envWeight": "Weight of the floor/wall environment cue.",
+        "matWeight": "Weight of host height/AO/roughness.",
+        "biomeWeight": "Weight of the room-scale generated field.",
+        "combine": "0 is permissive, 0.5 averages factors, 1 is restrictive.",
+        "contrast": "Final mask contrast.",
+        "brightness": "Final mask offset.",
+        "minThreshold": "Final remap lower bound.",
+        "maxThreshold": "Final remap upper bound.",
+        "power": "Final mask gamma."
+      },
+      "surface": {
+        "depth": "Signed chip depth; negative cuts into the surface.",
+        "pitVar": "Per-chip depth variation.",
+        "ridgeHeight": "Raised contribution along crack ridges.",
+        "normalStrength": "Strength of host-plane relief normals.",
+        "normalDetail": "Multiplier for fine chip normal detail.",
+        "roughAdd": "Roughness added to chipped stone.",
+        "roughVar": "Fine roughness variation.",
+        "aoStrength": "Cavity darkening strength.",
+        "depthBoost": "Multiplier applied to signed depth before upload.",
+        "pomBoost": "Additional POM displacement strength."
+      }
+    },
     "puddle": {
       "albedo": "0-255 RGB base puddle color. Dark (10,40,80) for water. Mixed with darkBase. Now auto /255.",
       "roughTarget": "0-1 target roughness where puddle (0.04=glossy mirror, 0.8=matte).",
@@ -747,7 +844,7 @@
         "desaturate": "How much the configured dust color moves toward gray."
       }
     },
-    "system": "Moss, puddle, blood, dust, and damaged parameters use a 47-vec4 (752B) T1 live UBO. Modifier-map generator changes are also re-baked and uploaded during live edits."
+    "system": "Moss, puddle, blood, dust, and damaged parameters use a 48-vec4 (768B) T1 live UBO. Modifier-map generator changes are also re-baked and uploaded during live edits."
   },
   "ui": {
     "moss": {
@@ -1184,6 +1281,13 @@
       }
     },
     "damaged": {
+      "appearance": {
+        "colorStrength": {
+          "min": 0,
+          "max": 2,
+          "step": 0.01
+        }
+      },
       "noise.scale": {
         "min": 0,
         "max": 10,
@@ -1240,11 +1344,6 @@
         "step": 0.05
       },
       "weights.crack": {
-        "min": 0,
-        "max": 2,
-        "step": 0.05
-      },
-      "weights.scratch": {
         "min": 0,
         "max": 2,
         "step": 0.05
@@ -1436,37 +1535,54 @@
       }
     },
     "generator": {
+      "damaged": {
+        "threshold": {
+          "min": 0,
+          "max": 1,
+          "step": 0.01
+        },
+        "feather": {
+          "min": 0.001,
+          "max": 0.5,
+          "step": 0.01
+        },
+        "boost": {
+          "min": 0,
+          "max": 4,
+          "step": 0.05
+        },
+        "wallWeight": {
+          "min": 0,
+          "max": 1.5,
+          "step": 0.01
+        },
+        "scaleLarge": {
+          "min": 0.01,
+          "max": 1,
+          "step": 0.01
+        },
+        "scaleMedium": {
+          "min": 0.01,
+          "max": 2,
+          "step": 0.01
+        },
+        "scaleSmall": {
+          "min": 0.01,
+          "max": 3,
+          "step": 0.01
+        },
+        "scaleCrack": {
+          "min": 0.01,
+          "max": 2,
+          "step": 0.01
+        }
+      },
       "noiseScale": {
         "min": 0,
         "max": 1,
         "step": 0.01
       },
       "puddleScaleLarge": {
-        "min": 0,
-        "max": 1,
-        "step": 0.01
-      },
-      "damagedThreshold": {
-        "min": 0,
-        "max": 1,
-        "step": 0.01
-      },
-      "damagedFeather": {
-        "min": 0,
-        "max": 0.5,
-        "step": 0.01
-      },
-      "damagedBoost": {
-        "min": 0,
-        "max": 3,
-        "step": 0.05
-      },
-      "damagedScaleLarge": {
-        "min": 0,
-        "max": 1,
-        "step": 0.01
-      },
-      "damagedScaleCrack": {
         "min": 0,
         "max": 1,
         "step": 0.01

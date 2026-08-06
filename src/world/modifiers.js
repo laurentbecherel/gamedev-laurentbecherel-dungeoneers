@@ -68,16 +68,16 @@ function fbm(x,y,seed,octaves=3){
 }
 
 export const DEFAULT_ROLE_WEIGHTS = {
-  entrance:{ moss:0.28, dust:0.08, water:0.0, puddle:0.75, blood:0.05, damaged:0.0 },
-  exit:{ moss:0.15, dust:0.12, water:0.0, puddle:0.75, blood:0.20, damaged:0.0 },
-  guardian:{ moss:0.07, dust:0.04, water:0.0, puddle:0.65, blood:0.75, damaged:0.0 },
-  treasure:{ moss:0.12, dust:0.55, water:0.0, puddle:0.70, blood:0.08, damaged:0.0 },
-  secret:{ moss:0.35, dust:0.78, water:0.0, puddle:0.70, blood:0.04, damaged:0.0 },
-  shrine:{ moss:0.42, dust:0.35, water:0.0, puddle:0.75, blood:0.18, damaged:0.0 },
-  hub:{ moss:0.16, dust:0.10, water:0.0, puddle:0.70, blood:0.32, damaged:0.0 },
-  armory:{ moss:0.08, dust:0.32, water:0.0, puddle:0.65, blood:0.42, damaged:0.0 },
-  hall:{ moss:0.18, dust:0.20, water:0.0, puddle:0.70, blood:0.16, damaged:0.0 },
-  corridor:{ moss:0.13, dust:0.14, water:0.0, puddle:0.60, blood:0.08, damaged:0.0 },
+  entrance:{ moss:0.28, dust:0.08, water:0.0, puddle:0.75, blood:0.05, damaged:0.16 },
+  exit:{ moss:0.15, dust:0.12, water:0.0, puddle:0.75, blood:0.20, damaged:0.28 },
+  guardian:{ moss:0.07, dust:0.04, water:0.0, puddle:0.65, blood:0.75, damaged:0.90 },
+  treasure:{ moss:0.12, dust:0.55, water:0.0, puddle:0.70, blood:0.08, damaged:0.22 },
+  secret:{ moss:0.35, dust:0.78, water:0.0, puddle:0.70, blood:0.04, damaged:0.12 },
+  shrine:{ moss:0.42, dust:0.35, water:0.0, puddle:0.75, blood:0.18, damaged:0.18 },
+  hub:{ moss:0.16, dust:0.10, water:0.0, puddle:0.70, blood:0.32, damaged:0.48 },
+  armory:{ moss:0.08, dust:0.32, water:0.0, puddle:0.65, blood:0.42, damaged:0.62 },
+  hall:{ moss:0.18, dust:0.20, water:0.0, puddle:0.70, blood:0.16, damaged:0.35 },
+  corridor:{ moss:0.13, dust:0.14, water:0.0, puddle:0.60, blood:0.08, damaged:0.25 },
 };
 
 export function generateModifierMap(dungeon, config) {
@@ -96,13 +96,15 @@ export function generateModifierMap(dungeon, config) {
   const puddleThreshold = genCfg.puddleThreshold ?? 0.55;
   const puddleFeather = genCfg.puddleFeather ?? 0.11;
   const puddleBoost = genCfg.debugPuddleBoost ?? 1.1;
-  const damagedThreshold = genCfg.damagedThreshold ?? 0.78;
-  const damagedFeather = genCfg.damagedFeather ?? 0.06;
-  const damagedBoost = genCfg.damagedBoost ?? 0.85;
-  const damagedScaleLarge = genCfg.damagedScaleLarge ?? 0.09;
-  const damagedScaleMed = genCfg.damagedScaleMed ?? 0.22;
-  const damagedScaleSmall = genCfg.damagedScaleSmall ?? 0.55;
-  const damagedScaleCrack = genCfg.damagedScaleCrack ?? 0.16;
+  const damagedGen = genCfg.damaged || {};
+  const damagedThreshold = damagedGen.threshold ?? genCfg.damagedThreshold ?? 0.52;
+  const damagedFeather = damagedGen.feather ?? genCfg.damagedFeather ?? 0.18;
+  const damagedBoost = damagedGen.boost ?? genCfg.damagedBoost ?? 1.45;
+  const damagedWallWeight = damagedGen.wallWeight ?? 0.88;
+  const damagedScaleLarge = damagedGen.scaleLarge ?? genCfg.damagedScaleLarge ?? 0.09;
+  const damagedScaleMed = damagedGen.scaleMedium ?? genCfg.damagedScaleMed ?? 0.22;
+  const damagedScaleSmall = damagedGen.scaleSmall ?? genCfg.damagedScaleSmall ?? 0.55;
+  const damagedScaleCrack = damagedGen.scaleCrack ?? genCfg.damagedScaleCrack ?? 0.16;
   const bloodGen = genCfg.blood || {};
   const bloodScale = bloodGen.scale ?? 0.19;
   const bloodThreshold = bloodGen.threshold ?? 0.50;
@@ -125,6 +127,23 @@ export function generateModifierMap(dungeon, config) {
         if (xx>=0 && yy>=0 && xx<w && yy<h) roomGrid[yy*w+xx]=ri;
       }
     }
+  }
+
+  function nearestRoomRole(x, y, fallback) {
+    const direct = roomGrid[y*w+x];
+    if (direct >= 0) return dungeon.rooms[direct]?.role || fallback;
+    // A wall cell often sits just outside the room rectangle. Carry the room's
+    // story field onto its shell instead of silently classifying every wall as hall.
+    for (let radius=1; radius<=3; radius++) {
+      for (let dy=-radius; dy<=radius; dy++) for (let dx=-radius; dx<=radius; dx++) {
+        if (Math.max(Math.abs(dx), Math.abs(dy)) !== radius) continue;
+        const nx=x+dx, ny=y+dy;
+        if (nx<0 || ny<0 || nx>=w || ny>=h) continue;
+        const ri = roomGrid[ny*w+nx];
+        if (ri >= 0) return dungeon.rooms[ri]?.role || fallback;
+      }
+    }
+    return fallback;
   }
 
   function isWallCell(x,y){
@@ -273,7 +292,9 @@ export function generateModifierMap(dungeon, config) {
     }
 
     // Damaged – chaotic scarring: multi-scale warped FBM + ridged cracks + cross scratches
-    const roleDamaged = rw.damaged ?? 0.0;
+    const damageRole = nearestRoomRole(x, y, isFloor ? role : 'hall');
+    const damageRw = roleWeights[damageRole] || roleWeights.corridor || DEFAULT_ROLE_WEIGHTS[damageRole] || DEFAULT_ROLE_WEIGHTS.corridor;
+    const roleDamaged = damageRw.damaged ?? rw.damaged ?? 0.0;
     let damagedI = 0;
     if (roleDamaged > 0.001) {
       // domain warp for chaos
@@ -296,7 +317,8 @@ export function generateModifierMap(dungeon, config) {
       scratch = Math.pow(scratch, 0.7);
 
       // chaotic combined – weights mirror shader defaults but CPU side for cell biome gating
-      let combinedD = largeD * 0.45 + medD * 0.28 + smallD * 0.15 + ridge * 0.38 + scratch * 0.22;
+      const damageWeightSum = 0.45 + 0.28 + 0.15 + 0.38 + 0.22;
+      let combinedD = (largeD * 0.45 + medD * 0.28 + smallD * 0.15 + ridge * 0.38 + scratch * 0.22) / damageWeightSum;
       // per-cell hash jitter for extra chaos
       combinedD += (hash2i(x, y, seed+621) - 0.5) * 0.07;
       combinedD = Math.max(0, Math.min(1, combinedD));
@@ -310,7 +332,7 @@ export function generateModifierMap(dungeon, config) {
       const shapeD = tD * (0.55 + 0.45 * smallD) * (0.60 + 0.40 * (ridge * 1.2));
 
       // damaged on both floors and walls, slightly boosted near walls (battle damage on walls)
-      const wallBoostD = isWallCell(x,y) ? 0.15 : (isNearWall(x,y) ? 1.18 : 1.0);
+      const wallBoostD = isWallCell(x,y) ? damagedWallWeight : (isNearWall(x,y) ? 1.12 : 1.0);
       const globalD = fbm(xc * globalNoiseScale * 1.1, yc * globalNoiseScale * 1.1, seed+622, 2);
 
       damagedI = roleDamaged * shapeD * wallBoostD * (0.50 + 0.50 * globalD) * damagedBoost;

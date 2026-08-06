@@ -96,6 +96,25 @@ fn debugDamagedNoiseMask(worldPos: vec3<f32>) -> vec3<f32> {
   return clamp(bg + inside + edgeCol, vec3<f32>(0.0), vec3<f32>(1.0));
 }
 
+fn debugDamagedPlacementMask(worldPos: vec3<f32>) -> vec3<f32> {
+  let biome: f32 = damagedBiomeMask(worldPos.xy);
+  let visible: f32 = smoothstep(0.001, 0.75, biome);
+  let low: vec3<f32> = vec3<f32>(0.08, 0.16, 0.48);
+  let high: vec3<f32> = vec3<f32>(1.0, 0.32, 0.04);
+  let field: vec3<f32> = mix(low, high, biome) * visible * (0.55 + biome * 0.85);
+  return clamp(vec3<f32>(0.02, 0.02, 0.03) + field, vec3<f32>(0.0), vec3<f32>(1.0));
+}
+
+fn debugDamagedFactorsMask(worldPos: vec3<f32>, matHeight: f32, ao: f32, rough: f32, isFloor: f32) -> vec3<f32> {
+  let noise: f32 = damagedNoiseShape(worldPos);
+  let placement: f32 = damagedBiomeMask(worldPos.xy);
+  let material: f32 = damagedMaterialMask(matHeight, ao, rough);
+  let environment: f32 = damagedEnvMask(worldPos, isFloor);
+  // R = procedural 3D noise, G = generated room/wall placement,
+  // B = material eligibility modulated by floor/wall environment.
+  return clamp(vec3<f32>(noise, placement, material * environment), vec3<f32>(0.0), vec3<f32>(1.0));
+}
+
 struct HorizontalShadeResult {
   color: vec3<f32>,
   dist: f32,

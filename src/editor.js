@@ -37,9 +37,18 @@ function getUiEntry(fullPath) {
         if (strip && parts[0] === 'modifiers') parts = parts.slice(1);
         let cur = currentData[cname];
         let ok = true;
-        for (const p of parts) {
-          if (cur && typeof cur === 'object' && p in cur) cur = cur[p];
-          else { ok = false; break; }
+        for (let i = 0; i < parts.length; i++) {
+          const p = parts[i];
+          if (cur && typeof cur === 'object' && p in cur) {
+            cur = cur[p];
+          } else if (cur && typeof cur === 'object') {
+            // Older configs used compact schema keys such as "noise.scale".
+            // Resolve the remaining path as one key so those controls retain
+            // their declared ranges while nested schemas remain supported.
+            const dottedRemainder = parts.slice(i).join('.');
+            if (dottedRemainder in cur) { cur = cur[dottedRemainder]; i = parts.length; }
+            else { ok = false; break; }
+          } else { ok = false; break; }
         }
         if (ok && cur && typeof cur === 'object' && ('min' in cur || 'max' in cur || 'desc' in cur || 'description' in cur || 'type' in cur || 'options' in cur || 'labels' in cur)) {
           return cur;

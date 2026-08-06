@@ -15,7 +15,7 @@ export const MAX_LIGHTS = 8;
 export const MAX_CHARS = 8;
 export const FRAME_DATA_VEC4_COUNT = 32;
 export const LIGHT_DATA_VEC4_COUNT = 40;
-export const MODIFIERS_VEC4_COUNT = 34;
+export const MODIFIERS_VEC4_COUNT = 48;
 
 export const vsFullscreenWgsl = `
 struct VSOut {
@@ -39,7 +39,7 @@ fn vs_main(@builtin(vertex_index) vid: u32) -> VSOut {
 
 // Uniform structs – must be defined before bindings
 const structsAndBindings = `
-// --- Modifiers Block (47 vec4) ---
+// --- Modifiers Block (48 vec4) ---
 ${wgslModifiers}
 
 struct FrameUniforms {
@@ -1551,7 +1551,7 @@ function makeDebugFS(mode) {
     } else if (${mode} == 2) {
       // Moss env – world + isFloor
       dbgCol = debugMossEnvMask(dbgWPos, dbgIsFloor);
-    } else if (${mode} == 3 || ${mode} == 4 || ${mode} == 6 || ${mode} == 10) {
+    } else if (${mode} == 3 || ${mode} == 4 || ${mode} == 6 || ${mode} == 10 || ${mode} == 12) {
       // Modes needing material: fetch actual height/AO/rough from arrays (parity with 632b7f2)
       var dbgMatHeight: f32 = 0.5;
       var dbgAo: f32 = 0.85;
@@ -1594,6 +1594,8 @@ function makeDebugFS(mode) {
         dbgCol = debugDamagedMask(dbgWPos, dbgMatHeight, dbgAo, dbgRough, dbgIsFloor);
       } else if (${mode} == 10) {
         dbgCol = debugDustMaskCol(dbgWPos, dbgIsFloor, dbgMatHeight, dbgAo);
+      } else if (${mode} == 12) {
+        dbgCol = debugDamagedFactorsMask(dbgWPos, dbgMatHeight, dbgAo, dbgRough, dbgIsFloor);
       }
     } else if (${mode} == 5) {
       // Puddle mask – floor only logic preserved, uses computePuddleMaskTweakable via debugFinalPuddleMask
@@ -1621,6 +1623,8 @@ function makeDebugFS(mode) {
       }
     } else if (${mode} == 9) {
       dbgCol = debugBloodMaskCol(dbgWPos, dbgIsFloor);
+    } else if (${mode} == 11) {
+      dbgCol = debugDamagedPlacementMask(dbgWPos);
     } else {
       dbgCol = finalColor;
     }
@@ -1640,6 +1644,8 @@ export const fsDebugDamagedNoiseWgsl = makeDebugFS(7);
 export const fsDebugStructuralWgsl = makeDebugFS(8);
 export const fsDebugBloodWgsl = makeDebugFS(9);
 export const fsDebugDustWgsl = makeDebugFS(10);
+export const fsDebugDamagedPlacementWgsl = makeDebugFS(11);
+export const fsDebugDamagedFactorsWgsl = makeDebugFS(12);
 export const fsDebugMossWgsl = fsDebugMossCombinedWgsl;
 
 // Compatibility exports matching old shaders.js names (non-WGSL suffix)

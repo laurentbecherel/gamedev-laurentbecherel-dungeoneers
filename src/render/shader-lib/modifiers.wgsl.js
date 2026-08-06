@@ -1,8 +1,8 @@
-// WGSL material modifiers – 47 vec4 UBO with dedicated blood and dust blocks.
+// WGSL material modifiers – 48 vec4 UBO with dedicated damage, blood and dust blocks.
 // Preserves all public function names. Uses linearSampler for smooth modifier maps (matches old texture() LINEAR).
 
 export const wgslModifiers = `
-// UBO v27 - 47 vec4 = 752 bytes
+// UBO v28 - 48 vec4 = 768 bytes
 struct ModifiersBlock {
   modMossAlbedoRough: vec4<f32>,
   modMossParams: vec4<f32>,
@@ -51,6 +51,7 @@ struct ModifiersBlock {
   modDustSurface: vec4<f32>,
   modDustPlacement: vec4<f32>,
   modDustFinal: vec4<f32>,
+  modDamagedAppearance: vec4<f32>,
 };
 
 fn hash21_puddle(p: vec2<f32>) -> f32 {
@@ -388,113 +389,158 @@ fn debugMossCombinedCol(worldPos: vec3<f32>, matHeight: f32, ao: f32, rough: f32
   return vec3<f32>(0.18, 0.68, 0.18) * f * 1.6;
 }
 
-// Damaged – chaotic multi-octave (exact from 632b7f2: dual ridge + cross scratch)
+// Damaged – isotropic world-space chips, cracks and impact scarring.  Every
+// procedural signal is genuinely 3D so the same feature scale survives on
+// floors, ceilings and both wall axes without planar stretching.
 fn damagedBiomeMask(w: vec2<f32>) -> f32 {
   let uv: vec2<f32> = w / frame.mapSize;
   return textureSampleLevel(modifierMap2, linearSampler, uv, 0.0).r;
 }
 
 fn damagedNoiseRaw(w: vec3<f32>) -> f32 {
-  let base: f32 = mossDefault(modifiersBlock.modDamagedNoise.x, 2.2);
-  let warpS: f32 = mossDefault(modifiersBlock.modDamagedNoise.w, 0.35);
-  var wp: vec2<f32> = w.xy * base + vec2<f32>(13.7, 5.1) + vec2<f32>(w.z * 0.25, w.z * 0.15);
-  let warp1: f32 = fbm2D_2(wp * 0.35 + vec2<f32>(1.1, 2.2)) * warpS;
-  let warp2: f32 = fbm2D_2(wp * 0.35 + vec2<f32>(7.7, 3.1)) * warpS;
-  var p: vec2<f32> = wp + vec2<f32>(warp1, warp2) * 1.2;
+  let base: f32 = max(modifiersBlock.modDamagedNoise.x, 0.01);
+  let warpS: f32 = modifiersBlock.modDamagedNoise.w;
+  let wp: vec3<f32> = w * base + vec3<f32>(13.7, 5.1, 9.3);
+  let warpP: vec3<f32> = wp * 0.35;
+  let warp: vec3<f32> = vec3<f32>(
+    valueNoise3D(warpP + vec3<f32>(1.1, 2.2, 6.7)),
+    valueNoise3D(warpP + vec3<f32>(7.7, 3.1, 1.9)),
+    valueNoise3D(warpP + vec3<f32>(4.3, 9.6, 3.2))
+  ) - vec3<f32>(0.5);
+  let p: vec3<f32> = wp + warp * warpS * 2.4;
 
-  let dScalesZero: f32 = step(length(modifiersBlock.modDamagedScales), 0.0001);
-  var lSc: f32 = mix(modifiersBlock.modDamagedScales.x, 1.0, dScalesZero);
-  var mSc: f32 = mix(modifiersBlock.modDamagedScales.y, 2.4, dScalesZero);
-  var sSc: f32 = mix(modifiersBlock.modDamagedScales.z, 5.8, dScalesZero);
-  var crackSc: f32 = mix(modifiersBlock.modDamagedScales.w, 3.2, dScalesZero);
+  let lSc: f32 = max(modifiersBlock.modDamagedScales.x, 0.01);
+  let mSc: f32 = max(modifiersBlock.modDamagedScales.y, 0.01);
+  let sSc: f32 = max(modifiersBlock.modDamagedScales.z, 0.01);
+  let crackSc: f32 = max(modifiersBlock.modDamagedScales.w, 0.01);
 
-  let nLarge: f32 = fbm2D_3(p * lSc + vec2<f32>(w.z * 0.20, w.z * 0.12));
-  let nMed: f32 = valueNoise2D(p * mSc + vec2<f32>(11.3, 23.7) + vec2<f32>(w.z * 0.4, 0.0));
-  let nSmall: f32 = valueNoise2D(p * sSc + vec2<f32>(5.1, 2.9) + vec2<f32>(w.z * 0.6, 0.0));
+  let nLarge: f32 = clamp(fbm3D_3(p * lSc) * 1.142857, 0.0, 1.0);
+  let nMed: f32 = valueNoise3D(p * mSc + vec3<f32>(11.3, 23.7, 4.9));
+  let nSmall: f32 = valueNoise3D(p * sSc + vec3<f32>(5.1, 2.9, 17.3));
 
-  let crackRaw: f32 = valueNoise2D(p * crackSc + vec2<f32>(19.1, 7.7) + vec2<f32>(w.z * 0.7, 0.0));
+  let crackRaw: f32 = valueNoise3D(p * crackSc + vec3<f32>(19.1, 7.7, 12.4));
   var ridge: f32 = 1.0 - abs(crackRaw * 2.0 - 1.0);
-  ridge = ridge * ridge;
-  let ridgeStr: f32 = mossDefault(modifiersBlock.modDamagedCrack.x, 1.0);
-  ridge = ridge * ridgeStr;
+  let ridgeStr: f32 = max(modifiersBlock.modDamagedCrack.x, 0.0);
+  let edgeSharpen: f32 = max(modifiersBlock.modDamagedCrack.w, 0.05);
+  ridge = pow(clamp(ridge, 0.0, 1.0), edgeSharpen) * ridgeStr;
 
-  let crack2: f32 = valueNoise2D(p * crackSc * 1.7 + vec2<f32>(7.7, 19.1) + vec2<f32>(w.z * 0.25, w.z * 0.5));
+  let crack2: f32 = valueNoise3D(p * crackSc * 1.7 + vec3<f32>(7.7, 19.1, 3.8));
   var ridge2: f32 = 1.0 - abs(crack2 * 2.0 - 1.0);
-  ridge2 = ridge2 * ridge2 * ridgeStr * 0.6;
+  ridge2 = pow(clamp(ridge2, 0.0, 1.0), edgeSharpen) * ridgeStr * 0.6;
 
-  let scratchSc: f32 = mossDefault(modifiersBlock.modDamagedCrack.y, 8.5);
-  let nA: f32 = valueNoise2D(w.xy * scratchSc + vec2<f32>(w.z * 0.7, 0.0));
-  let nB: f32 = valueNoise2D(vec2<f32>(w.y, w.x) * scratchSc * 0.7 + vec2<f32>(17.0, 3.1) + vec2<f32>(0.0, w.z * 0.3));
+  let scratchSc: f32 = max(modifiersBlock.modDamagedCrack.y, 0.01);
+  let nA: f32 = valueNoise3D(w * vec3<f32>(scratchSc, scratchSc * 0.31, scratchSc * 0.73) + vec3<f32>(2.1, 13.7, 5.4));
+  let nB: f32 = valueNoise3D(w * vec3<f32>(scratchSc * 0.29, scratchSc, scratchSc * 0.61) + vec3<f32>(17.0, 3.1, 9.8));
   var scratch: f32 = nA * nB;
-  let scratchDet: f32 = valueNoise2D(w.xy * scratchSc * 1.7 + vec2<f32>(3.1, 7.7) + vec2<f32>(w.z * 0.4, 0.0));
+  let scratchDet: f32 = valueNoise3D(w * scratchSc * 1.7 + vec3<f32>(3.1, 7.7, 15.2));
   scratch = scratch * 0.7 + scratchDet * 0.3;
 
-  let dWZero: f32 = step(length(modifiersBlock.modDamagedWeights), 0.0001);
-  var lW: f32 = mix(modifiersBlock.modDamagedWeights.x, 0.45, dWZero);
-  var mW: f32 = mix(modifiersBlock.modDamagedWeights.y, 0.28, dWZero);
-  var sW: f32 = mix(modifiersBlock.modDamagedWeights.z, 0.15, dWZero);
-  var cW: f32 = mix(modifiersBlock.modDamagedWeights.w, 0.38, dWZero);
-  var sWc: f32 = mix(modifiersBlock.modDamagedCrack.z, 0.22, dWZero);
+  let lW: f32 = max(modifiersBlock.modDamagedWeights.x, 0.0);
+  let mW: f32 = max(modifiersBlock.modDamagedWeights.y, 0.0);
+  let sW: f32 = max(modifiersBlock.modDamagedWeights.z, 0.0);
+  let cW: f32 = max(modifiersBlock.modDamagedWeights.w, 0.0);
+  let sWc: f32 = max(modifiersBlock.modDamagedCrack.z, 0.0);
 
-  let combined: f32 = nLarge * lW + nMed * mW + nSmall * sW + ridge * cW + ridge2 * cW * 0.5 + scratch * sWc;
+  let weightSum: f32 = max(0.001, lW + mW + sW + cW * 1.5 + sWc);
+  let combined: f32 = (nLarge * lW + nMed * mW + nSmall * sW + ridge * cW + ridge2 * cW * 0.5 + scratch * sWc) / weightSum;
   return clamp(combined, 0.0, 1.0);
 }
 
 fn damagedRidgeRaw(w: vec3<f32>) -> f32 {
-  var p: vec2<f32> = w.xy * mossDefault(modifiersBlock.modDamagedNoise.x, 2.2) * mossDefault(modifiersBlock.modDamagedScales.w, 3.2) + vec2<f32>(19.1, 7.7) + vec2<f32>(w.z * 0.4, w.z * 0.25);
-  let r: f32 = valueNoise2D(p);
+  let p: vec3<f32> = w * max(modifiersBlock.modDamagedNoise.x, 0.01) * max(modifiersBlock.modDamagedScales.w, 0.01) + vec3<f32>(19.1, 7.7, 12.4);
+  let r: f32 = valueNoise3D(p);
   var ridge: f32 = 1.0 - abs(r * 2.0 - 1.0);
-  let r2: f32 = valueNoise2D(p * 1.7 + vec2<f32>(7.7, 19.1));
+  let r2: f32 = valueNoise3D(p * 1.7 + vec3<f32>(7.7, 19.1, 3.8));
   var ridge2: f32 = 1.0 - abs(r2 * 2.0 - 1.0);
-  return ridge * ridge * 0.7 + ridge2 * ridge2 * 0.3;
+  let sharpen: f32 = max(modifiersBlock.modDamagedCrack.w, 0.05);
+  return pow(clamp(ridge, 0.0, 1.0), sharpen) * 0.7 + pow(clamp(ridge2, 0.0, 1.0), sharpen) * 0.3;
+}
+
+fn damagedSurfaceDetail(w: vec3<f32>) -> f32 {
+  let scale: f32 = max(modifiersBlock.modDamagedGlobal2.w, 0.01);
+  let chip: f32 = hash31(floor(w * scale + vec3<f32>(9.7, 31.2, 5.4)));
+  let grit: f32 = valueNoise3D(w * scale * 0.47 + vec3<f32>(21.3, 4.1, 14.8));
+  return clamp(chip * 0.62 + grit * 0.38, 0.0, 1.0);
 }
 
 fn damagedNoiseShape(w: vec3<f32>) -> f32 {
-  let th: f32 = mossDefault(modifiersBlock.modDamagedNoise.y, 0.78);
-  let fe: f32 = mossDefault(modifiersBlock.modDamagedNoise.z, 0.06);
+  let th: f32 = modifiersBlock.modDamagedNoise.y;
+  let fe: f32 = max(modifiersBlock.modDamagedNoise.z, 0.0001);
   return smoothstep(th - fe, th + fe, damagedNoiseRaw(w));
 }
 
 fn damagedEnvMask(w: vec3<f32>, isFloor: f32) -> f32 {
-  let eBase: f32 = mossDefault(modifiersBlock.modDamagedFinal.y, 0.25);
+  let eBase: f32 = modifiersBlock.modDamagedFinal.y;
   let bot: f32 = 1.0 - smoothstep(0.0, 0.18, w.z) * 0.10;
   let top: f32 = 1.0 - smoothstep(frame.wallWorldHeight * 0.60869565, frame.wallWorldHeight, w.z) * 0.30;
   let wall: f32 = mix(eBase, 1.0, bot * top);
   return clamp(mix(wall, 1.0, step(0.5, isFloor)), 0.0, 1.0);
 }
 
+fn damagedMaterialMask(mh: f32, ao: f32, ro: f32) -> f32 {
+  let hCue: f32 = smoothstep(modifiersBlock.modDamagedMaterial.x, modifiersBlock.modDamagedMaterial.y, mh);
+  let aoCue: f32 = smoothstep(modifiersBlock.modDamagedMaterial.z, modifiersBlock.modDamagedMaterial.w, ao);
+  let roughCue: f32 = smoothstep(modifiersBlock.modDamagedMaterial2.x, modifiersBlock.modDamagedMaterial2.y, ro);
+  let permissive: f32 = max(hCue, max(aoCue, roughCue));
+  let average: f32 = (hCue + aoCue + roughCue) / 3.0;
+  let restrictive: f32 = hCue * aoCue * roughCue;
+  let combine: f32 = clamp(modifiersBlock.modDamagedMaterial2.w, 0.0, 1.0);
+  let cue: f32 = select(mix(permissive, average, combine * 2.0), mix(average, restrictive, (combine - 0.5) * 2.0), combine >= 0.5);
+  return mix(clamp(modifiersBlock.modDamagedMaterial2.z, 0.0, 1.0), 1.0, clamp(cue, 0.0, 1.0));
+}
+
 fn damagedFinalMask(w: vec3<f32>, mh: f32, ao: f32, ro: f32, isFloor: f32) -> f32 {
+  if (modifiersBlock.modDamagedAppearance.w < 0.0) { return 0.0; }
   let biome: f32 = damagedBiomeMask(w.xy);
   let has: f32 = step(0.001, biome);
   let noise: f32 = damagedNoiseShape(w);
   let env: f32 = damagedEnvMask(w, isFloor);
-  let bBase: f32 = mossDefault(modifiersBlock.modDamagedFinal.x, 0.15);
-  let eBase: f32 = mossDefault(modifiersBlock.modDamagedFinal.y, 0.25);
-  let boost: f32 = mossDefault(modifiersBlock.modDamagedFinal.w, 1.35);
-  let nW: f32 = mossDefault(modifiersBlock.modDamagedFinalWeights.x, 1.0);
-  let eW: f32 = mossDefault(modifiersBlock.modDamagedFinalWeights.y, 0.35);
-  let bW: f32 = mossDefault(modifiersBlock.modDamagedFinalWeights.w, 0.5);
+  let mat: f32 = damagedMaterialMask(mh, ao, ro);
+  let bBase: f32 = modifiersBlock.modDamagedFinal.x;
+  let eBase: f32 = modifiersBlock.modDamagedFinal.y;
+  let mBase: f32 = modifiersBlock.modDamagedFinal.z;
+  let boost: f32 = modifiersBlock.modDamagedFinal.w;
+  let nW: f32 = max(modifiersBlock.modDamagedFinalWeights.x, 0.0);
+  let eW: f32 = max(modifiersBlock.modDamagedFinalWeights.y, 0.0);
+  let mW: f32 = max(modifiersBlock.modDamagedFinalWeights.z, 0.0);
+  let bW: f32 = max(modifiersBlock.modDamagedFinalWeights.w, 0.0);
   let envMod: f32 = mix(eBase, 1.0, env);
+  let matMod: f32 = mix(mBase, 1.0, mat);
   let bioMod: f32 = mix(bBase, 1.0, biome);
-  let sum: f32 = max(0.001, nW + eW + bW);
-  var f: f32 = (noise * nW + envMod * eW + bioMod * bW) / sum;
-  f = f * has;
-  f = clamp(f * boost, 0.0, 1.0);
-  let contrast: f32 = mossDefault(modifiersBlock.modDamagedGlobal.x, 1.35);
+  let sum: f32 = max(0.001, nW + eW + mW + bW);
+  let average: f32 = (noise * nW + envMod * eW + matMod * mW + bioMod * bW) / sum;
+  let permissive: f32 = max(noise * nW, max(envMod * eW, max(matMod * mW, bioMod * bW)));
+  let restrictive: f32 = mix(1.0, noise, step(0.001, nW))
+    * mix(1.0, envMod, step(0.001, eW))
+    * mix(1.0, matMod, step(0.001, mW))
+    * mix(1.0, bioMod, step(0.001, bW));
+  let combine: f32 = clamp(modifiersBlock.modDamagedGlobal2.y, 0.0, 1.0);
+  var f: f32 = mix(permissive, average, combine * 2.0);
+  if (combine >= 0.5) { f = mix(average, restrictive, (combine - 0.5) * 2.0); }
+  // Preserve the generated room/story intensity instead of treating every
+  // nonzero bilinear tail as equally damaged. This is what makes guardian and
+  // armory zones visibly harsher than corridors or secret rooms.
+  let biomeStrength: f32 = smoothstep(0.015, 0.75, biome);
+  f = f * has * biomeStrength;
+  let brightness: f32 = modifiersBlock.modDamagedGlobal.y;
+  f = clamp(f * boost + brightness, 0.0, 1.0);
+  let contrast: f32 = max(modifiersBlock.modDamagedGlobal.x, 0.0);
   f = clamp((f - 0.5) * contrast + 0.5, 0.0, 1.0);
+  f = pow(clamp(f, 0.001, 1.0), max(modifiersBlock.modDamagedGlobal2.x, 0.05));
+  let range: f32 = max(0.001, modifiersBlock.modDamagedGlobal.w - modifiersBlock.modDamagedGlobal.z);
+  f = clamp((f - modifiersBlock.modDamagedGlobal.z) / range, 0.0, 1.0);
   f = f * f * (3.0 - 2.0 * f);
   return f;
 }
 
 fn damagedHeightOffset(w: vec3<f32>, s: f32) -> f32 {
   let has: f32 = step(0.001, s);
-  let dSZero: f32 = step(length(modifiersBlock.modDamagedSurface), 0.0001);
-  var depth: f32 = mix(modifiersBlock.modDamagedSurface.x, -0.38, dSZero);
-  var pitVar: f32 = mix(modifiersBlock.modDamagedSurface.y, 0.32, dSZero);
-  var ridgeH: f32 = mix(modifiersBlock.modDamagedSurface.z, 0.18, dSZero);
+  var depth: f32 = modifiersBlock.modDamagedSurface.x;
+  var pitVar: f32 = modifiersBlock.modDamagedSurface.y;
+  var ridgeH: f32 = modifiersBlock.modDamagedSurface.z;
   let raw: f32 = damagedNoiseRaw(w);
   let ridge: f32 = damagedRidgeRaw(w);
-  let scratch: f32 = valueNoise2D(w.xy * mossDefault(modifiersBlock.modDamagedCrack.y, 8.5));
+  let scratch: f32 = damagedSurfaceDetail(w);
   var pit: f32 = depth + (raw - 0.5) * pitVar * 1.2 - scratch * 0.08;
   return (pit * 0.85 + ridge * ridgeH * 0.35) * s * has;
 }
@@ -507,9 +553,10 @@ fn pomOffsetArrayDamaged(heightTex: texture_2d_array<f32>, uv: vec2<f32>, layer:
   if (ci.x < 0 || ci.y < 0 || ci.x >= i32(frame.mapSize.x) || ci.y >= i32(frame.mapSize.y)) { inB = 0.0; }
   let cell: f32 = loadModifierMap2(modUV).r * f32(frame.modifiersEnabled) * inB;
   let has: f32 = step(0.001, cell);
-  let dMask: f32 = damagedNoiseShape(worldPos) * has * cell;
-  let depth: f32 = mossDefault(modifiersBlock.modDamagedSurface.x, -0.38);
-  let pomBoost: f32 = mossDefault(modifiersBlock.modDamagedGlobal2.z, 1.4);
+  let damageEnabled: f32 = step(0.0, modifiersBlock.modDamagedAppearance.w);
+  let dMask: f32 = damagedNoiseShape(worldPos) * has * cell * damageEnabled;
+  let depth: f32 = modifiersBlock.modDamagedSurface.x;
+  let pomBoost: f32 = modifiersBlock.modDamagedGlobal2.z;
   let dH: f32 = depth * dMask * pomBoost * has;
   let extra: vec2<f32> = viewTS.xy * dH * 0.65 / max(abs(viewTS.z), 0.18) * has;
   var tot: vec2<f32> = base + extra * 0.55;
@@ -824,50 +871,44 @@ fn applyModifiers(albedo: ptr<function, vec3<f32>>, N: ptr<function, vec3<f32>>,
   // In old path, floorDepress modulated height but main depression is via separate pass; keeping matHeight update minimal
   // *matHeight += puddleMask * floorDepress * puddleHas2; // floorDepress negative -> slight dip
 
-  // Damaged – full chaotic PBR from old GLSL
+  // Damaged – chipped albedo and full PBR relief in the host surface plane.
   let dCell: f32 = mod2.r * modsEnabled * inBounds;
-  let dHas: f32 = step(0.001, dCell);
   let dMask: f32 = damagedFinalMask(worldPos, *matHeight, *ao, *rough, isFloorSurface);
-  var dStr: f32 = dMask * dHas;
-  let dHasS: f32 = step(0.001, dStr);
-  dStr = dStr * dHasS;
+  if (dCell > 0.0001 && dMask > 0.0001) {
+    let dStr: f32 = clamp(dMask, 0.0, 1.0);
+    let rawD: f32 = damagedNoiseRaw(worldPos);
+    let ridge: f32 = damagedRidgeRaw(worldPos);
+    let fine: f32 = damagedSurfaceDetail(worldPos);
+    let fine2: f32 = hash31(floor(worldPos * max(modifiersBlock.modDamagedGlobal2.w, 0.01) + vec3<f32>(27.4, 6.1, 18.9)));
 
-  let dSZero: f32 = step(length(modifiersBlock.modDamagedSurface), 0.0001);
-  let dS2Zero: f32 = step(length(modifiersBlock.modDamagedSurface2), 0.0001);
-  var dDepth: f32 = mix(modifiersBlock.modDamagedSurface.x, -0.38, dSZero);
-  var dNStr: f32 = mix(modifiersBlock.modDamagedSurface.w, 0.95, dSZero);
-  var dRAdd: f32 = mix(modifiersBlock.modDamagedSurface2.y, 0.42, dS2Zero);
-  var dRVar: f32 = mix(modifiersBlock.modDamagedSurface2.z, 0.28, dS2Zero);
-  var dAo: f32 = mix(modifiersBlock.modDamagedSurface2.w, 0.38, dS2Zero);
-  let chipSc: f32 = mix(modifiersBlock.modDamagedGlobal2.w, 12.0, step(length(modifiersBlock.modDamagedGlobal2), 0.0001));
+    let dDepth: f32 = modifiersBlock.modDamagedSurface.x;
+    let dPitVar: f32 = modifiersBlock.modDamagedSurface.y;
+    let dRidgeHeight: f32 = modifiersBlock.modDamagedSurface.z;
+    let hPit: f32 = dDepth + (rawD - 0.5) * dPitVar + (fine - 0.5) * dPitVar * 0.35;
+    *matHeight = *matHeight + (hPit + ridge * dRidgeHeight) * dStr;
 
-  let rawD: f32 = damagedNoiseRaw(worldPos);
-  let ridge: f32 = damagedRidgeRaw(worldPos);
-  let fine: f32 = valueNoise2D(worldPos.xy * chipSc * 0.7);
-  let hPit: f32 = dDepth + (rawD - 0.5) * 0.32 * 1.2 + fine * 0.12;
-  let hOff: f32 = (hPit * 0.85 + ridge * 0.18 * 0.35) * dStr;
-  *matHeight = *matHeight + hOff;
+    // A restrained exposed-stone tint makes damage readable even where the
+    // low-resolution lighting cannot show every normal/height change.
+    let chipDark: vec3<f32> = modifiersBlock.modDamagedAppearance.xyz * vec3<f32>(0.68, 0.66, 0.62);
+    let chipLight: vec3<f32> = modifiersBlock.modDamagedAppearance.xyz * vec3<f32>(1.12, 1.08, 1.01);
+    let chipColor: vec3<f32> = mix(chipDark, chipLight, smoothstep(0.28, 0.82, fine));
+    let dColorBlend: f32 = clamp(dStr * max(modifiersBlock.modDamagedAppearance.w, 0.0) * (0.76 + ridge * 0.24), 0.0, 1.0);
+    *albedo = mix(*albedo, chipColor, dColorBlend);
 
-  let upV: vec3<f32> = vec3<f32>(0.0, 0.0, 1.0);
-  var tang: vec3<f32> = normalize(cross(*N, upV + vec3<f32>(0.001, 0.002, 0.0)));
-  let upDot: f32 = abs(dot(*N, upV));
-  var tangAlt: vec3<f32> = cross(*N, vec3<f32>(1.0, 0.0, 0.0));
-  tang = normalize(mix(tang, tangAlt, step(0.95, upDot)));
-  let bit: vec3<f32> = normalize(cross(*N, tang));
-  let nX: f32 = valueNoise2D(worldPos.xy * 12.0) * 2.0 - 1.0;
-  let nY: f32 = valueNoise2D(worldPos.xy * 12.0 + vec2<f32>(5.7, 3.1)) * 2.0 - 1.0;
-  let grad: vec3<f32> = tang * nX + bit * nY;
-  let dN: vec3<f32> = normalize(*N - grad * dNStr * dStr * 0.65);
-  *N = normalize(mix(*N, dN, clamp(dStr * dNStr, 0.0, 1.0)));
+    let dBaseN: vec3<f32> = normalize(*N);
+    let dAxis: vec3<f32> = select(vec3<f32>(0.0, 0.0, 1.0), vec3<f32>(1.0, 0.0, 0.0), abs(dBaseN.z) > 0.92);
+    let dTangent: vec3<f32> = normalize(cross(dAxis, dBaseN));
+    let dBitangent: vec3<f32> = normalize(cross(dBaseN, dTangent));
+    let dNormalDetail: f32 = modifiersBlock.modDamagedSurface2.x;
+    let dSlope: vec3<f32> = dTangent * (fine - 0.5) + dBitangent * (fine2 - 0.5) + (dTangent + dBitangent) * (ridge - 0.5) * 0.22;
+    let dReliefN: vec3<f32> = normalize(dBaseN - dSlope * modifiersBlock.modDamagedSurface.w * dNormalDetail);
+    *N = normalize(mix(dBaseN, dReliefN, dStr));
 
-  let rNoise: f32 = rawD * 0.6 + fine * 0.3 + ridge * 0.2;
-  let rAdd: f32 = dRAdd * dStr + dRVar * rNoise * dStr;
-  *rough = clamp(*rough + rAdd * dHasS, 0.0, 1.0);
-
-  var aoDark: f32 = 1.0 - dStr * dAo * (0.6 + 0.4 * rawD + 0.3 * ridge);
-  aoDark = mix(1.0, aoDark, dHasS);
-  *ao = clamp(*ao * aoDark, 0.0, 1.0);
-  *metal = mix(*metal, *metal * 0.72, dStr * 0.45);
+    let dRoughTarget: f32 = clamp(*rough + modifiersBlock.modDamagedSurface2.y + (fine - 0.5) * modifiersBlock.modDamagedSurface2.z, 0.25, 0.98);
+    *rough = mix(*rough, dRoughTarget, dStr);
+    *ao = clamp(*ao * (1.0 - dStr * modifiersBlock.modDamagedSurface2.w * (0.62 + 0.38 * ridge)), 0.0, 1.0);
+    *metal = mix(*metal, 0.0, dStr * 0.72);
+  }
 }
 
 fn applyModifiersSimple(albedo: ptr<function, vec3<f32>>, N: ptr<function, vec3<f32>>, rough: ptr<function, f32>, metal: ptr<function, f32>, ao: ptr<function, f32>, worldPos: vec3<f32>) {

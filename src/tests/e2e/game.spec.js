@@ -198,13 +198,18 @@ test('Toggle keys 1-8 switch debug modes without console errors', async ({ page 
 });
 
 test('PBR debug cycle key 6 exposes modifier modes via HUD', async ({ page }) => {
+  const shaderErrors = [];
+  page.on('console', msg => {
+    const text = msg.text();
+    if (msg.type() === 'error' && /shader|compile|validation|pipeline/i.test(text)) shaderErrors.push(text);
+  });
   await page.goto('/game.html');
   await page.waitForTimeout(1800);
   await expect(page.locator('#game-canvas')).toBeVisible({ timeout: 5000 });
 
   const hudTexts = [];
   // Listen HUD changes via polling after each press – use code Digit6 for AZERTY
-  for (let i = 0; i < 11; i++) {
+  for (let i = 0; i < 13; i++) {
     await page.keyboard.press('Digit6');
     await page.waitForTimeout(250);
     const txt = await page.evaluate(() => {
@@ -216,6 +221,9 @@ test('PBR debug cycle key 6 exposes modifier modes via HUD', async ({ page }) =>
   // At least one should mention Albedo, Normal, Height etc – HUD may hide after 1500ms, so allow empty if canvas still renders
   const all = hudTexts.join(' ');
   const canvasVisible = await page.locator('#game-canvas').isVisible();
+  expect(all).toContain('Damaged Placement');
+  expect(all).toContain('Damaged Factors');
+  expect(shaderErrors).toEqual([]);
   expect((all.includes('PBR Debug') || all.includes('Albedo') || all.includes('Normal') || all.includes('OFF')) || canvasVisible).toBeTruthy();
 });
 

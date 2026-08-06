@@ -116,6 +116,36 @@ test('blood and dust generator fields are nonzero, distinct, and decodable', () 
   assert.equal(decoded.wallProximity, 128/255);
 });
 
+test('damage generator covers both room floors and wall shells', () => {
+  const w = 10, h = 10;
+  const grid = new Uint8Array(w*h);
+  for (let y=0; y<h; y++) for (let x=0; x<w; x++) {
+    grid[y*w+x] = (x===0 || y===0 || x===w-1 || y===h-1) ? 1 : 0;
+  }
+  const dungeon = {
+    w, h, grid,
+    floorHeight: new Float32Array(w*h),
+    seed: 9182,
+    rooms: [{ x:1, y:1, w:8, h:8, role:'guardian' }]
+  };
+  const config = { materialModifiers: {
+    enabled: true,
+    generator: {
+      damaged: { threshold:0, feather:0.4, boost:2, wallWeight:1 },
+      roleWeights: { guardian:{ moss:0, puddle:0, damaged:1, blood:0, dust:0 } }
+    }
+  } };
+  const map = generateModifierMap(dungeon, config);
+  let floorMax = 0, wallMax = 0;
+  for (let y=0; y<h; y++) for (let x=0; x<w; x++) {
+    const value = map.data2[(y*w+x)*4 + MOD2_CHANNELS.DAMAGED];
+    if (grid[y*w+x]) wallMax = Math.max(wallMax, value);
+    else floorMax = Math.max(floorMax, value);
+  }
+  assert(floorMax > 0, 'damage story field reaches room floors');
+  assert(wallMax > 0, 'nearest room role propagates damage onto the wall shell');
+});
+
 test('P2: modifier map generation disabled returns all zeros but valid texture', () => {
   const fakeDungeon = { w:10, h:10, grid:new Uint8Array(100), floorHeight:new Float32Array(100), seed:1, rooms:[] };
   const cfgDisabled = { materialModifiers:{ enabled:false, generator:{} } };
@@ -191,12 +221,34 @@ test('blood and dust have dedicated shader blocks and live editor schemas', asyn
   assert(shader.includes('fn bloodFinalMask') && shader.includes('fn dustFinalMask'));
   assert(shader.includes('modBloodAlbedo') && shader.includes('modDustAlbedo'));
   assert(shader.includes('mod2.g') && shader.includes('mod2.b'), 'shader reads dedicated blood and dust channels');
-  assert(renderer.includes('MODIFIERS_VEC4_COUNT = 47'));
+  assert(renderer.includes('MODIFIERS_VEC4_COUNT = 48'));
   assert(renderer.includes('this._modifierGeneratorSignature !== nextGeneratorSignature'), 'live generator edits rebake story fields');
   assert(config.modifiers.blood.enabled && config.modifiers.dust.enabled);
   assert(config.ui.blood.noise.scale.max > config.modifiers.blood.noise.scale);
   assert(config.ui.dust.noise.detailScale.max > config.modifiers.dust.noise.detailScale);
   assert(config.docs.blood.surface.roughTarget && config.docs.dust.material.heightLow);
+});
+
+test('damage uses non-stretched 3D detail and live appearance controls', async () => {
+  const shader = await fs.readFile(path.join(process.cwd(), 'render', 'shader-lib', 'modifiers.wgsl.js'), 'utf8');
+  const sceneShader = await fs.readFile(path.join(process.cwd(), 'render', 'shader-lib', 'scene.wgsl.js'), 'utf8');
+  const renderer = await fs.readFile(path.join(process.cwd(), 'render', 'renderer-gpu.js'), 'utf8');
+  const editor = await fs.readFile(path.join(process.cwd(), 'editor.js'), 'utf8');
+  const config = JSON.parse(await fs.readFile(path.join(process.cwd(), 'assets', 'config', 'rendering', 'material-modifiers.json'), 'utf8'));
+  const noiseBlock = shader.slice(shader.indexOf('fn damagedNoiseRaw'), shader.indexOf('fn damagedRidgeRaw'));
+  const applyBlock = shader.slice(shader.indexOf('// Damaged – chipped albedo'), shader.indexOf('fn applyModifiersSimple'));
+  assert(noiseBlock.includes('fbm3D_3') && noiseBlock.includes('valueNoise3D'), 'damage coverage is volumetric');
+  assert(!noiseBlock.includes('w.xy'), 'damage noise no longer projects through world XY');
+  assert(applyBlock.includes('damagedSurfaceDetail(worldPos)') && !applyBlock.includes('valueNoise2D(worldPos.xy'), 'damage PBR detail is also 3D');
+  assert(applyBlock.includes('dTangent') && applyBlock.includes('dBitangent'), 'damage normals follow the host surface plane');
+  assert(sceneShader.includes('debugDamagedPlacementMask') && sceneShader.includes('debugDamagedFactorsMask'), 'damage has placement and factor debug views');
+  assert(shader.includes('modDamagedAppearance') && renderer.includes('damagedAppearance.colorStrength'));
+  assert(config.generator.damaged.wallWeight > 0.5);
+  assert(config.generator.roleWeights.guardian.damaged > config.generator.roleWeights.secret.damaged);
+  assert(config.modifiers.damaged.appearance.colorStrength > 0);
+  assert(config.ui.damaged.appearance.colorStrength.max > config.modifiers.damaged.appearance.colorStrength);
+  assert(config.ui.generator.damaged.wallWeight.max >= config.generator.damaged.wallWeight);
+  assert(editor.includes('dottedRemainder'), 'legacy dotted damage schemas remain live-editable');
 });
 
 test('P1: materials-proc.json no longer has forcedCount', async () => {
@@ -227,7 +279,7 @@ test('P1/P2: shaders.js is now modular - imports shader-lib (WebGPU)', async () 
     }
   } catch {}
   const hasUBO = combined.includes('ModifiersBlock');
-  assert(hasUBO, 'has ModifiersBlock UBO (47 vec4)');
+  assert(hasUBO, 'has ModifiersBlock UBO (48 vec4)');
   assert(combined.includes('modifierMap2') || combined.includes('u_modifierMap2'), 'has second modifier texture');
   assert(combined.includes('modMossAlbedoRough') || combined.includes('modMossAlbedo'), 'contains moss uniform');
   assert(combined.includes('shadeFloorCell') && combined.includes('shadeCeilCell') && combined.includes('shadeWallCell'), 'scene helpers exist');

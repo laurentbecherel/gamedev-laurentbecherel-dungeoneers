@@ -35,7 +35,9 @@ import {
   fsDebugDamagedNoiseWgsl,
   fsDebugStructuralWgsl,
   fsDebugBloodWgsl,
-  fsDebugDustWgsl
+  fsDebugDustWgsl,
+  fsDebugDamagedPlacementWgsl,
+  fsDebugDamagedFactorsWgsl
 } from './shaders-wgsl.js';
 
 import { generateMaterialArrayData } from '../world/materials.js';
@@ -62,7 +64,7 @@ export function isWebGL2Supported() {
 
 function alignUp(v, a) { return Math.ceil(v / a) * a; }
 const FEATURE_UNIFORM_BYTES = 176;
-const MODIFIERS_VEC4_COUNT = 47;
+const MODIFIERS_VEC4_COUNT = 48;
 const MODIFIERS_UNIFORM_BYTES = MODIFIERS_VEC4_COUNT * 16;
 
 function normalizeTextureFilter(value) {
@@ -476,6 +478,7 @@ function packModifiersBlock(buffer, cfg, dungeon) {
     const damagedMat = damaged.material || {};
     const damagedFinal = damaged.final || {};
     const damagedSurf = damaged.surface || {};
+    const damagedAppearance = damaged.appearance || {};
     const blood = mods.blood || {};
     const bloodNoise = blood.noise || {};
     const bloodShape = blood.shape || {};
@@ -562,13 +565,13 @@ function packModifiersBlock(buffer, cfg, dungeon) {
     // 29: damagedFinalWeights
     setVec4Full(116, damagedFinal.noiseWeight ?? 1.0, damagedFinal.envWeight ?? 0.35, damagedFinal.matWeight ?? 0.6, damagedFinal.biomeWeight ?? 0.5);
     // 30: damagedSurface
-    setVec4Full(120, damagedSurf.depth ?? -0.38, damagedSurf.pitVar ?? 0.32, damagedSurf.ridgeHeight ?? 0.18, damagedSurf.normalStrength ?? 0.95);
+    setVec4Full(120, (damagedSurf.depth ?? -0.38) * (damagedSurf.depthBoost ?? 1.0), damagedSurf.pitVar ?? 0.32, damagedSurf.ridgeHeight ?? 0.18, damagedSurf.normalStrength ?? 0.95);
     // 31: damagedSurface2
     setVec4Full(124, damagedSurf.normalDetail ?? 0.65, damagedSurf.roughAdd ?? 0.42, damagedSurf.roughVar ?? 0.28, damagedSurf.aoStrength ?? 0.38);
     // 32: damagedGlobal
     setVec4Full(128, damagedFinal.contrast ?? 1.35, damagedFinal.brightness ?? 0.0, damagedFinal.minThreshold ?? 0.0, damagedFinal.maxThreshold ?? 1.0);
     // 33: damagedGlobal2
-    setVec4Full(132, damagedFinal.power ?? 1.1, damagedSurf.depthBoost ?? 1.0, damagedSurf.pomBoost ?? 1.4, damagedCrack.detailScale ?? damagedSurf.chipDetailScale ?? 12.0);
+    setVec4Full(132, damagedFinal.power ?? 1.1, damagedFinal.combine ?? 0.5, damagedSurf.pomBoost ?? 1.4, damagedCrack.detailScale ?? damagedSurf.chipDetailScale ?? 12.0);
     // 34-40: blood – dedicated slots; do not alias puddle's legacy fields.
     setVec4(136, normalizeAlbedo(blood.albedo, [0.36,0.035,0.028]), blood.colorStrength ?? 2.2);
     setVec4(140, normalizeAlbedo(blood.darkAlbedo, [0.10,0.008,0.006]), bloodSurface.roughTarget ?? blood.roughTarget ?? 0.46);
@@ -584,6 +587,11 @@ function packModifiersBlock(buffer, cfg, dungeon) {
     setVec4Full(176, dustSurface.roughAdd ?? dust.roughAdd ?? 0.22, dustSurface.heightAdd ?? dust.heightAdd ?? 0.055, dustSurface.normalStrength ?? dust.normalStrength ?? 0.16, dustSurface.aoWeight ?? dust.aoWeight ?? 0.10);
     setVec4Full(180, dustPlacement.floorWeight ?? 1.0, dustPlacement.wallWeight ?? 0.16, dustPlacement.ceilingWeight ?? 0.0, dustPlacement.boost ?? 1.35);
     setVec4Full(184, dust.enabled === true ? 1.0 : 0.0, dustFinal.contrast ?? 1.05, dustFinal.power ?? 0.90, dustFinal.desaturate ?? 0.28);
+    // 47: damage chip tint; negative strength is the independent enable flag.
+    {
+      const alb = normalizeAlbedo(damagedAppearance.albedo ?? damaged.albedo, [0.40,0.38,0.34]);
+      setVec4Full(188, alb[0], alb[1], alb[2], damaged.enabled === false ? -1.0 : (damagedAppearance.colorStrength ?? damaged.colorStrength ?? 0.42));
+    }
   } catch (e) {
     console.warn('[packModifiersBlock] failed, using partial', e);
   }
@@ -1154,11 +1162,13 @@ export class GPURenderer {
       fsDebugDamagedNoiseWgsl,
       fsDebugStructuralWgsl,
       fsDebugBloodWgsl,
-      fsDebugDustWgsl
+      fsDebugDustWgsl,
+      fsDebugDamagedPlacementWgsl,
+      fsDebugDamagedFactorsWgsl
     ];
     this.pipelines.debugPBR = [];
     this.pipelines.debugPBR[0] = this.pipelines.raymarch; // 0 alias
-    for (let i = 1; i < 11; i++) this.pipelines.debugPBR[i] = null;
+    for (let i = 1; i < 13; i++) this.pipelines.debugPBR[i] = null;
     console.log('[WebGPU] PBR debug pipelines lazy – init fast path (5 pipelines only)');
 
     // SSR pipeline
@@ -1592,7 +1602,7 @@ export class GPURenderer {
   setCornerEnabled(v) { this.cornerEnabled = v ? 1 : 0; }
   setModifiersEnabled(v){ this.modifiersEnabled = v ? 1 : 0; }
   setSSREnabled(v){ this.ssrEnabled = v ? 1 : 0; }
-  setPBRDebugMode(v) { this.pbrDebugMode = Math.max(0, Math.min(10, v | 0)); }
+  setPBRDebugMode(v) { this.pbrDebugMode = Math.max(0, Math.min(12, v | 0)); }
   toggleGridDebug(){ this.gridDebug = this.gridDebug ? 0 : 1; return this.gridDebug; }
   toggleLighting(){ this.lightingEnabled = this.lightingEnabled ? 0 : 1; return this.lightingEnabled; }
   togglePBR(){ this.pbrEnabled = this.pbrEnabled ? 0 : 1; return this.pbrEnabled; }
@@ -1613,7 +1623,7 @@ export class GPURenderer {
   _ensureDebugPipeline(mode) {
     if (!this.device) return null;
     mode = mode | 0;
-    if (mode <= 0 || mode >= 11) return this.pipelines.raymarch;
+    if (mode <= 0 || mode >= 13) return this.pipelines.raymarch;
     if (this.pipelines.debugPBR && this.pipelines.debugPBR[mode]) return this.pipelines.debugPBR[mode];
     const src = this._debugPBRSourceCache && this._debugPBRSourceCache[mode];
     if (!src) return this.pipelines.raymarch;
@@ -1646,7 +1656,7 @@ export class GPURenderer {
   }
 
   cyclePBRDebug() {
-    const next = (this.pbrDebugMode + 1) % 11;
+    const next = (this.pbrDebugMode + 1) % 13;
     this.pbrDebugMode = next;
     // Lazy compile on first use – restores old WebGL2 behavior to keep init fast
     try { if (next !== 0) this._ensureDebugPipeline(next); } catch {}
