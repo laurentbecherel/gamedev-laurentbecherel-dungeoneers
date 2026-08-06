@@ -1,42 +1,55 @@
-<!DOCTYPE html>
+<!doctype html>
 <html lang="en">
 <head>
-<meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1.0">
-<title>Dungeoneers Editor</title>
-<link rel="stylesheet" href="style.css">
-<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@phosphor-icons/web@2.1.1/src/regular/style.css">
-<link id="base-fonts" href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500&family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="description" content="Dungeoneers live asset and world configuration editor.">
+  <title>Dungeoneers — World Editor</title>
+  <link rel="stylesheet" href="style.css">
+  <link rel="stylesheet" href="/art-direction/styles.css">
+  <link rel="stylesheet" href="editor.css">
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@phosphor-icons/web@2.1.1/src/regular/style.css">
+  <link id="base-fonts" href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500&family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
 </head>
 <body class="editor">
-<header class="topbar">
-  <div class="brand">DUNGEONEERS EDITOR</div>
-  <div class="spacer"></div>
-  <a class="btn btn-ghost" href="game.html"><i class="ph ph-play"></i> Play</a>
-  <a class="btn btn-ghost" href="index.html"><i class="ph ph-house"></i> Home</a>
-</header>
-<div class="editor-body">
-  <nav class="editor-sidebar" id="sidebar">
-    <div class="sidebar-header">ASSETS</div>
-    <div id="asset-tree"></div>
-  </nav>
-  <div class="sidebar-resizer" id="sidebar-resizer"></div>
-  <main class="editor-main">
-    <div class="editor-toolbar">
-      <div class="title" id="editor-title">Select an asset</div>
-      <div class="live-controls" id="live-controls" style="display:flex;align-items:center;gap:12px;margin-right:12px">
-        <label class="toggle sm" title="Live Edit broadcasts changes instantly to Game tab via BroadcastChannel + SSE"><input type="checkbox" id="toggle-live"><span class="toggle-slider"></span><span style="margin-left:6px;font-size:12px;color:var(--text-dim)">Live</span></label>
-        <label class="toggle sm" title="Auto Save debounced PUT on every live tweak"><input type="checkbox" id="toggle-autosave"><span class="toggle-slider"></span><span style="margin-left:6px;font-size:12px;color:var(--text-dim)">Auto Save</span></label>
-        <span id="live-status" class="status-pill" style="font-size:11px;min-width:80px;justify-content:center">offline</span>
-      </div>
-      <button class="btn btn-sm btn-primary" id="btn-save">Save Changes</button>
-      <span id="status-area"></span>
+  <header class="site-header">
+    <a class="brand" href="/" aria-label="Dungeoneers game index">
+      <span class="brand-mark" aria-hidden="true"><i></i><i></i><i></i></span>
+      <span>DUNGEONEERS <small>WORLD EDITOR / 04</small></span>
+    </a>
+    <div class="header-actions">
+      <a class="header-home" href="/">Home</a>
+      <nav id="main-nav" class="global-nav" aria-label="Dungeoneers navigation">
+        <a href="game.html">Play</a><a class="active" href="editor.html" aria-current="page">Editor</a><a href="/art-direction/">Design</a>
+      </nav>
+      <button class="nav-toggle" type="button" aria-expanded="false" aria-controls="main-nav">Menu</button>
     </div>
-    <div class="editor-content">
-      <div class="editor-panel" id="editor-panel">
-        <div class="empty-state"><div class="emoji"><i class="ph ph-folder-open" style="font-size:32px;opacity:.4"></i></div><p>Select an asset from the sidebar to edit its JSON definition.</p><p style="margin-top:8px;font-size:13px">Folder structure under src/assets/ is reflected here — fully dynamic.</p></div>
+  </header>
+  <div class="editor-body">
+    <nav class="editor-sidebar" id="sidebar" aria-label="Asset browser">
+      <div class="sidebar-header"><span>Project assets</span><small>src/assets · live registry</small></div>
+      <div id="asset-tree"></div>
+    </nav>
+    <div class="sidebar-resizer" id="sidebar-resizer" title="Resize asset browser"></div>
+    <main class="editor-main">
+      <div class="editor-toolbar">
+        <div class="asset-heading"><span>Active asset</span><div class="title" id="editor-title">Select an asset</div></div>
+        <div class="live-controls" id="live-controls">
+          <label class="toggle sm" title="Live Edit broadcasts changes instantly to Game tab via BroadcastChannel + SSE"><input type="checkbox" id="toggle-live"><span class="toggle-slider"></span><span class="toggle-label">Live</span></label>
+          <label class="toggle sm" title="Auto Save debounced PUT on every live tweak"><input type="checkbox" id="toggle-autosave"><span class="toggle-slider"></span><span class="toggle-label">Auto save</span></label>
+          <span id="live-status" class="status-pill">offline</span>
+        </div>
+        <button class="btn btn-sm btn-primary" id="btn-save"><i class="ph ph-floppy-disk"></i> Save changes</button>
+        <span id="status-area" aria-live="polite"></span>
       </div>
-    </div>
-  </main>
-</div>
-<script type="module" src="editor.js"></script>
-</body></html>
+      <div class="editor-content">
+        <div class="editor-panel" id="editor-panel">
+          <div class="empty-state"><div class="emoji"><i class="ph ph-folder-open"></i></div><p>Select an asset from the sidebar to edit its JSON definition.</p><p>Folder structure under src/assets/ is reflected here—fully dynamic.</p></div>
+        </div>
+      </div>
+    </main>
+  </div>
+  <script src="/art-direction/script.js" defer></script>
+  <script type="module" src="editor.js"></script>
+</body>
+</html>

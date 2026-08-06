@@ -1,39 +1,69 @@
-<!DOCTYPE html>
+<!doctype html>
 <html lang="en">
 <head>
-<meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1.0">
-<title>Dungeoneers — Delve Co.</title>
-<link rel="stylesheet" href="style.css">
-<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@phosphor-icons/web@2.1.1/src/regular/style.css">
-<link rel="preconnect" href="https://fonts.googleapis.com">
-<link id="base-fonts" href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500&family=Inter:wght@300;400;500;600;700;800&display=swap" rel="stylesheet">
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="description" content="Dungeoneers — a four-player retro co-op dungeon crawler built for ten-minute delves.">
+  <title>Dungeoneers — Delve Co.</title>
+  <link rel="stylesheet" href="style.css">
+  <link rel="stylesheet" href="/art-direction/styles.css">
+  <link rel="stylesheet" href="landing.css">
 </head>
 <body class="landing">
-<header class="topbar">
-  <div class="brand">DUNGEONEERS</div>
-  <div class="spacer"></div>
-  <a class="btn btn-ghost" href="game.html"><i class="ph ph-play"></i> Play</a>
-  <a class="btn btn-ghost" href="editor.html"><i class="ph ph-wrench"></i> Editor</a>
-</header>
-<header class="hero">
-  <div class="hero-inner">
-    <h1>DUNGEONEERS</h1>
-    <p class="tagline">Tank. Heal. Loot. Clock Out.</p>
-    <div class="hero-ctas">
-      <a class="btn btn-primary" href="game.html"><i class="ph ph-play" style="font-size:18px"></i> Play Game</a>
-      <a class="btn btn-secondary" href="editor.html"><i class="ph ph-wrench" style="font-size:18px"></i> Open Editor</a>
+  <div class="progress" aria-hidden="true"><span id="progress-bar"></span></div>
+  <header class="site-header">
+    <a class="brand" href="/" aria-label="Dungeoneers game index">
+      <span class="brand-mark" aria-hidden="true"><i></i><i></i><i></i></span>
+      <span>DUNGEONEERS <small>GAME INDEX / 00</small></span>
+    </a>
+    <div class="header-actions">
+      <a class="header-home" href="/" aria-current="page">Home</a>
+      <nav id="main-nav" class="global-nav" aria-label="Dungeoneers navigation">
+        <a href="game.html">Play</a><a href="editor.html">Editor</a><a href="/art-direction/">Design</a>
+      </nav>
+      <button class="nav-toggle" type="button" aria-expanded="false" aria-controls="main-nav">Menu</button>
     </div>
-  </div>
-</header>
-<main class="landing-main">
-  <p class="pitch">A 4-player co-op retro dungeon crawler built for short, intense delves. Classic holy trinity gameplay — roles, not locked classes. Bring any composition, but you need the trinity to survive.</p>
-  <div class="section-title">Core Loop</div>
-  <div class="feature-grid">
-    <div class="feature-card"><h3>4-Player Co-op</h3><p>Drop-in / drop-out. Trinity scales naturally — 1 Tank, 1 Healer, 2 DPS flex slots.</p></div>
-    <div class="feature-card"><h3>Holy Trinity</h3><p>Tank controls aggro and mitigation. Healer manages mana and positioning. DPS executes mechanics.</p></div>
-    <div class="feature-card"><h3>Short Delves</h3><p>8–12 minute missions. Procedural-lite hand-authored chunks. Perfect for a lunch break run.</p></div>
-    <div class="feature-card"><h3>Retro Crawler</h3><p>First-person grid dungeon with CRT phosphor aesthetic. Chunky pixels, arcade speed, deliberate feel.</p></div>
-  </div>
-</main>
-<footer class="landing-footer">Dungeoneers — Foundation Engine · ADO GameDev Track</footer>
-</body></html>
+  </header>
+
+  <main id="top">
+    <section class="landing-hero frame">
+      <div class="landing-copy">
+        <p class="eyebrow">Delve Co. is hiring · Target game</p>
+        <h1>Tank. Heal.<br>Loot. <em>Clock out.</em></h1>
+        <p class="dek">A four-player retro dungeon crawler built for short, intense shifts. Read the room, do your job and decide whether the next floor is worth the risk.</p>
+        <div class="landing-actions">
+          <a class="launch primary" href="game.html">Play Game <span>→</span></a>
+          <a class="launch" href="editor.html">Open Editor <span>↗</span></a>
+        </div>
+      </div>
+      <aside class="shift-card">
+        <p class="section-index">The shift</p>
+        <strong>One floor.<br>One complete contract.</strong>
+        <ol><li><span>01</span>Take a job</li><li><span>02</span>Form the trinity</li><li><span>03</span>Delve for 8–12 minutes</li><li><span>04</span>Extract or descend</li></ol>
+        <div class="shift-meter"><span></span></div>
+      </aside>
+    </section>
+
+    <section class="landing-section frame">
+      <div class="landing-heading"><div><p class="section-index">The game</p><h2>Raid-night teamwork.<br>Lunch-break length.</h2></div><p class="lead">The renderer and dungeon foundation are playable today. Combat, classes, multiplayer and progression are documented targets for the game still to come.</p></div>
+      <div class="feature-grid">
+        <article class="feature-card"><span>01</span><h3>4-player co-op</h3><p>Drop in or out. Built around a Tank, Healer and two flexible DPS positions.</p></article>
+        <article class="feature-card"><span>02</span><h3>Holy trinity</h3><p>Space, safety and damage form a dependency chain—not four solo rotations.</p></article>
+        <article class="feature-card"><span>03</span><h3>Short delves</h3><p>Every floor delivers a complete beginning, middle, finale and extraction choice.</p></article>
+        <article class="feature-card"><span>04</span><h3>Retro / modern</h3><p>Chunky sprites and constrained colour inside dynamic light and tactile materials.</p></article>
+      </div>
+    </section>
+
+    <section class="landing-section frame library-section">
+      <div class="landing-heading"><div><p class="section-index">Design library</p><h2>One game.<br>One visual language.</h2></div><p class="lead">These target documents explain what Dungeoneers should become. They now share the same navigation, typography and design system as this index.</p></div>
+      <div class="library-grid">
+        <a href="/art-direction/"><span>DOCUMENT 01</span><h3>Art Direction</h3><p>Retro form, modern light, material grammar and level identity.</p><b>Open document →</b></a>
+        <a href="/gameplay-direction/"><span>DOCUMENT 02</span><h3>Gameplay Target</h3><p>The ten-minute contract, trinity loop, extraction and progression.</p><b>Open document →</b></a>
+        <a href="/combat-bible/"><span>DOCUMENT 03</span><h3>Combat Bible</h3><p>Four classes, eight variants, forty abilities, floor perks and persistent loot.</p><b>Open document →</b></a>
+      </div>
+    </section>
+  </main>
+  <footer class="frame"><span>DUNGEONEERS / DELVE CO.</span><span>FOUNDATION BUILD · TARGET DOCUMENTS</span><a href="#top">Back to top ↑</a></footer>
+  <script src="/art-direction/script.js"></script>
+</body>
+</html>

@@ -30,6 +30,9 @@ function broadcastAssetUpdate(category, name) {
 const PORT = process.env.PORT || 8000;
 const SRC_DIR = path.join(__dirname, '..');
 const ASSETS_DIR = path.join(SRC_DIR, 'assets');
+const ART_DIRECTION_DIR = path.join(SRC_DIR, '..', 'art-direction');
+const GAMEPLAY_DIRECTION_DIR = path.join(SRC_DIR, '..', 'gameplay-direction');
+const COMBAT_BIBLE_DIR = path.join(SRC_DIR, '..', 'combat-bible');
 
 async function loadAssetFile(category, name) {
   // category may include subfolders: config/rendering, config/lighting etc
@@ -93,6 +96,10 @@ async function listAssets() {
   return out;
 }
 function ctype(fp) { const e = path.extname(fp).toLowerCase(); const m = { '.html': 'text/html', '.js': 'application/javascript', '.css': 'text/css', '.json': 'application/json', '.png': 'image/png', '.jpg': 'image/jpeg', '.svg': 'image/svg+xml', '.ico': 'image/x-icon' }; return m[e] || 'application/octet-stream'; }
+function isWithinRoot(root, candidate) {
+  const rel = path.relative(path.normalize(root), path.normalize(candidate));
+  return rel === '' || (rel !== '..' && !rel.startsWith('..' + path.sep) && !path.isAbsolute(rel));
+}
 function safeSegment(s) { return /^[a-zA-Z0-9_-]+$/.test(s); }
 function safeCategory(catPath) {
   // catPath may contain slashes, each segment must be safe
@@ -183,8 +190,24 @@ const server = http.createServer(async (req, res) => {
       return;
     }
     if (pathname.startsWith('/api/')) { const h = await handleApi(req, res, pathname); if (h) return; if (!res.headersSent) { res.writeHead(404, { 'Content-Type': 'application/json' }); res.end(JSON.stringify({ error: 'Not found' })); } return; }
-    let fp = path.join(SRC_DIR, pathname === '/' ? 'index.html' : pathname.slice(1)); const sp = path.normalize(fp);
-    if (!sp.startsWith(path.normalize(SRC_DIR))) { if (!res.headersSent) { res.writeHead(403); res.end('Forbidden'); } return; }
+    if (pathname === '/art-direction' || pathname === '/gameplay-direction' || pathname === '/combat-bible') {
+      res.writeHead(308, { Location: pathname + '/' }); res.end(); return;
+    }
+    // Design documents deliberately live outside src, but are mounted read-only
+    // beneath explicit public routes for review alongside the game.
+    const staticMount = pathname.startsWith('/art-direction/')
+      ? { prefix: '/art-direction', root: ART_DIRECTION_DIR }
+      : pathname.startsWith('/gameplay-direction/')
+        ? { prefix: '/gameplay-direction', root: GAMEPLAY_DIRECTION_DIR }
+        : pathname.startsWith('/combat-bible/')
+          ? { prefix: '/combat-bible', root: COMBAT_BIBLE_DIR }
+          : null;
+    const staticRoot = staticMount ? staticMount.root : SRC_DIR;
+    const requestPath = staticMount
+      ? pathname.slice(staticMount.prefix.length).replace(/^\/+/, '') || 'index.html'
+      : pathname === '/' ? 'index.html' : pathname.slice(1);
+    let fp = path.join(staticRoot, requestPath); const sp = path.normalize(fp);
+    if (!isWithinRoot(staticRoot, sp)) { if (!res.headersSent) { res.writeHead(403); res.end('Forbidden'); } return; }
     try { const st = await fs.stat(sp); fp = st.isDirectory() ? path.join(sp, 'index.html') : sp; } catch { fp = sp; }
     try { const data = await fs.readFile(fp); if (!res.headersSent) { res.writeHead(200, { 'Content-Type': ctype(fp) }); res.end(data); } } catch { if (!res.headersSent) { res.writeHead(404, { 'Content-Type': 'text/plain' }); res.end('Not Found'); } }
   } catch (e) { console.error('Server error:', e); if (!res.headersSent) { res.writeHead(500, { 'Content-Type': 'application/json' }); res.end(JSON.stringify({ error: 'Internal server error' })); } }

@@ -1,0 +1,86 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1500 720" role="img" aria-labelledby="title desc">
+  <title id="title">Dungeoneers target core loop</title>
+  <desc id="desc">A loop from lobby to job board, ten-minute delve, objective and extraction choice, then debrief and upgrades, with an optional descent into a harder floor.</desc>
+  <defs>
+    <linearGradient id="panel" x1="0" y1="0" x2="0" y2="1"><stop stop-color="#1a1e1c"/><stop offset="1" stop-color="#0f1211"/></linearGradient>
+    <linearGradient id="gold" x1="0" y1="0" x2="1" y2="0"><stop stop-color="#705d2d"/><stop offset="1" stop-color="#d0ad4f"/></linearGradient>
+    <filter id="glow" x="-100%" y="-100%" width="300%" height="300%"><feGaussianBlur stdDeviation="14"/></filter>
+    <pattern id="grid" width="30" height="30" patternUnits="userSpaceOnUse"><path d="M30 0H0V30" fill="none" stroke="#929a95" stroke-opacity=".045"/></pattern>
+    <marker id="arrow" markerWidth="12" markerHeight="12" refX="10" refY="6" orient="auto"><path d="M0 0L12 6L0 12Z" fill="#69736e"/></marker>
+    <marker id="arrowGold" markerWidth="12" markerHeight="12" refX="10" refY="6" orient="auto"><path d="M0 0L12 6L0 12Z" fill="#c9a84c"/></marker>
+  </defs>
+  <rect width="1500" height="720" fill="#080a0a"/>
+  <rect width="1500" height="720" fill="url(#grid)"/>
+  <text x="54" y="62" fill="#d8dcda" font-family="ui-monospace,monospace" font-size="21" letter-spacing="4">THE SHIFT / TARGET CORE LOOP</text>
+  <text x="54" y="93" fill="#77807b" font-family="ui-monospace,monospace" font-size="13" letter-spacing="2">ONE FLOOR COMPLETES THE PROMISE. DESCENT EXTENDS IT.</text>
+
+  <!-- connecting loop -->
+  <g fill="none" stroke="#69736e" stroke-width="3" marker-end="url(#arrow)">
+    <path d="M291 260H407"/><path d="M665 260H781"/><path d="M1039 260H1155"/>
+    <path d="M1284 380V499Q1284 557 1225 557H318Q218 557 218 457V392"/>
+  </g>
+  <path d="M1055 416C1055 528 899 529 899 416" fill="none" stroke="#c9a84c" stroke-width="4" marker-end="url(#arrowGold)"/>
+
+  <!-- cards -->
+  <g font-family="ui-monospace,monospace">
+    <g transform="translate(55 143)">
+      <rect width="236" height="250" fill="url(#panel)" stroke="#343b37" stroke-width="2"/>
+      <text x="22" y="35" fill="#c9a84c" font-size="11" letter-spacing="2">01 / CLOCK IN</text>
+      <g transform="translate(27 67)" shape-rendering="crispEdges">
+        <circle cx="28" cy="28" r="25" fill="#3c4741"/><circle cx="83" cy="28" r="25" fill="#705d2d"/><circle cx="138" cy="28" r="25" fill="#516548"/>
+        <path d="M14 53H42V86H14ZM69 53H97V86H69ZM124 53H152V86H124Z" fill="#69736e"/>
+      </g>
+      <text x="22" y="184" fill="#d6dad7" font-size="19" font-weight="700">LOBBY</text>
+      <text x="22" y="211" fill="#7d8681" font-size="12">PARTY · ROLE · KIT</text>
+    </g>
+
+    <g transform="translate(407 143)">
+      <rect width="258" height="250" fill="url(#panel)" stroke="#343b37" stroke-width="2"/>
+      <text x="22" y="35" fill="#c9a84c" font-size="11" letter-spacing="2">02 / TAKE A JOB</text>
+      <g transform="translate(25 62)" shape-rendering="crispEdges">
+        <rect width="208" height="99" fill="#242925" stroke="#66716b" stroke-width="2"/>
+        <rect x="18" y="18" width="54" height="10" fill="#c9a84c"/><rect x="18" y="40" width="142" height="8" fill="#707873"/><rect x="18" y="58" width="106" height="8" fill="#505852"/>
+        <circle cx="181" cy="72" r="14" fill="#6c3e2a" stroke="#d1763b" stroke-width="3"/>
+      </g>
+      <text x="22" y="184" fill="#d6dad7" font-size="19" font-weight="700">JOB BOARD</text>
+      <text x="22" y="211" fill="#7d8681" font-size="12">OBJECTIVE · RISK · PAY</text>
+    </g>
+
+    <g transform="translate(781 143)">
+      <rect width="258" height="250" fill="url(#panel)" stroke="#c9a84c" stroke-width="2"/>
+      <rect x="1" y="246" width="256" height="3" fill="url(#gold)"/>
+      <text x="22" y="35" fill="#c9a84c" font-size="11" letter-spacing="2">03 / DELVE</text>
+      <g transform="translate(24 59)" shape-rendering="crispEdges">
+        <path d="M0 104L53 39H157L210 104Z" fill="#2b302d"/><path d="M74 104V66Q74 43 105 43Q136 43 136 66V104Z" fill="#080a0a" stroke="#68716c" stroke-width="7"/>
+        <rect x="17" y="82" width="26" height="22" fill="#75422d"/><rect x="167" y="82" width="26" height="22" fill="#75422d"/>
+        <path d="M27 80L22 65L31 51L37 67L33 80ZM177 80L172 65L181 51L187 67L183 80Z" fill="#e4863f"/>
+      </g>
+      <text x="22" y="184" fill="#d6dad7" font-size="19" font-weight="700">8–12 MINUTES</text>
+      <text x="22" y="211" fill="#7d8681" font-size="12">READ · FIGHT · CHOOSE</text>
+    </g>
+
+    <g transform="translate(1155 143)">
+      <rect width="290" height="250" fill="url(#panel)" stroke="#343b37" stroke-width="2"/>
+      <text x="22" y="35" fill="#c9a84c" font-size="11" letter-spacing="2">04 / CASH OUT?</text>
+      <g transform="translate(31 59)" shape-rendering="crispEdges">
+        <path d="M0 19H95V108H0Z" fill="#29302c" stroke="#60705f" stroke-width="3"/><path d="M22 45H73V92H22Z" fill="#121614"/><path d="M36 58H59V81H36Z" fill="#66834f"/>
+        <path d="M133 0H228V108H133Z" fill="#29302c" stroke="#8c7436" stroke-width="3"/><path d="M157 21H204V87H157Z" fill="#12100b"/><path d="M180 32V76M165 59L180 76L195 59" fill="none" stroke="#c9a84c" stroke-width="7"/>
+      </g>
+      <text x="22" y="184" fill="#d6dad7" font-size="19" font-weight="700">EXTRACT / DESCEND</text>
+      <text x="22" y="211" fill="#7d8681" font-size="12">BANK SAFETY · CHASE VALUE</text>
+    </g>
+  </g>
+
+  <!-- optional descent callout -->
+  <g transform="translate(757 477)" font-family="ui-monospace,monospace">
+    <rect width="280" height="96" fill="#15130c" stroke="#7e6934" stroke-width="2"/>
+    <text x="20" y="32" fill="#c9a84c" font-size="11" letter-spacing="2">OPTIONAL / FLOOR +1</text>
+    <text x="20" y="58" fill="#d5d9d6" font-size="15">HARDER · STRANGER · RICHER</text>
+    <text x="20" y="78" fill="#766f58" font-size="11">MAXIMUM FIVE FLOORS</text>
+  </g>
+  <g transform="translate(55 626)" font-family="ui-monospace,monospace">
+    <rect width="1390" height="45" fill="#0d100f" stroke="#2c322f"/>
+    <text x="22" y="28" fill="#78817c" font-size="12" letter-spacing="1">DEBRIEF → BANK LOOT → EQUIP STATS → UNLOCK PERKS → “ONE MORE?”</text>
+    <rect x="1075" y="20" width="285" height="5" fill="#303632"/><rect x="1075" y="20" width="208" height="5" fill="#c9a84c"/>
+  </g>
+</svg>

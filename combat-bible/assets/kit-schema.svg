@@ -1,0 +1,66 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1500 660" role="img" aria-labelledby="title desc">
+  <title id="title">Five-action class kit</title>
+  <desc id="desc">Every class begins with Attack, Big Attack, Control, Move and Ultimate, connected through its unique class resource.</desc>
+  <defs>
+    <linearGradient id="card" x1="0" y1="0" x2="0" y2="1"><stop stop-color="#1a1e1c"/><stop offset="1" stop-color="#101311"/></linearGradient>
+    <pattern id="grid" width="30" height="30" patternUnits="userSpaceOnUse"><path d="M30 0H0V30" fill="none" stroke="#87908b" stroke-opacity=".04"/></pattern>
+    <marker id="arrow" markerWidth="10" markerHeight="10" refX="9" refY="5" orient="auto"><path d="M0 0L10 5L0 10Z" fill="#69736e"/></marker>
+  </defs>
+  <rect width="1500" height="660" fill="#080a0a"/>
+  <rect width="1500" height="660" fill="url(#grid)"/>
+  <text x="48" y="57" fill="#d7dbd8" font-family="ui-monospace,monospace" font-size="21" letter-spacing="4">THE COMPLETE KIT / FIVE ACTIONS FROM RUN ONE</text>
+  <text x="48" y="88" fill="#76807a" font-family="ui-monospace,monospace" font-size="13" letter-spacing="2">PERKS TRANSFORM THESE SLOTS. LOOT NEVER UNLOCKS THEM.</text>
+
+  <g transform="translate(48 138)" font-family="ui-monospace,monospace">
+    <g transform="translate(0)">
+      <rect width="250" height="338" fill="url(#card)" stroke="#3b433e" stroke-width="2"/>
+      <text x="20" y="32" fill="#9aa39e" font-size="11" letter-spacing="2">01 / ATTACK</text>
+      <g transform="translate(75 70)" shape-rendering="crispEdges"><path d="M0 76L46 30L62 46L16 92ZM52 24L70 6L94 30L76 48Z" fill="#7d8982"/><rect x="9" y="85" width="39" height="13" transform="rotate(-45 9 85)" fill="#c9a84c"/></g>
+      <text x="20" y="214" fill="#d7dbd8" font-size="22" font-weight="700">RHYTHM</text>
+      <text x="20" y="246" fill="#78817c" font-size="12">REPEATABLE · READABLE</text>
+      <text x="20" y="276" fill="#78817c" font-size="12">BUILDS RESOURCE</text>
+      <rect x="20" y="307" width="210" height="6" fill="#343b37"/><rect x="20" y="307" width="188" height="6" fill="#87918b"/>
+    </g>
+    <g transform="translate(288)">
+      <rect width="250" height="338" fill="url(#card)" stroke="#75632f" stroke-width="2"/>
+      <text x="20" y="32" fill="#c9a84c" font-size="11" letter-spacing="2">02 / BIG ATTACK</text>
+      <g transform="translate(70 69)" shape-rendering="crispEdges"><circle cx="55" cy="55" r="52" fill="#6a4329"/><path d="M55 7L66 40L104 30L76 57L103 86L66 73L55 107L44 73L7 86L34 57L6 30L44 40Z" fill="#db7b3d"/></g>
+      <text x="20" y="214" fill="#d7dbd8" font-size="22" font-weight="700">PAYOFF</text>
+      <text x="20" y="246" fill="#78817c" font-size="12">HEAVY · SIGNATURE</text>
+      <text x="20" y="276" fill="#78817c" font-size="12">SPENDS TIME / RESOURCE</text>
+      <rect x="20" y="307" width="210" height="6" fill="#343b37"/><rect x="20" y="307" width="142" height="6" fill="#c9a84c"/>
+    </g>
+    <g transform="translate(576)">
+      <rect width="250" height="338" fill="url(#card)" stroke="#46594b" stroke-width="2"/>
+      <text x="20" y="32" fill="#84a073" font-size="11" letter-spacing="2">03 / CONTROL</text>
+      <g transform="translate(66 67)" fill="none" stroke="#84a073" stroke-width="10" shape-rendering="crispEdges"><rect x="10" y="10" width="98" height="98"/><path d="M10 59H108M59 10V108"/><circle cx="59" cy="59" r="21" fill="#31402f"/></g>
+      <text x="20" y="214" fill="#d7dbd8" font-size="22" font-weight="700">ANSWER</text>
+      <text x="20" y="246" fill="#78817c" font-size="12">INTERRUPT · SHAPE</text>
+      <text x="20" y="276" fill="#78817c" font-size="12">SOLVES ENEMY INTENT</text>
+      <rect x="20" y="307" width="210" height="6" fill="#343b37"/><rect x="20" y="307" width="104" height="6" fill="#84a073"/>
+    </g>
+    <g transform="translate(864)">
+      <rect width="250" height="338" fill="url(#card)" stroke="#40535b" stroke-width="2"/>
+      <text x="20" y="32" fill="#82a0ac" font-size="11" letter-spacing="2">04 / MOVE</text>
+      <g transform="translate(64 70)" fill="none" stroke="#82a0ac" stroke-width="12" shape-rendering="crispEdges"><path d="M7 83H95" marker-end="url(#arrow)"/><path d="M30 36H116" marker-end="url(#arrow)"/><path d="M7 106L116 12" opacity=".35"/></g>
+      <text x="20" y="214" fill="#d7dbd8" font-size="22" font-weight="700">POSITION</text>
+      <text x="20" y="246" fill="#78817c" font-size="12">COMMIT · ESCAPE · RESCUE</text>
+      <text x="20" y="276" fill="#78817c" font-size="12">CHANGES THE ANGLE</text>
+      <rect x="20" y="307" width="210" height="6" fill="#343b37"/><rect x="20" y="307" width="122" height="6" fill="#82a0ac"/>
+    </g>
+    <g transform="translate(1152)">
+      <rect width="250" height="338" fill="url(#card)" stroke="#8b6c38" stroke-width="2"/>
+      <text x="20" y="32" fill="#df9150" font-size="11" letter-spacing="2">05 / ULTIMATE</text>
+      <g transform="translate(68 66)" shape-rendering="crispEdges"><path d="M58 0L75 39L116 26L91 61L116 96L75 84L58 122L41 84L0 96L25 61L0 26L41 39Z" fill="#9b532d"/><circle cx="58" cy="61" r="27" fill="#ef9a51"/></g>
+      <text x="20" y="214" fill="#d7dbd8" font-size="22" font-weight="700">MOMENT</text>
+      <text x="20" y="246" fill="#78817c" font-size="12">ROLE-CHARGED · RARE</text>
+      <text x="20" y="276" fill="#78817c" font-size="12">TURNS THE ENCOUNTER</text>
+      <rect x="20" y="307" width="210" height="6" fill="#343b37"/><rect x="20" y="307" width="74" height="6" fill="#df9150"/>
+    </g>
+  </g>
+  <g transform="translate(48 520)" font-family="ui-monospace,monospace">
+    <rect width="1354" height="88" fill="#0e1110" stroke="#303733"/>
+    <text x="22" y="33" fill="#c9a84c" font-size="11" letter-spacing="2">CLASS MECHANIC / NO EXTRA BUTTON</text>
+    <text x="22" y="62" fill="#c7cdc9" font-size="15">ATTACK BUILDS THE VARIANT'S RESOURCE → BIG ATTACK SPENDS OR CONVERTS IT → ROLE ACTIONS CHARGE THE ULTIMATE</text>
+  </g>
+</svg>

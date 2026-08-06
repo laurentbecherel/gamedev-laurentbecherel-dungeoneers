@@ -1,0 +1,270 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="description" content="Dungeoneers target combat and ability bible: four classes, eight variants, five-action kits, floor perks and persistent loot.">
+  <title>Dungeoneers — Combat &amp; Ability Bible</title>
+  <link rel="stylesheet" href="../art-direction/styles.css">
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body class="combat-doc">
+  <div class="progress" aria-hidden="true"><span id="progress-bar"></span></div>
+  <header class="site-header">
+    <a class="brand" href="../" aria-label="Return to the Dungeoneers game index">
+      <span class="brand-mark combat-mark" aria-hidden="true"><i></i><i></i><i></i></span>
+      <span>DUNGEONEERS <small>COMBAT &amp; ABILITY BIBLE / 01</small></span>
+    </a>
+    <div class="header-actions">
+      <a class="header-home" href="../">Home</a>
+      <nav id="main-nav" class="global-nav" aria-label="Dungeoneers navigation">
+        <a href="../game.html">Play</a><a href="../editor.html">Editor</a><a class="active" href="../art-direction/" aria-current="page">Design</a>
+      </nav>
+      <button class="nav-toggle" type="button" aria-expanded="false" aria-controls="main-nav">Menu</button>
+    </div>
+  </header>
+  <nav class="document-nav" aria-label="Design documents">
+      <a href="../art-direction/">Art direction</a>
+      <a href="../gameplay-direction/">Game loop</a>
+      <a class="active" href="../combat-bible/" aria-current="page">Combat bible</a>
+  </nav>
+
+  <main id="top">
+    <section class="combat-hero frame">
+      <div>
+        <p class="eyebrow">Target combat specification · Values are starting targets</p>
+        <h1>Eight variants.<br>Five verbs.<br><em>One build per run.</em></h1>
+        <p class="dek">Every class-variant arrives complete. The run does not hand out missing abilities—it bends the abilities you already know into a new tactical identity, one floor perk at a time.</p>
+        <div class="formula"><span>COMPLETE KIT</span><b>+</b><span>FLOOR PERKS</span><b>+</b><span>EXTRACTED STATS</span></div>
+      </div>
+      <aside class="bible-summary">
+        <span class="summary-label">Combat constitution</span>
+        <strong>Core power is learned.<br>Run power is discovered.<br>Career power is extracted.</strong>
+        <div class="summary-numbers"><div><b>4</b><span>classes</span></div><div><b>8</b><span>variants</span></div><div><b>5</b><span>actions each</span></div><div><b>1</b><span>perk / floor</span></div></div>
+        <p>Nothing on this page is implemented yet. Names, values and timings are a coherent target for prototyping and balance.</p>
+      </aside>
+    </section>
+
+    <section class="frame roster-index" aria-labelledby="roster-title">
+      <div><p class="section-index">Roster at a glance</p><h2 id="roster-title">One role.<br>Different answers.</h2></div>
+      <div class="roster-links">
+        <a href="#iron-vanguard"><span class="tank-dot"></span><b>Iron Vanguard</b><small>Fighter · Protector</small></a>
+        <a href="#bloodreaver"><span class="tank-dot"></span><b>Bloodreaver</b><small>Fighter · Aggressor</small></a>
+        <a href="#nightblade"><span class="dps-dot"></span><b>Nightblade</b><small>Rogue · Assassin</small></a>
+        <a href="#deadeye"><span class="dps-dot"></span><b>Deadeye</b><small>Rogue · Archer</small></a>
+        <a href="#ashen-evoker"><span class="dps-dot"></span><b>Ashen Evoker</b><small>Mage · Elementalist</small></a>
+        <a href="#hexbinder"><span class="dps-dot"></span><b>Hexbinder</b><small>Mage · Occultist</small></a>
+        <a href="#dawnbringer"><span class="heal-dot"></span><b>Dawnbringer</b><small>Cleric · Restorer</small></a>
+        <a href="#gravewarden"><span class="heal-dot"></span><b>Gravewarden</b><small>Cleric · Warder</small></a>
+      </div>
+    </section>
+
+    <section id="kit" class="section frame">
+      <div class="section-heading">
+        <div><p class="section-index">01 / Kit law</p><h2>Four classes.<br>Two legends each.</h2></div>
+        <p class="lead">Fighter, Rogue, Mage and Cleric provide the permanent fantasy identity. Each class offers two complete variants with a different combat interpretation. Selecting a variant chooses the five-action kit for the run; it is not a perk tree or partial loadout.</p>
+      </div>
+      <figure class="art-frame wide-art">
+        <img src="assets/kit-schema.svg" alt="Five class actions: Attack, Big Attack, Control, Move and Ultimate, connected by the class mechanic.">
+        <figcaption><b>System plate 01.</b> The five slots are semantic, not merely cooldown sizes. Every variant must use each slot to express its role and distinctive combat rhythm.</figcaption>
+      </figure>
+      <div class="slot-rules">
+        <article><span>ATTACK</span><h3>Establish rhythm</h3><p>Repeatable action used while reading the room. Usually builds the class resource.</p></article>
+        <article><span>BIG ATTACK</span><h3>Cash in setup</h3><p>High-impact damage or healing. Spends resource, exposes timing or carries a meaningful cooldown.</p></article>
+        <article><span>CONTROL</span><h3>Answer intent</h3><p>Interrupt, taunt, root, cleanse, wall or trap. It changes what can happen next.</p></article>
+        <article><span>MOVE</span><h3>Change the angle</h3><p>Commit, escape, rescue or traverse. Mobility always has a tactical destination.</p></article>
+        <article><span>ULTIMATE</span><h3>Create the moment</h3><p>Charged primarily through positive role actions and expected two or three times per floor.</p></article>
+      </div>
+    </section>
+
+    <section id="progression" class="section frame progression-section">
+      <div class="section-heading">
+        <div><p class="section-index">02 / Rogue + rogue-lite</p><h2>Perks create the run.<br>Loot builds the career.</h2></div>
+        <p class="lead">The two reward layers must never blur. A perk is an exciting temporary rule change. Loot is a persistent, extractable stat improvement. Mastery determines what perks may appear, not whether the class has a functional kit.</p>
+      </div>
+      <figure class="art-frame wide-art">
+        <img src="assets/perk-progression.svg" alt="Temporary perks accumulate one per floor while extracted loot permanently improves bounded stats and unlocks future perk choices.">
+        <figcaption><b>System plate 02.</b> A complete five-floor expedition produces a five-perk run build. Extraction banks personal loot; the temporary perk stack is then cleared.</figcaption>
+      </figure>
+      <div class="perk-law-grid">
+        <article><span>GUARANTEE</span><h3>One per floor</h3><p>A safe shrine after the first guardian offers three choices. The chosen perk is usable during that floor's second half.</p></article>
+        <article><span>OFFER</span><h3>Two class + one open</h3><p>At least two choices target the current variant. The third may be a role or universal perk.</p></article>
+        <article><span>LIMIT</span><h3>No sixth button</h3><p>Perks improve, convert or replace a slot. They can add triggers, charges and interactions—not input clutter.</p></article>
+        <article><span>RESET</span><h3>Build ends with run</h3><p>Extraction and defeat clear active perks. Mastery may add discovered perks to future offer pools.</p></article>
+      </div>
+      <div class="loot-model">
+        <div><p class="label">Persistent loot slots</p><h3>Stats live in gear.</h3><p>Loot is personal, remains unbanked until extraction and is equipped between shifts. It never changes which five actions the class owns.</p></div>
+        <div class="gear-slots"><span><b>Weapon</b><small>Power · Haste</small></span><span><b>Armor</b><small>Vitality · Guard</small></span><span><b>Trinket A</b><small>Recovery · Haste</small></span><span><b>Trinket B</b><small>Any secondary</small></span></div>
+        <div class="stat-list"><span><b>Power</b> outgoing damage and healing</span><span><b>Vitality</b> health and downed duration</span><span><b>Guard</b> mitigation and shield strength</span><span><b>Haste</b> cooldown and resource cadence, capped</span><span><b>Recovery</b> received healing and class-resource recovery</span></div>
+      </div>
+    </section>
+
+    <section id="tanks" class="role-banner frame tank-banner">
+      <div><p class="section-index">03 / Fighter variants</p><h2>Hold the line—or break theirs.</h2></div>
+      <p>Both variants deliver the armored martial fantasy. The Iron Vanguard protects space with shield discipline; the Bloodreaver turns pressure into violent momentum. One controls danger. The other becomes it.</p>
+    </section>
+
+    <section id="iron-vanguard" class="class-section frame tank-class">
+      <header class="class-header">
+        <div><span class="class-number">F / 01</span><p class="class-role">Fighter variant · Protector</p><h2>Iron Vanguard</h2><p class="class-flavor">“Shield high. Blade ready. Nobody passes.”</p></div>
+        <aside><b>CORE / GUARD &amp; PROTECTION</b><p>Weapon attacks build Guard. Blocking consumes Guard before health. Challenged enemies cannot pass through the Fighter or immediately adjacent tiles.</p><dl><div><dt>Strength</dt><dd>Reliable frontline control</dd></div><div><dt>Risk</dt><dd>Limited magical defense</dd></div><div><dt>Ult charge</dt><dd>Block · challenge · intercept</dd></div></dl></aside>
+      </header>
+      <div class="ability-grid">
+        <article class="attack"><span>ATTACK</span><h3>Longsword</h3><p>A disciplined melee cut that builds Guard. Striking a challenged enemy generates additional threat.</p><div class="ability-stats"><i>1 tile</i><i>0.75s cadence</i><i>+8 Guard</i></div></article>
+        <article class="power"><span>BIG ATTACK</span><h3>Power Attack</h3><p>Commit to a heavy two-handed blow that breaks one armor pip and staggers lesser enemies.</p><div class="ability-stats"><i>1 tile</i><i>8s cooldown</i><i>Armor break</i></div></article>
+        <article class="control"><span>CONTROL</span><h3>Challenge</h3><p>Call nearby enemies to face the Fighter for four seconds and reveal their intent lines.</p><div class="ability-stats"><i>3-tile radius</i><i>12s cooldown</i><i>4s taunt</i></div></article>
+        <article class="move"><span>MOVE</span><h3>Shield Rush</h3><p>Rush three tiles behind the shield, stunning the first enemy and pushing lesser bodies aside.</p><div class="ability-stats"><i>3 tiles</i><i>10s cooldown</i><i>1.5s stun</i></div></article>
+        <article class="ultimate"><span>ULTIMATE</span><h3>Hold the Line</h3><p>Brace for six seconds. The Fighter becomes immovable, blocks the doorway and grants nearby allies damage reduction.</p><div class="ability-stats"><i>3×3 aura</i><i>100 charge</i><i>6s duration</i></div></article>
+      </div>
+      <div class="perk-examples"><p class="label">Traditional build paths</p><div><article><b>Battle Master</b><span>Power Attack</span><p>Power Attack becomes a chosen maneuver: Trip, Disarm or Riposte.</p></article><article><b>Guardian</b><span>Challenge</span><p>Challenged enemies deal reduced damage to anyone other than the Fighter.</p></article><article><b>Champion</b><span>Longsword</span><p>Critical strikes grant Guard and shorten Shield Rush.</p></article></div></div>
+    </section>
+
+    <section id="bloodreaver" class="class-section frame tank-class">
+      <header class="class-header">
+        <div><span class="class-number">F / 02</span><p class="class-role">Fighter variant · Aggressor</p><h2>Bloodreaver</h2><p class="class-flavor">“The first wound is permission.”</p></div>
+        <aside><b>CORE / FURY &amp; CLEAVE</b><p>Dealing and receiving damage builds Fury. Heavy attacks spend it for wider arcs, deeper stagger and brutal healing from damage dealt. Momentum is protection—but hesitation leaves the Bloodreaver exposed.</p><dl><div><dt>Strength</dt><dd>Frontline damage and disruption</dd></div><div><dt>Risk</dt><dd>Must keep attacking to endure</dd></div><div><dt>Ult charge</dt><dd>Cleave · stagger · endure</dd></div></dl></aside>
+      </header>
+      <div class="ability-grid">
+        <article class="attack"><span>ATTACK</span><h3>Greatsword</h3><p>A broad martial cut that builds Fury. Striking two enemies with one swing grants additional Fury.</p><div class="ability-stats"><i>2-tile arc</i><i>0.8s cadence</i><i>+Fury</i></div></article>
+        <article class="power"><span>BIG ATTACK</span><h3>Executioner's Cleave</h3><p>Spend Fury on a devastating overhead blow. Wounded targets take greater damage and the impact cracks adjacent armor.</p><div class="ability-stats"><i>2-tile line</i><i>8s cooldown</i><i>Spends Fury</i></div></article>
+        <article class="control"><span>CONTROL</span><h3>War Cry</h3><p>A concussive roar staggers nearby enemies and compels lesser foes to attack the Bloodreaver for four seconds.</p><div class="ability-stats"><i>3-tile radius</i><i>12s cooldown</i><i>Stagger + taunt</i></div></article>
+        <article class="move"><span>MOVE</span><h3>Brutal Charge</h3><p>Crash through three tiles, dragging the first enemy struck and slamming it into the final tile.</p><div class="ability-stats"><i>3 tiles</i><i>10s cooldown</i><i>Carry + slam</i></div></article>
+        <article class="ultimate"><span>ULTIMATE</span><h3>Unbreakable Rampage</h3><p>For seven seconds, Fury cannot fall below half, every swing cleaves fully and damage dealt restores health.</p><div class="ability-stats"><i>Self</i><i>100 charge</i><i>7s rampage</i></div></article>
+      </div>
+      <div class="perk-examples"><p class="label">Traditional martial paths</p><div><article><b>Great Weapon Master</b><span>Executioner's Cleave</span><p>A slower wind-up doubles armor break and sends a shockwave beyond the target.</p></article><article><b>Berserker</b><span>Unbreakable Rampage</span><p>Rampage lasts longer, but the Bloodreaver becomes exhausted when it ends.</p></article><article><b>Warlord</b><span>War Cry</span><p>Allies in the roar gain haste and heal when they strike a staggered enemy.</p></article></div></div>
+    </section>
+
+    <section id="healers" class="role-banner frame healer-banner">
+      <div><p class="section-index">04 / Cleric variants</p><h2>Restore the living—or deny death.</h2></div>
+      <p>Both variants wield divine magic in battle. The Dawnbringer answers wounds after they happen with radiant healing; the Gravewarden prepares wards, controls spirits and prevents lethal moments before they happen.</p>
+    </section>
+
+    <section id="dawnbringer" class="class-section frame healer-class">
+      <header class="class-header">
+        <div><span class="class-number">H / 01</span><p class="class-role">Cleric variant · Restorer</p><h2>Dawnbringer</h2><p class="class-flavor">“The dawn does not ask darkness for permission.”</p></div>
+        <aside><b>CORE / FAITH &amp; DIVINE GRACE</b><p>Sacred damage stores Faith. Healing effects consume Faith for increased restoration. Once every ten seconds, saving an ally below 30% health grants one second of divine protection.</p><dl><div><dt>Strength</dt><dd>Emergency healing and cleanse</dd></div><div><dt>Risk</dt><dd>Needs clear sightlines</dd></div><div><dt>Ult charge</dt><dd>Heal · cleanse · save</dd></div></dl></aside>
+      </header>
+      <div class="ability-grid">
+        <article class="attack"><span>ATTACK</span><h3>Sacred Flame</h3><p>Call radiant fire onto an enemy. Damage builds Faith and restores a sliver of health to the most wounded visible ally.</p><div class="ability-stats"><i>5-tile LoS</i><i>0.75s cadence</i><i>+Faith</i></div></article>
+        <article class="power"><span>BIG ATTACK</span><h3>Guiding Bolt</h3><p>Hurl a brilliant lance that bursts on impact, damaging foes and releasing a strong allied healing pulse.</p><div class="ability-stats"><i>5-tile line</i><i>8s cooldown</i><i>Heal + damage</i></div></article>
+        <article class="control"><span>CONTROL</span><h3>Purifying Word</h3><p>Consecrate a small area, cleansing allies and silencing undead, fiends and enemy casters inside it.</p><div class="ability-stats"><i>2×2 area</i><i>12s cooldown</i><i>Cleanse + silence</i></div></article>
+        <article class="move"><span>MOVE</span><h3>Angelic Step</h3><p>Flash to a visible ally within four tiles, granting both players a brief ward of radiant armor.</p><div class="ability-stats"><i>4-tile LoS</i><i>10s cooldown</i><i>Dual ward</i></div></article>
+        <article class="ultimate"><span>ULTIMATE</span><h3>Divine Intervention</h3><p>Call down a room-wide miracle: restore allies, cleanse one affliction and prevent lethal damage for one second.</p><div class="ability-stats"><i>Room-wide</i><i>100 charge</i><i>Death prevention</i></div></article>
+      </div>
+      <div class="perk-examples"><p class="label">Traditional domain paths</p><div><article><b>Life Domain</b><span>Guiding Bolt</span><p>The healing pulse becomes larger and leaves Renew on wounded allies.</p></article><article><b>Light Domain</b><span>Sacred Flame</span><p>Every third cast erupts in a blinding radiant flare around the target.</p></article><article><b>Tempest Domain</b><span>Purifying Word</span><p>Consecration arrives with thunder, pushing enemies out of the sacred area.</p></article></div></div>
+    </section>
+
+    <section id="gravewarden" class="class-section frame healer-class">
+      <header class="class-header">
+        <div><span class="class-number">H / 02</span><p class="class-role">Cleric variant · Warder</p><h2>Gravewarden</h2><p class="class-flavor">“Death may knock. It enters by my leave.”</p></div>
+        <aside><b>CORE / VIGIL &amp; SOUL WARDS</b><p>Necrotic damage builds Vigil. At three Vigil, the most wounded ally receives a Soul Ward that absorbs the next heavy hit. Timely prevention releases a spirit that empowers the Gravewarden's next spell.</p><dl><div><dt>Strength</dt><dd>Prevention and attrition control</dd></div><div><dt>Risk</dt><dd>Must anticipate incoming damage</dd></div><div><dt>Ult charge</dt><dd>Ward · prevent · spirit release</dd></div></dl></aside>
+      </header>
+      <div class="ability-grid">
+        <article class="attack"><span>ATTACK</span><h3>Toll the Dead</h3><p>Sound a spectral bell inside one enemy. The toll bites harder against wounded prey and builds Vigil.</p><div class="ability-stats"><i>5-tile range</i><i>0.75s cadence</i><i>+1 Vigil</i></div></article>
+        <article class="power"><span>BIG ATTACK</span><h3>Spirit Guardians</h3><p>Release ancestral spirits around an ally. They tear at nearby enemies and reinforce every Soul Ward they pass through.</p><div class="ability-stats"><i>3×3 area</i><i>8s cooldown</i><i>Damage + ward</i></div></article>
+        <article class="control"><span>CONTROL</span><h3>Hallowed Ground</h3><p>Consecrate a 3×3 area. Undead are turned, enemy magic is weakened and allies inside cannot be displaced.</p><div class="ability-stats"><i>3×3 area</i><i>12s cooldown</i><i>Turn + anchor</i></div></article>
+        <article class="move"><span>MOVE</span><h3>Funeral Step</h3><p>Become incorporeal and glide to a visible ally, leaving a Soul Ward on both the origin and destination.</p><div class="ability-stats"><i>4-tile range</i><i>10s cooldown</i><i>Two wards</i></div></article>
+        <article class="ultimate"><span>ULTIMATE</span><h3>Keeper of the Veil</h3><p>Seal the room against death for six seconds. Lethal damage instead creates a fragile spirit tether that allies can heal back into the body.</p><div class="ability-stats"><i>Room-wide</i><i>100 charge</i><i>6s reprieve</i></div></article>
+      </div>
+      <div class="perk-examples"><p class="label">Traditional domain paths</p><div><article><b>Grave Domain</b><span>Keeper of the Veil</span><p>Restored spirit tethers return with a burst of healing and temporary protection.</p></article><article><b>Twilight Domain</b><span>Hallowed Ground</span><p>The consecrated area becomes dim sanctuary that refreshes nearby Soul Wards.</p></article><article><b>Death Domain</b><span>Toll the Dead</span><p>The toll chains to a second wounded enemy but generates less Vigil.</p></article></div></div>
+    </section>
+
+    <section id="dps" class="role-banner frame dps-banner">
+      <div><p class="section-index">05 / Rogue &amp; Mage variants</p><h2>Choose the angle—or rewrite the room.</h2></div>
+      <p>The Rogue kills through positioning: Nightblade at knife range, Deadeye across a clear lane. The Mage kills through spellcraft: Ashen Evoker detonates space, while Hexbinder deepens curses until one target collapses.</p>
+    </section>
+
+    <section id="nightblade" class="class-section frame dps-class">
+      <header class="class-header">
+        <div><span class="class-number">D / 01</span><p class="class-role">Rogue variant · Assassin</p><h2>Nightblade</h2><p class="class-flavor">“Your tank chooses the face. You choose the back.”</p></div>
+        <aside><b>CORE / CUNNING &amp; SNEAK ATTACK</b><p>Flank, rear and stealth hits build Cunning. Sneak Attack spends it for brutal damage. Distracted, challenged and controlled enemies always expose a vulnerable arc.</p><dl><div><dt>Strength</dt><dd>Priority execution</dd></div><div><dt>Risk</dt><dd>Exposed after commit</dd></div><div><dt>Ult charge</dt><dd>Flank · interrupt · execute</dd></div></dl></aside>
+      </header>
+      <div class="ability-grid">
+        <article class="attack"><span>ATTACK</span><h3>Twin Daggers</h3><p>A rapid melee pair. Flank or rear contact grants Cunning and coats the second blade in poison.</p><div class="ability-stats"><i>1 tile</i><i>0.6s cadence</i><i>+Cunning</i></div></article>
+        <article class="power"><span>BIG ATTACK</span><h3>Sneak Attack</h3><p>Spend up to three Cunning on a vicious strike. Rear hits break armor and execute weakened lesser enemies.</p><div class="ability-stats"><i>1 tile</i><i>7s cooldown</i><i>0–3 Cunning</i></div></article>
+        <article class="control"><span>CONTROL</span><h3>Dirty Trick</h3><p>Interrupt with a pommel, sand or garrote. From behind, also blind and break one armor pip.</p><div class="ability-stats"><i>1 tile</i><i>10s cooldown</i><i>Interrupt + blind</i></div></article>
+        <article class="move"><span>MOVE</span><h3>Shadowstep</h3><p>Vanish and reappear behind a distracted enemy within four tiles, immediately striking once.</p><div class="ability-stats"><i>4-tile range</i><i>8s cooldown</i><i>Brief stealth</i></div></article>
+        <article class="ultimate"><span>ULTIMATE</span><h3>Assassinate</h3><p>Mark one target for death. For five seconds, all angles count as flanks and the Nightblade's first hit from stealth is devastating.</p><div class="ability-stats"><i>4-tile range</i><i>100 charge</i><i>5s hunt</i></div></article>
+      </div>
+      <div class="perk-examples"><p class="label">Traditional rogue paths</p><div><article><b>Assassin</b><span>Assassinate</span><p>The first strike against a full-health marked target always critically hits.</p></article><article><b>Swashbuckler</b><span>Sneak Attack</span><p>May trigger in a frontal duel when no other enemy is adjacent.</p></article><article><b>Arcane Trickster</b><span>Shadowstep</span><p>Leaves an illusion that draws one enemy attack before vanishing.</p></article></div></div>
+    </section>
+
+    <section id="deadeye" class="class-section frame dps-class">
+      <header class="class-header">
+        <div><span class="class-number">D / 02</span><p class="class-role">Rogue variant · Archer</p><h2>Deadeye</h2><p class="class-flavor">“You were dead when the lane opened.”</p></div>
+        <aside><b>CORE / AIM &amp; EXPLOIT</b><p>Uninterrupted ranged hits build Aim on one target. Moving sideways preserves it; taking damage or changing targets breaks it. Controlled and distracted enemies immediately expose a precision point.</p><dl><div><dt>Strength</dt><dd>Ranged priority execution</dd></div><div><dt>Risk</dt><dd>Blocked lanes and forced movement</dd></div><div><dt>Ult charge</dt><dd>Precision · trap · long shot</dd></div></dl></aside>
+      </header>
+      <div class="ability-grid">
+        <article class="attack"><span>ATTACK</span><h3>Longbow</h3><p>A clean ranged shot. Consecutive hits on the same target build Aim and sharpen the exposed precision point.</p><div class="ability-stats"><i>7-tile range</i><i>0.7s cadence</i><i>+1 Aim</i></div></article>
+        <article class="power"><span>BIG ATTACK</span><h3>Heartseeker</h3><p>Loose an armor-piercing arrow whose damage scales with Aim and every unobstructed tile it travels.</p><div class="ability-stats"><i>8-tile line</i><i>7s cooldown</i><i>Consumes Aim</i></div></article>
+        <article class="control"><span>CONTROL</span><h3>Caltrop Snare</h3><p>Scatter hooked caltrops across a 3×3 area, slowing enemies and rooting the first one that dashes through.</p><div class="ability-stats"><i>3×3 area</i><i>10s cooldown</i><i>Slow + root</i></div></article>
+        <article class="move"><span>MOVE</span><h3>Combat Roll</h3><p>Roll three tiles through danger, preserving Aim and instantly nocking an arrow at the current target.</p><div class="ability-stats"><i>3 tiles</i><i>9s cooldown</i><i>Preserves Aim</i></div></article>
+        <article class="ultimate"><span>ULTIMATE</span><h3>One Perfect Shot</h3><p>Reveal a line through the entire room, then fire through every enemy and obstacle. Each precision point struck multiplies the final impact.</p><div class="ability-stats"><i>Room-wide line</i><i>100 charge</i><i>Pierces all</i></div></article>
+      </div>
+      <div class="perk-examples"><p class="label">Traditional rogue paths</p><div><article><b>Scout</b><span>Combat Roll</span><p>Gain a second charge and leave caltrops at the starting tile.</p></article><article><b>Thief</b><span>Caltrop Snare</span><p>Traps arm instantly and refund a charge when they catch an elite.</p></article><article><b>Arcane Trickster</b><span>Heartseeker</span><p>The arrow bends once around cover toward a visible precision point.</p></article></div></div>
+    </section>
+
+    <section id="ashen-evoker" class="class-section frame dps-class">
+      <header class="class-header">
+        <div><span class="class-number">D / 03</span><p class="class-role">Mage variant · Elementalist</p><h2>Ashen Evoker</h2><p class="class-flavor">“Give me two seconds and somewhere safe to stand.”</p></div>
+        <aside><b>CORE / ARCANE CHARGES &amp; EVOCATION</b><p>Cantrips build Arcane Charges, increasing spell size until a leveled spell consumes them. Standing still for two seconds grants Empowered Casting until moving.</p><dl><div><dt>Strength</dt><dd>Elemental area burst</dd></div><div><dt>Risk</dt><dd>Cast time and fragility</dd></div><div><dt>Ult charge</dt><dd>Multi-hit · armor break · zone</dd></div></dl></aside>
+      </header>
+      <div class="ability-grid">
+        <article class="attack"><span>ATTACK</span><h3>Fire Bolt</h3><p>A fast evocation cantrip. Consecutive casts build Arcane Charges and leave the target primed for combustion.</p><div class="ability-stats"><i>6-tile range</i><i>0.6s cadence</i><i>+Arcane Charge</i></div></article>
+        <article class="power"><span>BIG ATTACK</span><h3>Fireball</h3><p>Consume Arcane Charges in an iconic explosive projectile. Blast radius and armor damage scale with charges.</p><div class="ability-stats"><i>2×2 base</i><i>7s cooldown</i><i>Consumes charges</i></div></article>
+        <article class="control"><span>CONTROL</span><h3>Wall of Frost</h3><p>Conjure three frozen wall tiles that block enemies and hostile projectiles before shattering.</p><div class="ability-stats"><i>3 tiles</i><i>12s cooldown</i><i>4s duration</i></div></article>
+        <article class="move"><span>MOVE</span><h3>Misty Step</h3><p>Teleport three tiles through units. The next spell retains Empowered Casting even if cast while moving.</p><div class="ability-stats"><i>3 tiles</i><i>9s cooldown</i><i>Teleport</i></div></article>
+        <article class="ultimate"><span>ULTIMATE</span><h3>Meteor Swarm</h3><p>Mark a 5×5 area. Four meteors fall in sequence, breaking armor and annihilating everything that fails to escape.</p><div class="ability-stats"><i>5×5 area</i><i>100 charge</i><i>Four impacts</i></div></article>
+      </div>
+      <div class="perk-examples"><p class="label">Traditional school paths</p><div><article><b>Evocation</b><span>Fireball</span><p>Allies become immune to its blast and burning ground.</p></article><article><b>Abjuration</b><span>Wall of Frost</span><p>The wall grants Arcane Ward to allies standing beside it.</p></article><article><b>Necromancy</b><span>Fire Bolt</span><p>Becomes Grave Bolt: lower direct damage, but slain targets rise briefly as skeletons.</p></article></div></div>
+    </section>
+
+    <section id="hexbinder" class="class-section frame dps-class">
+      <header class="class-header">
+        <div><span class="class-number">D / 04</span><p class="class-role">Mage variant · Occultist</p><h2>Hexbinder</h2><p class="class-flavor">“Everything has a true name. I know the cruel ones.”</p></div>
+        <aside><b>CORE / CURSES &amp; SOUL SHARDS</b><p>Eldritch attacks stack Hex on one prey. Consuming three Hex tears free a Soul Shard, used to empower forbidden magic and feed the patron beyond the Black Gate.</p><dl><div><dt>Strength</dt><dd>Escalating single-target doom</dd></div><div><dt>Risk</dt><dd>Needs time to deepen curses</dd></div><div><dt>Ult charge</dt><dd>Curse · consume · fear</dd></div></dl></aside>
+      </header>
+      <div class="ability-grid">
+        <article class="attack"><span>ATTACK</span><h3>Eldritch Blast</h3><p>Hurl a bolt of raw pact magic. Repeated hits stack Hex and push lesser creatures backward.</p><div class="ability-stats"><i>6-tile range</i><i>0.7s cadence</i><i>+1 Hex</i></div></article>
+        <article class="power"><span>BIG ATTACK</span><h3>Soul Rupture</h3><p>Consume all Hex on the target in a violent implosion. At three stacks, tear free a Soul Shard.</p><div class="ability-stats"><i>5-tile range</i><i>7s cooldown</i><i>Consumes Hex</i></div></article>
+        <article class="control"><span>CONTROL</span><h3>Hunger of the Void</h3><p>Open a patch of supernatural darkness that slows, blinds and whispers fear into enemies inside.</p><div class="ability-stats"><i>3×3 zone</i><i>12s cooldown</i><i>Blind + slow</i></div></article>
+        <article class="move"><span>MOVE</span><h3>Shadow Gate</h3><p>Step through darkness to a tile within four spaces, leaving a grasping shadow on departure.</p><div class="ability-stats"><i>4 tiles</i><i>9s cooldown</i><i>Shadow root</i></div></article>
+        <article class="ultimate"><span>ULTIMATE</span><h3>The Black Gate</h3><p>Tear open the patron's threshold. Tendrils drag enemies inward while eldritch bolts strike every hexed soul.</p><div class="ability-stats"><i>5×5 area</i><i>100 charge</i><i>5s duration</i></div></article>
+      </div>
+      <div class="perk-examples"><p class="label">Traditional patron paths</p><div><article><b>The Fiend</b><span>Soul Rupture</span><p>Rupture ignites the target and grants temporary health when it kills.</p></article><article><b>The Great Old One</b><span>Hunger of the Void</span><p>Enemies reaching three Hex become briefly terrified of the Hexbinder.</p></article><article><b>The Undying</b><span>The Black Gate</span><p>Allied deaths during the Gate summon temporary wraiths instead of ending immediately.</p></article></div></div>
+    </section>
+
+    <section id="rules" class="section frame rules-section">
+      <div class="section-heading">
+        <div><p class="section-index">06 / Balance constitution</p><h2>Protect identity while builds bend rules.</h2></div>
+        <p class="lead">Numbers will change during testing. These constraints should not. They keep the roster readable, perks exciting and persistent loot meaningful without turning teamwork into a gear check.</p>
+      </div>
+      <div class="rule-table" role="table" aria-label="Combat design constraints">
+        <div class="rule-head" role="row"><span>System</span><span>Must do</span><span>Must not do</span></div>
+        <div role="row"><b>Core kit</b><span>Express the role with all five actions immediately</span><span>Lock a required heal, taunt or attack behind progression</span></div>
+        <div role="row"><b>Floor perk</b><span>Change targeting, timing, interaction or tradeoff</span><span>Exist only as a small unconditional stat increase</span></div>
+        <div role="row"><b>Persistent loot</b><span>Raise bounded stats and support difficulty tiers</span><span>Add new buttons or erase a variant's weakness</span></div>
+        <div role="row"><b>Ultimate</b><span>Charge through visible positive role play</span><span>Reward passive waiting more than doing the job</span></div>
+        <div role="row"><b>Class mechanic</b><span>Create a rhythm between Attack and Big Attack</span><span>Require a sixth active input to function</span></div>
+      </div>
+      <div class="implementation-map">
+        <article><span>DATA</span><h3>One schema</h3><p>Role → variant → core mechanic → five ability slots → perk hooks. All values remain data-driven and testable.</p></article>
+        <article><span>HOOKS</span><h3>Perks compose</h3><p>Each ability emits standardized events: cast, hit, crit, interrupt, move, zone enter and ultimate charge.</p></article>
+        <article><span>AUTHORITY</span><h3>Server decides</h3><p>Cooldowns, targets, damage, healing, perk offers and loot extraction are authoritative in multiplayer.</p></article>
+        <article><span>READABILITY</span><h3>Clients explain</h3><p>Prediction makes actions feel immediate; intent, hit confirmation and role credit remain visually explicit.</p></article>
+      </div>
+      <div class="acceptance combat-acceptance">
+        <p class="section-index">Definition of a successful class</p>
+        <p>A new player can describe its job after one room, an expert can express that job differently every run, and no amount of loot lets it ignore the other two roles.</p>
+      </div>
+    </section>
+  </main>
+
+  <footer class="frame">
+    <span>DUNGEONEERS / COMBAT BIBLE</span>
+    <span>COMPLETE KIT · TEMPORARY PERKS · PERSISTENT LOOT</span>
+    <a href="#top">Back to top ↑</a>
+  </footer>
+  <script src="../art-direction/script.js"></script>
+</body>
+</html>

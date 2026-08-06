@@ -1,0 +1,237 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="description" content="Dungeoneers art direction: retro sprites, modern materials and light, grey plus two accent families.">
+  <title>Dungeoneers — Art Direction</title>
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <div class="progress" aria-hidden="true"><span id="progress-bar"></span></div>
+  <header class="site-header">
+    <a class="brand" href="../" aria-label="Return to the Dungeoneers game index">
+      <span class="brand-mark" aria-hidden="true"><i></i><i></i><i></i></span>
+      <span>DUNGEONEERS <small>ART DIRECTION / 01</small></span>
+    </a>
+    <div class="header-actions">
+      <a class="header-home" href="../">Home</a>
+      <nav id="main-nav" class="global-nav" aria-label="Dungeoneers navigation">
+        <a href="../game.html">Play</a><a href="../editor.html">Editor</a><a class="active" href="../art-direction/" aria-current="page">Design</a>
+      </nav>
+      <button class="nav-toggle" type="button" aria-expanded="false" aria-controls="main-nav">Menu</button>
+    </div>
+  </header>
+  <nav class="document-nav" aria-label="Design documents">
+      <a class="active" href="../art-direction/" aria-current="page">Art direction</a>
+      <a href="../gameplay-direction/">Game loop</a>
+      <a href="../combat-bible/">Combat bible</a>
+  </nav>
+
+  <main id="top">
+    <section class="hero frame">
+      <div class="hero-art art-frame">
+        <img src="assets/concept-underkeep.svg" alt="Concept art of the Underkeep: grey masonry, ember torchlight, green moss and a reflective puddle.">
+        <div class="art-meta" aria-hidden="true"><span>PLATE 01</span><span>16:9 / TARGET VIEW</span></div>
+      </div>
+      <div class="hero-copy">
+        <p class="eyebrow">Visual identity document · August 2026</p>
+        <h1>Ancient pixels.<br><em>Living light.</em></h1>
+        <p class="dek">Dungeoneers should look remembered, not merely old: hard sprite silhouettes and stepped colour held inside a world of wet stone, responsive materials, moving shadows and believable light.</p>
+        <div class="formula" aria-label="Core visual formula">
+          <span>GREY WORLD</span><b>+</b><span>2 ACCENTS</span><b>+</b><span>MODERN RESPONSE</span>
+        </div>
+      </div>
+    </section>
+
+    <section id="north-star" class="section frame split-intro">
+      <div>
+        <p class="section-index">01 / North star</p>
+        <h2>Retro is the shape.<br>Modern is the response.</h2>
+      </div>
+      <div class="lead-column">
+        <p class="lead">The image must read as a retro dungeon crawler at a glance, then reveal contemporary depth in motion. Geometry, texture resolution, animation cadence and palette carry the nostalgia. Light, shadow, PBR, fog, parallax and reflection make that deliberately simple art feel physically present.</p>
+        <p>Do not smooth the pixels to make the world modern. Make the pixels react to a modern world.</p>
+      </div>
+      <div class="principle-grid full-width">
+        <article><b>01</b><h3>Chunky first</h3><p>One-pixel decisions must survive at gameplay distance. Prefer graphic masses and readable silhouettes over painted detail.</p></article>
+        <article><b>02</b><h3>Grey carries scale</h3><p>Neutral masonry, metal and darkness own most of the frame. Accents locate heat, life, danger and reward.</p></article>
+        <article><b>03</b><h3>Texture has a job</h3><p>Base materials explain what a surface is. Modifier textures explain what happened to it.</p></article>
+        <article><b>04</b><h3>Light tells time</h3><p>Flicker, occlusion, reflections and moving highlights supply moment-to-moment life without adding visual noise.</p></article>
+      </div>
+    </section>
+
+    <section class="section frame manifesto" aria-labelledby="thesis-title">
+      <p class="section-index">The thesis</p>
+      <blockquote id="thesis-title">“A screenshot belongs to 1994.<br>A second of motion belongs to now.”</blockquote>
+      <div class="manifesto-notes"><span>Nearest-neighbour forms</span><span>Stepped colour ramps</span><span>Continuous illumination</span><span>Physical surface response</span></div>
+    </section>
+
+    <section id="palette" class="section frame">
+      <div class="section-heading">
+        <div><p class="section-index">02 / Colour constitution</p><h2>Grey, then two voices.</h2></div>
+        <p class="lead">Every dungeon level owns one neutral family and no more than two accent families. “Family” means a controlled ramp, not one hex value: ember includes brown through orange; moss includes black-green through sage.</p>
+      </div>
+
+      <div class="ratio-card">
+        <div class="ratio-bar" aria-label="Recommended screen colour coverage: 72 percent neutral, 18 percent primary accent, 10 percent secondary accent">
+          <span class="neutral" style="--size:72%"><b>72%</b><small>NEUTRAL FIELD</small></span>
+          <span class="accent-a" style="--size:18%"><b>18%</b><small>ACCENT A</small></span>
+          <span class="accent-b" style="--size:10%"><b>10%</b><small>ACCENT B</small></span>
+        </div>
+        <p>This is a composition target, not a per-frame audit. Let some rooms be almost monochrome so accent-rich encounters feel earned.</p>
+      </div>
+
+      <div class="palette-layout">
+        <article class="palette-card current-palette">
+          <header><span>LEVEL 01</span><h3>The Underkeep</h3><p>Current visual family</p></header>
+          <div class="swatch-ramp"><i style="--c:#090b0b"></i><i style="--c:#171a19"></i><i style="--c:#2e3331"></i><i style="--c:#505753"></i><i style="--c:#858d88"></i><i style="--c:#c3c8c5"></i></div>
+          <dl><div><dt>Field</dt><dd>Iron, charcoal, wet stone</dd></div><div><dt>Accent A</dt><dd>Ember / brown → orange</dd></div><div><dt>Accent B</dt><dd>Moss / forest → sage</dd></div></dl>
+          <div class="accent-strips"><span class="ember"></span><span class="moss"></span></div>
+        </article>
+
+        <article class="rule-card">
+          <p class="label">Chroma hierarchy</p>
+          <ol>
+            <li><span>01</span><div><b>Flame & signals</b><small>Highest saturation. Smallest area.</small></div></li>
+            <li><span>02</span><div><b>Brick & growth</b><small>Mid saturation. Local fields.</small></div></li>
+            <li><span>03</span><div><b>Stone & fog</b><small>Low saturation. Largest area.</small></div></li>
+          </ol>
+          <p class="callout">If warm brick fills a wall, push it toward warm grey. Reserve the bright ember ramp for flame, edge light, loot and focal trim.</p>
+        </article>
+      </div>
+
+      <div class="technical-strip">
+        <div><span class="tech-value">256</span><span class="tech-label">final palette entries</span></div>
+        <div><span class="tech-value">32</span><span class="tech-label">light bands today</span></div>
+        <div><span class="tech-value">2</span><span class="tech-label">accent ramps max</span></div>
+        <div><span class="tech-value">1</span><span class="tech-label">neutral world family</span></div>
+      </div>
+      <aside class="implementation-note"><b>Engine fit.</b> The current Doom palette already defines 48 brown/orange entries and 32 green entries. To make grey dominance stricter per level, allocate the remainder toward 128 greys + 48 near-neutrals, and keep the near-neutral saturation at or below 0.08. Quantize after SSR/composite so reflections remain physical but finish in the same authored vocabulary.</aside>
+    </section>
+
+    <section id="materials" class="section frame">
+      <div class="section-heading">
+        <div><p class="section-index">03 / Surface grammar</p><h2>Material says what.<br>Modifier says why.</h2></div>
+        <p class="lead">Separate construction from history. A brick remains brick across the level; moss, damage, soot, blood and puddles are masks that accumulate differently by room role and environmental logic.</p>
+      </div>
+
+      <div class="layer-stack">
+        <article class="layer-card base-layer"><span class="layer-number">01</span><div class="material-sample bricks" aria-hidden="true"></div><div><p class="label">Base form</p><h3>Architecture</h3><p>Brick bond, ashlar scale, slab rhythm, arch profile, ceiling system. Locked for the level.</p></div></article>
+        <article class="layer-card material-layer"><span class="layer-number">02</span><div class="material-sample relief" aria-hidden="true"></div><div><p class="label">Material set</p><h3>Surface identity</h3><p>Albedo + normal + roughness/metal/AO + height. Low-resolution and tileable.</p></div></article>
+        <article class="layer-card modifier-layer"><span class="layer-number">03</span><div class="material-sample mossy" aria-hidden="true"></div><div><p class="label">Modifier maps</p><h3>Story & condition</h3><p>Moss finds seams; puddles find lows; soot climbs above flame; damage breaks exposed edges.</p></div></article>
+        <article class="layer-card light-layer"><span class="layer-number">04</span><div class="material-sample lit" aria-hidden="true"></div><div><p class="label">Runtime response</p><h3>Light & atmosphere</h3><p>Dynamic lights, shadow rays, AO, POM, fog and SSR reveal the stack in motion.</p></div></article>
+      </div>
+
+      <div class="do-dont-grid">
+        <article><p class="label good">Modifier logic</p><h3>Let physics place detail.</h3><ul><li>Moss in porous crevices, corners and damp wall bases</li><li>Puddles in floor depressions with restrained reflections</li><li>Damage cutting height, normal and roughness—not only colour</li><li>Unique variation at tile scale; shared identity at level scale</li></ul></article>
+        <article><p class="label bad">Avoid</p><h3>Do not paint noise everywhere.</h3><ul><li>Uniform grime that erases the architectural rhythm</li><li>Modifier colour introducing a third accent family</li><li>Micro-detail finer than the final screen pixel footprint</li><li>All channels carrying the same procedural noise</li></ul></article>
+      </div>
+    </section>
+
+    <section id="sprites" class="section frame">
+      <div class="section-heading">
+        <div><p class="section-index">04 / Sprites</p><h2>Billboards with weight.</h2></div>
+        <p class="lead">Sprites are emphatically flat in authorship and convincingly present in the world. Their silhouette stays chunky; their normal, ORM and height companions let nearby light rake across them like small pieces of stage scenery.</p>
+      </div>
+      <figure class="art-frame wide-art">
+        <img src="assets/concept-sprite-study.svg" alt="A 64 pixel wall torch and its albedo, normal, ORM and height material maps.">
+        <figcaption><b>Concept plate 02.</b> A low-resolution torch asset with a full material set. Animation may step at 6–10 fps while light falloff, shadow and fog update continuously.</figcaption>
+      </figure>
+      <div class="spec-grid">
+        <article><span class="spec-kicker">Canvas</span><strong>32–64 px</strong><p>Author to the smallest readable footprint. Upscale with nearest neighbour only.</p></article>
+        <article><span class="spec-kicker">Silhouette</span><strong>3-value read</strong><p>Object must survive as dark mass, body midtone and emissive/focal highlight.</p></article>
+        <article><span class="spec-kicker">Motion</span><strong>6–10 fps</strong><p>Stepped sprite animation preserves cadence. Desynchronise flicker phases.</p></article>
+        <article><span class="spec-kicker">Surface</span><strong>A + N + ORM + H</strong><p>Albedo, normal, occlusion/roughness/metal and height share exact pixel registration.</p></article>
+      </div>
+      <aside class="implementation-note"><b>Engine fit.</b> The registry already expects 64×64 albedo, normal, ORM and height paths with per-sprite world height, roughness, metal, normal strength and rim strength. Keep that schema. Replace the procedural torch/brazier/lantern/crystal fallbacks with authored sets, one category at a time.</aside>
+    </section>
+
+    <section id="lighting" class="section frame dark-section">
+      <div class="section-heading">
+        <div><p class="section-index">05 / Light & atmosphere</p><h2>Continuous light.<br>Discrete image.</h2></div>
+        <p class="lead">Modern lighting is allowed to be smooth in space and time; the final image is not. Dynamic light exposes material response, then colour banding and palette quantisation pull the result back into the retro contract.</p>
+      </div>
+      <div class="light-diagram" aria-label="Rendering sequence from retro authored asset through physical light to palette-quantized final image">
+        <div><span>01</span><b>Retro asset</b><small>Chunky texture<br>stepped animation</small></div><i>→</i><div><span>02</span><b>Physical scene</b><small>PBR · POM · AO<br>shadow · fog · SSR</small></div><i>→</i><div><span>03</span><b>Retro finish</b><small>Band light<br>quantize palette</small></div>
+      </div>
+      <div class="lighting-rules">
+        <article><b>Light is local.</b><p>No broad colour wash. Neutral ambient establishes readability; visible fixtures own accent colour.</p></article>
+        <article><b>Darkness has shape.</b><p>Shadow masses should frame routes and threats, not turn the whole room into the same black rectangle.</p></article>
+        <article><b>Wetness is selective.</b><p>SSR belongs to puddles and polished accents. Rough stone should not look varnished.</p></article>
+        <article><b>Flicker is organic.</b><p>Layered frequencies and unique phase offsets; never a synchronized sine wave across the room.</p></article>
+      </div>
+    </section>
+
+    <section id="levels" class="section frame">
+      <div class="section-heading">
+        <div><p class="section-index">06 / World structure</p><h2>Change worlds at the stairs.<br>Change moods at the door.</h2></div>
+        <p class="lead">A level may introduce a new construction era, silhouette grammar, material family and accent pair. A room within that level may only tune mood: light rhythm, fog, wetness, damage, growth and prop density.</p>
+      </div>
+      <figure class="art-frame wide-art level-art">
+        <img src="assets/concept-levels.svg" alt="Three dungeon level concepts: grey Underkeep with ember and moss, blue-grey Reliquary with teal and ivory, graphite Foundry with furnace orange and oxidized green.">
+        <figcaption><b>Concept plate 03.</b> Three level identities. Each keeps grey dominant and spends exactly two accent families, but changes architectural silhouette and material logic at the level boundary.</figcaption>
+      </figure>
+
+      <div class="scope-table" role="table" aria-label="What may change between levels and between rooms">
+        <div class="scope-head" role="row"><span role="columnheader">Visual lever</span><span role="columnheader">Between levels</span><span role="columnheader">Between rooms</span></div>
+        <div role="row"><b role="cell">Architecture silhouette</b><span class="yes" role="cell">Change</span><span class="no" role="cell">Lock</span></div>
+        <div role="row"><b role="cell">Neutral + accent families</b><span class="yes" role="cell">Change</span><span class="no" role="cell">Lock</span></div>
+        <div role="row"><b role="cell">Base material kit</b><span class="yes" role="cell">Change</span><span class="mostly" role="cell">Reweight only</span></div>
+        <div role="row"><b role="cell">Modifier density</b><span class="yes" role="cell">Change</span><span class="yes" role="cell">Change</span></div>
+        <div role="row"><b role="cell">Light / fog rhythm</b><span class="yes" role="cell">Change</span><span class="yes" role="cell">Change</span></div>
+        <div role="row"><b role="cell">Damage, clutter, wetness</b><span class="yes" role="cell">Change</span><span class="yes" role="cell">Change</span></div>
+      </div>
+
+      <div class="room-moods">
+        <article><span>ENTRY</span><h3>Dry orientation</h3><p>Clear sightlines, low modifier density, steady light. Establish the level grammar.</p><dl><div><dt>Architecture</dt><dd>Underkeep kit</dd></div><div><dt>Mood</dt><dd>Cool / legible</dd></div></dl></article>
+        <article><span>SHRINE</span><h3>Living stillness</h3><p>Same arch and stone kit; more seam moss, quieter fog, a focused pool of light.</p><dl><div><dt>Architecture</dt><dd>Underkeep kit</dd></div><div><dt>Mood</dt><dd>Damp / sacred</dd></div></dl></article>
+        <article><span>GUARDIAN</span><h3>Heat & pressure</h3><p>Same kit again; reduced moss, more braziers, damaged floor and deeper shadow pockets.</p><dl><div><dt>Architecture</dt><dd>Underkeep kit</dd></div><div><dt>Mood</dt><dd>Hot / hostile</dd></div></dl></article>
+      </div>
+    </section>
+
+    <section id="production" class="section frame production">
+      <div class="section-heading">
+        <div><p class="section-index">07 / Production contract</p><h2>Make every choice traceable.</h2></div>
+        <p class="lead">The game is already data-driven. Treat this document as constraints for those systems, not a parallel art wish-list.</p>
+      </div>
+      <div class="pipeline-map">
+        <article><span>LEVEL IDENTITY</span><code>themes.json</code><code>architectures.json</code><p>Owns architectural silhouette, pools and the per-level palette profile.</p></article>
+        <article><span>ROOM MOOD</span><code>generator.js</code><code>material-modifiers.json</code><p>Room role reweights growth, damage, water, sprite selection and light density.</p></article>
+        <article><span>SURFACE KIT</span><code>walls.json</code><code>floors.json</code><code>ceils.json</code><p>Defines material purpose, base colour, roughness, height and procedural shape.</p></article>
+        <article><span>FINAL IMAGE</span><code>renderer-gpu.js</code><code>shaders-wgsl.js</code><p>Composes PBR, lights, sprites, SSR and fog before the palette finish.</p></article>
+      </div>
+
+      <div class="checklist-grid">
+        <div>
+          <p class="label">Review every new level</p>
+          <ul class="checklist">
+            <li>Can the architecture be identified in silhouette without colour?</li>
+            <li>Is grey visibly dominant in ordinary traversal?</li>
+            <li>Are all coloured elements inside two named accent ramps?</li>
+            <li>Do base materials and modifiers communicate different information?</li>
+            <li>Can three room roles feel distinct without swapping the architecture kit?</li>
+            <li>Do sprites remain readable unlit, side-lit and fogged?</li>
+          </ul>
+        </div>
+        <div class="red-flags">
+          <p class="label bad">Red flags</p>
+          <ul><li>A third environmental hue appears “just for variety.”</li><li>Every room receives a unique column, arch or wall language.</li><li>Lighting is baked into albedo and fights dynamic lights.</li><li>Normal maps round off the intended hard pixel silhouette.</li><li>Moss, damage and puddles use identical noise placement.</li><li>Quantisation happens before reflections and breaks composition.</li></ul>
+        </div>
+      </div>
+
+      <div class="acceptance">
+        <p class="section-index">Definition of done</p>
+        <p>A level is art-complete when one neutral family, two accents, one architecture grammar and one coherent material kit can produce many room moods—without any room looking as if it belongs to another floor of the dungeon.</p>
+      </div>
+    </section>
+  </main>
+
+  <footer class="frame">
+    <span>DUNGEONEERS / ART DIRECTION</span>
+    <span>RETRO FORM · MODERN LIGHT</span>
+    <a href="#top">Back to top ↑</a>
+  </footer>
+  <script src="script.js"></script>
+</body>
+</html>

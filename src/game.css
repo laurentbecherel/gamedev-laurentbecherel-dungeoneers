@@ -1,0 +1,55 @@
+/* Fullscreen play surface using the shared Dungeoneers navigation. */
+.game::before { display: none; }
+
+.game .game-site-header {
+  position: fixed;
+  inset: 0 0 auto;
+  z-index: 50;
+  background: linear-gradient(180deg, rgba(8,10,10,.97), rgba(8,10,10,.9));
+  box-shadow: 0 12px 35px rgba(0,0,0,.28);
+}
+
+.game-viewport {
+  position: fixed;
+  inset: 0;
+  width: 100vw;
+  height: 100vh;
+}
+
+.game-hud {
+  z-index: 30;
+  bottom: 22px;
+  padding: 8px 14px;
+  border: 1px solid var(--line);
+  border-radius: 0;
+  color: var(--muted);
+  background: rgba(8,10,10,.9);
+  font: 10px var(--mono);
+  letter-spacing: .08em;
+  text-transform: uppercase;
+}
+
+.game .live-badge {
+  top: 80px;
+  right: 16px;
+  z-index: 40;
+  padding: 5px 9px;
+  border: 1px solid var(--line);
+  border-radius: 0;
+  color: var(--muted);
+  background: rgba(8,10,10,.9);
+  font: 9px var(--mono);
+  letter-spacing: .1em;
+  text-transform: uppercase;
+}
+.game .live-badge.live-connected .dot {
+  background: var(--moss);
+  box-shadow: 0 0 8px rgba(96,123,75,.7);
+}
+
+@media (max-height: 560px) {
+  .game .game-site-header {
+    min-height: 54px;
+  }
+  .game .brand small { display: none; }
+}

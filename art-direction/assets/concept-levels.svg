@@ -1,0 +1,65 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1500 620" role="img" aria-labelledby="title desc">
+  <title id="title">Three level identities</title>
+  <desc id="desc">Concepts for the Underkeep, Drowned Reliquary, and Ash Foundry, each with grey dominance and two accent families.</desc>
+  <defs>
+    <linearGradient id="u" x1="0" y1="0" x2="0" y2="1"><stop stop-color="#222625"/><stop offset="1" stop-color="#0b0d0d"/></linearGradient>
+    <linearGradient id="r" x1="0" y1="0" x2="0" y2="1"><stop stop-color="#293034"/><stop offset="1" stop-color="#0a0e10"/></linearGradient>
+    <linearGradient id="f" x1="0" y1="0" x2="0" y2="1"><stop stop-color="#2b2b2a"/><stop offset="1" stop-color="#0c0c0c"/></linearGradient>
+    <filter id="glow"><feGaussianBlur stdDeviation="16"/></filter>
+    <pattern id="px" width="20" height="20" patternUnits="userSpaceOnUse"><rect x="2" y="3" width="3" height="2" fill="#fff" opacity=".025"/><rect x="14" y="16" width="2" height="3" fill="#000" opacity=".3"/></pattern>
+  </defs>
+  <rect width="1500" height="620" fill="#070909"/>
+  <!-- Underkeep -->
+  <g transform="translate(20 20)" shape-rendering="crispEdges">
+    <rect width="460" height="580" rx="2" fill="url(#u)"/>
+    <path d="M0 0L138 210V430L0 580ZM460 0L322 210V430L460 580Z" fill="#353b38"/>
+    <path d="M138 210H322V430H138Z" fill="#262b29"/>
+    <path d="M185 430V295Q185 247 230 247Q275 247 275 295V430Z" fill="#090b0b" stroke="#555d59" stroke-width="10"/>
+    <path d="M138 430H322L460 580H0Z" fill="#191d1b"/>
+    <g stroke="#080a0a" stroke-width="5"><path d="M138 430L0 580M184 430L102 580M230 430V580M276 430L358 580M322 430L460 580"/><path d="M110 466H350M74 506H386M34 556H426"/></g>
+    <g fill="#7c482f"><rect x="30" y="248" width="86" height="42"/><rect x="344" y="248" width="86" height="42"/></g>
+    <g fill="#4f6c40"><path d="M0 362L54 330L96 352L138 330V445L0 580Z"/><path d="M322 352L365 328L410 346L460 312V520L322 432Z"/></g>
+    <g opacity=".65" filter="url(#glow)"><circle cx="112" cy="307" r="95" fill="#d26e35"/><circle cx="348" cy="307" r="95" fill="#d26e35"/></g>
+    <g fill="#f08a3f"><path d="M104 335L94 300L112 266L128 298L118 335Z"/><path d="M340 335L330 300L348 266L364 298L354 335Z"/></g>
+    <rect width="460" height="580" fill="url(#px)"/>
+    <text x="24" y="44" fill="#d7dad8" font-family="ui-monospace,monospace" font-size="18" letter-spacing="3">01 / UNDERKEEP</text>
+    <text x="24" y="72" fill="#8b928e" font-family="ui-monospace,monospace" font-size="13">ASHLAR · SLAB · LOW VAULT</text>
+    <g transform="translate(24 532)"><rect width="58" height="8" fill="#6f7773"/><rect x="66" width="58" height="8" fill="#d06f36"/><rect x="132" width="58" height="8" fill="#577247"/></g>
+  </g>
+  <!-- Reliquary -->
+  <g transform="translate(520 20)" shape-rendering="crispEdges">
+    <rect width="460" height="580" rx="2" fill="url(#r)"/>
+    <path d="M0 0L118 214V420L0 580ZM460 0L342 214V420L460 580Z" fill="#343d41"/>
+    <path d="M118 214H342V420H118Z" fill="#252c2f"/>
+    <path d="M174 420V301L230 230L286 301V420Z" fill="#070b0d" stroke="#697379" stroke-width="9"/>
+    <path d="M118 420H342L460 580H0Z" fill="#161c1e"/>
+    <g stroke="#080b0d" stroke-width="5"><path d="M118 420L0 580M174 420L110 580M230 420V580M286 420L350 580M342 420L460 580"/><path d="M92 454H368M57 500H403M18 553H442"/></g>
+    <g fill="none" stroke="#566267" stroke-width="12"><path d="M64 0L178 224"/><path d="M396 0L282 224"/><path d="M230 0V230"/></g>
+    <g opacity=".62" filter="url(#glow)"><ellipse cx="126" cy="353" rx="120" ry="78" fill="#278b91"/><ellipse cx="334" cy="338" rx="95" ry="72" fill="#c9b882"/></g>
+    <path d="M0 448L82 420L145 439L204 414L260 437L324 410L384 430L460 401V580H0Z" fill="#1e5258" opacity=".72"/>
+    <g fill="#d5c78f"><rect x="322" y="296" width="11" height="74"/><path d="M307 299L328 263L347 299Z"/></g>
+    <g fill="#52a6a8"><rect x="74" y="339" width="10" height="72"/><rect x="92" y="323" width="9" height="81"/><rect x="109" y="350" width="12" height="58"/></g>
+    <rect width="460" height="580" fill="url(#px)"/>
+    <text x="24" y="44" fill="#d7dad8" font-family="ui-monospace,monospace" font-size="18" letter-spacing="3">02 / RELIQUARY</text>
+    <text x="24" y="72" fill="#8b9296" font-family="ui-monospace,monospace" font-size="13">RIBBED · POINTED · SUBMERGED</text>
+    <g transform="translate(24 532)"><rect width="58" height="8" fill="#728087"/><rect x="66" width="58" height="8" fill="#3e9ba0"/><rect x="132" width="58" height="8" fill="#d2c38c"/></g>
+  </g>
+  <!-- Foundry -->
+  <g transform="translate(1020 20)" shape-rendering="crispEdges">
+    <rect width="460" height="580" rx="2" fill="url(#f)"/>
+    <path d="M0 0L125 220V430L0 580ZM460 0L335 220V430L460 580Z" fill="#383837"/>
+    <path d="M125 220H335V430H125Z" fill="#252524"/>
+    <path d="M166 430V276H294V430Z" fill="#090909" stroke="#61615e" stroke-width="12"/>
+    <path d="M125 430H335L460 580H0Z" fill="#1b1b1a"/>
+    <g stroke="#080808" stroke-width="6"><path d="M125 430L0 580M178 430L112 580M230 430V580M282 430L348 580M335 430L460 580"/><path d="M94 468H366M55 514H405M15 561H445"/></g>
+    <g fill="none" stroke="#555650" stroke-width="18"><path d="M46 0V328L102 378"/><path d="M414 0V328L358 378"/><path d="M0 126H460"/></g>
+    <g opacity=".68" filter="url(#glow)"><circle cx="230" cy="365" r="116" fill="#d14e2b"/><circle cx="360" cy="278" r="78" fill="#6e8c75"/></g>
+    <path d="M184 430V325H276V430Z" fill="#a73d25"/><path d="M198 430V348H262V430Z" fill="#f07938"/>
+    <g fill="#64806b"><rect x="336" y="222" width="44" height="102"/><rect x="327" y="248" width="62" height="19"/><rect x="347" y="198" width="22" height="32"/></g>
+    <g fill="#4a4b47"><rect x="17" y="350" width="104" height="18"/><rect x="20" y="380" width="99" height="16"/></g>
+    <rect width="460" height="580" fill="url(#px)"/>
+    <text x="24" y="44" fill="#d7dad8" font-family="ui-monospace,monospace" font-size="18" letter-spacing="3">03 / ASH FOUNDRY</text>
+    <text x="24" y="72" fill="#92928e" font-family="ui-monospace,monospace" font-size="13">TRUSSED · RIVETED · SOOTED</text>
+    <g transform="translate(24 532)"><rect width="58" height="8" fill="#777773"/><rect x="66" width="58" height="8" fill="#dd5b2f"/><rect x="132" width="58" height="8" fill="#6f8a75"/></g>
+  </g>
+</svg>

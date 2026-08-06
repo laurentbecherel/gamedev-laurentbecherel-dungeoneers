@@ -1,22 +1,35 @@
-<!DOCTYPE html>
+<!doctype html>
 <html lang="en">
 <head>
-<meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1.0">
-<title>Dungeoneers</title>
-<link rel="stylesheet" href="style.css">
-<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@phosphor-icons/web@2.1.1/src/regular/style.css">
-<link id="base-fonts" href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500&family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="description" content="Play the current Dungeoneers dungeon build.">
+  <title>Dungeoneers — Play Build</title>
+  <link rel="stylesheet" href="style.css">
+  <link rel="stylesheet" href="/art-direction/styles.css">
+  <link rel="stylesheet" href="game.css">
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@phosphor-icons/web@2.1.1/src/regular/style.css">
+  <link id="base-fonts" href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500&family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
 </head>
 <body class="game">
-<header class="topbar game-topbar">
-  <div class="brand">DUNGEONEERS</div>
-  <div class="spacer"></div>
-  <a class="btn btn-ghost" href="index.html"><i class="ph ph-house"></i> Home</a>
-  <a class="btn btn-ghost" href="editor.html"><i class="ph ph-wrench"></i> Editor</a>
-</header>
-<div class="game-viewport">
-  <canvas id="game-canvas" width="640" height="360"></canvas>
-</div>
-<div class="game-hud" id="game-hud">Loading config…</div>
-<script type="module" src="main.js"></script>
-</body></html>
+  <header class="site-header game-site-header">
+    <a class="brand" href="/" aria-label="Dungeoneers game index">
+      <span class="brand-mark" aria-hidden="true"><i></i><i></i><i></i></span>
+      <span>DUNGEONEERS <small>LIVE BUILD / PLAY</small></span>
+    </a>
+    <div class="header-actions">
+      <a class="header-home" href="/">Home</a>
+      <nav id="main-nav" class="global-nav" aria-label="Dungeoneers navigation">
+        <a class="active" href="game.html" aria-current="page">Play</a><a href="editor.html">Editor</a><a href="/art-direction/">Design</a>
+      </nav>
+      <button class="nav-toggle" type="button" aria-expanded="false" aria-controls="main-nav">Menu</button>
+    </div>
+  </header>
+  <main class="game-viewport" aria-label="Dungeoneers game viewport">
+    <canvas id="game-canvas" width="640" height="360"></canvas>
+  </main>
+  <div class="game-hud" id="game-hud">Loading config…</div>
+  <script src="/art-direction/script.js" defer></script>
+  <script type="module" src="main.js"></script>
+</body>
+</html>

@@ -1,0 +1,79 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1600 900" role="img" aria-labelledby="title desc">
+  <title id="title">The Underkeep concept art</title>
+  <desc id="desc">A retro pixel dungeon hall in dominant grey stone, lit by orange torches and touched by green moss, with modern reflections and dynamic light.</desc>
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="0" y2="1"><stop stop-color="#0a0c0c"/><stop offset=".58" stop-color="#171b1a"/><stop offset="1" stop-color="#070909"/></linearGradient>
+    <radialGradient id="fire" cx="50%" cy="50%" r="50%"><stop stop-color="#ffd08a" stop-opacity=".98"/><stop offset=".14" stop-color="#e98638" stop-opacity=".88"/><stop offset=".48" stop-color="#8f4525" stop-opacity=".34"/><stop offset="1" stop-color="#8f4525" stop-opacity="0"/></radialGradient>
+    <radialGradient id="mossGlow" cx="50%" cy="50%" r="50%"><stop stop-color="#657a47" stop-opacity=".18"/><stop offset="1" stop-color="#657a47" stop-opacity="0"/></radialGradient>
+    <linearGradient id="floor" x1="0" y1="0" x2="0" y2="1"><stop stop-color="#323735"/><stop offset="1" stop-color="#111414"/></linearGradient>
+    <linearGradient id="wet" x1="0" y1="0" x2="1" y2="0"><stop stop-color="#101312"/><stop offset=".5" stop-color="#4f5753"/><stop offset="1" stop-color="#121514"/></linearGradient>
+    <filter id="bloom" x="-100%" y="-100%" width="300%" height="300%"><feGaussianBlur stdDeviation="28"/></filter>
+    <filter id="smallBloom" x="-100%" y="-100%" width="300%" height="300%"><feGaussianBlur stdDeviation="9"/></filter>
+    <pattern id="grain" width="32" height="32" patternUnits="userSpaceOnUse"><rect width="32" height="32" fill="none"/><rect x="2" y="7" width="3" height="2" fill="#fff" opacity=".035"/><rect x="19" y="4" width="2" height="3" fill="#000" opacity=".25"/><rect x="26" y="22" width="4" height="2" fill="#fff" opacity=".025"/><rect x="9" y="25" width="2" height="2" fill="#000" opacity=".25"/></pattern>
+    <pattern id="bricks" width="112" height="56" patternUnits="userSpaceOnUse"><rect width="112" height="56" fill="#303432"/><path d="M0 0H112M0 28H112M0 56H112M56 0V28M28 28V56M84 28V56" fill="none" stroke="#171a19" stroke-width="5"/><path d="M4 4H52M60 4H108M4 32H24M32 32H80M88 32H108" stroke="#4a504d" stroke-width="3" opacity=".55"/></pattern>
+    <clipPath id="hall"><path d="M0 0H1600V900H0Z"/></clipPath>
+  </defs>
+  <rect width="1600" height="900" fill="url(#bg)"/>
+  <g clip-path="url(#hall)" shape-rendering="crispEdges">
+    <!-- ceiling ribs -->
+    <path d="M0 0H1600L1120 370H480Z" fill="#151817"/>
+    <path d="M80 0L560 390H610L210 0ZM385 0L650 390H688L500 0ZM690 0L748 390H778L778 0ZM910 0L852 390H822L822 0ZM1215 0L950 390H912L1100 0ZM1520 0L1040 390H990L1390 0Z" fill="#353a38" opacity=".68"/>
+    <path d="M0 82H1600M0 168H1600M0 252H1600M0 324H1600" stroke="#282c2a" stroke-width="8" opacity=".8"/>
+    <!-- side walls -->
+    <path d="M0 0L500 365L500 610L0 900Z" fill="url(#bricks)"/>
+    <path d="M1600 0L1100 365L1100 610L1600 900Z" fill="url(#bricks)"/>
+    <path d="M0 0L500 365V610L0 900" fill="none" stroke="#555c58" stroke-width="8" opacity=".55"/>
+    <path d="M1600 0L1100 365V610L1600 900" fill="none" stroke="#555c58" stroke-width="8" opacity=".55"/>
+    <!-- far wall and portal -->
+    <path d="M500 365H1100V610H500Z" fill="#292d2b" stroke="#4a504d" stroke-width="8"/>
+    <g fill="#3e4441" stroke="#1a1d1c" stroke-width="5">
+      <path d="M512 378H650V430H512Z"/><path d="M650 378H790V430H650Z"/><path d="M790 378H928V430H790Z"/><path d="M928 378H1088V430H928Z"/>
+      <path d="M512 430H610V485H512Z"/><path d="M610 430H730V485H610Z"/><path d="M870 430H990V485H870Z"/><path d="M990 430H1088V485H990Z"/>
+    </g>
+    <path d="M696 610V474Q696 394 800 394Q904 394 904 474V610Z" fill="#090b0b" stroke="#565d59" stroke-width="16"/>
+    <path d="M730 610V485Q730 430 800 430Q870 430 870 485V610Z" fill="#111414"/>
+    <!-- floor perspective -->
+    <path d="M500 610H1100L1600 900H0Z" fill="url(#floor)"/>
+    <g fill="none" stroke="#0d0f0f" stroke-width="7" opacity=".9">
+      <path d="M500 610L0 900M575 610L250 900M650 610L500 900M725 610L690 900M800 610V900M875 610L910 900M950 610L1100 900M1025 610L1350 900M1100 610L1600 900"/>
+      <path d="M455 638H1145M405 676H1195M337 728H1263M245 798H1355M105 882H1495"/>
+    </g>
+    <g fill="none" stroke="#58615d" stroke-width="3" opacity=".28"><path d="M420 682H1180"/><path d="M310 735H1290"/><path d="M190 805H1410"/></g>
+    <!-- warm brick punctuation -->
+    <g fill="#7d452d" stroke="#3c2921" stroke-width="5" opacity=".88">
+      <path d="M100 350L210 390L210 446L100 414Z"/><path d="M220 394L340 433L340 490L220 451Z"/><path d="M1260 430L1380 391L1380 450L1260 489Z"/><path d="M1390 386L1510 344L1510 410L1390 449Z"/>
+      <path d="M525 440H615V486H525Z"/><path d="M985 440H1075V486H985Z"/>
+    </g>
+    <!-- moss modifier patches -->
+    <g fill="#4c673c" opacity=".92">
+      <path d="M0 605L62 568L113 587L168 558L220 579L275 550L305 574L340 559V625L0 801Z"/>
+      <path d="M1258 558L1304 543L1346 560L1395 526L1435 551L1487 514L1600 486V700L1535 676L1472 689L1408 648L1354 662L1308 630Z"/>
+      <path d="M512 580L545 558L578 570L615 548L646 559L658 610H510Z"/>
+    </g>
+    <g fill="#77895a" opacity=".55"><rect x="37" y="596" width="8" height="58"/><rect x="148" y="585" width="7" height="41"/><rect x="1450" y="555" width="8" height="64"/><rect x="1370" y="568" width="6" height="42"/><rect x="591" y="561" width="6" height="35"/></g>
+    <!-- torch bloom -->
+    <g opacity=".75" filter="url(#bloom)"><circle cx="385" cy="454" r="155" fill="url(#fire)"/><circle cx="1215" cy="454" r="155" fill="url(#fire)"/><ellipse cx="800" cy="558" rx="115" ry="68" fill="url(#fire)"/></g>
+    <!-- torch sprites -->
+    <g>
+      <path d="M357 502H413L402 465H369Z" fill="#34251d" stroke="#0d0f0f" stroke-width="8"/>
+      <path d="M374 466H397V414H374Z" fill="#7f4628"/>
+      <path d="M385 405L367 442H381L373 466L404 431H394L401 404Z" fill="#ef8c3d" stroke="#ffd49a" stroke-width="5"/>
+      <path d="M1187 502H1243L1232 465H1199Z" fill="#34251d" stroke="#0d0f0f" stroke-width="8"/>
+      <path d="M1204 466H1227V414H1204Z" fill="#7f4628"/>
+      <path d="M1215 405L1197 442H1211L1203 466L1234 431H1224L1231 404Z" fill="#ef8c3d" stroke="#ffd49a" stroke-width="5"/>
+    </g>
+    <!-- puddle + reflection -->
+    <path d="M566 777L690 708L919 714L1078 806L962 862L640 856Z" fill="#101312" stroke="#3c4642" stroke-width="6"/>
+    <path d="M615 790L712 737L890 742L1017 811L926 842L670 837Z" fill="url(#wet)" opacity=".76"/>
+    <g opacity=".45" filter="url(#smallBloom)"><path d="M746 747L790 722L818 724L854 747L835 819L774 819Z" fill="#be6736"/></g>
+    <path d="M752 767L785 748H817L849 768L835 804H770Z" fill="#70402a" opacity=".58"/>
+    <!-- modern light falloff bands -->
+    <path d="M258 537Q385 475 512 535L640 806Q386 747 137 837Z" fill="#a6562d" opacity=".09"/>
+    <path d="M1342 537Q1215 475 1088 535L960 806Q1214 747 1463 837Z" fill="#a6562d" opacity=".09"/>
+    <ellipse cx="800" cy="579" rx="360" ry="228" fill="url(#mossGlow)"/>
+    <rect width="1600" height="900" fill="url(#grain)" opacity=".95"/>
+    <!-- deliberate pixel clusters -->
+    <g fill="#8d9a95" opacity=".22"><rect x="72" y="203" width="8" height="8"/><rect x="96" y="203" width="16" height="8"/><rect x="1450" y="262" width="8" height="8"/><rect x="1466" y="262" width="24" height="8"/><rect x="622" y="338" width="12" height="7"/><rect x="970" y="329" width="16" height="7"/></g>
+  </g>
+  <g font-family="ui-monospace,monospace" fill="#d5d9d6"><text x="46" y="62" font-size="22" letter-spacing="5">CONCEPT 01 / THE UNDERKEEP</text><text x="46" y="94" font-size="15" letter-spacing="2" fill="#8c9490">GREY MASS · EMBER LIGHT · MOSS MEMORY</text></g>
+</svg>

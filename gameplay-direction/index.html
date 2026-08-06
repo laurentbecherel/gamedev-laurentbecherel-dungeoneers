@@ -1,0 +1,256 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="description" content="Dungeoneers target gameplay and game-loop design: four-player trinity combat in complete ten-minute delves.">
+  <title>Dungeoneers — Gameplay &amp; Game Loop</title>
+  <link rel="stylesheet" href="../art-direction/styles.css">
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body class="gameplay-doc">
+  <div class="progress" aria-hidden="true"><span id="progress-bar"></span></div>
+  <header class="site-header">
+    <a class="brand" href="../" aria-label="Return to the Dungeoneers game index">
+      <span class="brand-mark gameplay-mark" aria-hidden="true"><i></i><i></i><i></i></span>
+      <span>DUNGEONEERS <small>GAMEPLAY TARGET / 01</small></span>
+    </a>
+    <div class="header-actions">
+      <a class="header-home" href="../">Home</a>
+      <nav id="main-nav" class="global-nav" aria-label="Dungeoneers navigation">
+        <a href="../game.html">Play</a><a href="../editor.html">Editor</a><a class="active" href="../art-direction/" aria-current="page">Design</a>
+      </nav>
+      <button class="nav-toggle" type="button" aria-expanded="false" aria-controls="main-nav">Menu</button>
+    </div>
+  </header>
+  <nav class="document-nav" aria-label="Design documents">
+      <a href="../art-direction/">Art direction</a>
+      <a class="active" href="../gameplay-direction/" aria-current="page">Game loop</a>
+      <a href="../combat-bible/">Combat bible</a>
+  </nav>
+
+  <main id="top">
+    <section class="gameplay-hero frame">
+      <div class="gameplay-hero-copy">
+        <p class="eyebrow">Target-state design · Not yet implemented</p>
+        <h1>Four players.<br>Three roles.<br><em>Ten minutes.</em></h1>
+        <p class="dek">Clock in, take a dangerous job, and solve a dungeon under pressure. Every room asks the party to make space, protect one another and decide whether the next reward is worth the next risk.</p>
+        <div class="formula" aria-label="Core gameplay formula">
+          <span>READ THE ROOM</span><b>→</b><span>ACT AS A TEAM</span><b>→</b><span>EXTRACT OR DESCEND</span>
+        </div>
+      </div>
+      <aside class="target-card" aria-label="Target status summary">
+        <div class="target-stamp"><span></span>TARGET SPECIFICATION</div>
+        <p class="target-kicker">The promise</p>
+        <strong>One floor is a complete night out.</strong>
+        <dl>
+          <div><dt>Players</dt><dd>1–4, built for four</dd></div>
+          <div><dt>Floor</dt><dd>8–12 minutes</dd></div>
+          <div><dt>Roles</dt><dd>Tank · Healer · DPS</dd></div>
+          <div><dt>Long run</dt><dd>Up to five floors</dd></div>
+        </dl>
+        <p class="target-warning">Combat, enemies, multiplayer, classes, loot and progression described here are targets—not current features.</p>
+      </aside>
+    </section>
+
+    <section class="frame reality-strip" aria-labelledby="reality-title">
+      <div><p class="section-index">Reality check</p><h2 id="reality-title">A playable world.<br>Not yet a game.</h2></div>
+      <div class="reality-columns">
+        <article><span class="state-badge current">CURRENT FOUNDATION</span><ul><li>First-person movement and collision</li><li>Procedural room topology and roles</li><li>Discovery map and environmental rendering</li><li>Dynamic lights, sprites and material systems</li></ul></article>
+        <article><span class="state-badge target">THIS DOCUMENT'S TARGET</span><ul><li>Networked party and matchmaking</li><li>Enemies, combat and encounter direction</li><li>Classes, abilities and trinity mechanics</li><li>Contracts, loot, extraction and progression</li></ul></article>
+      </div>
+    </section>
+
+    <section id="promise" class="section frame">
+      <div class="section-heading">
+        <div><p class="section-index">01 / Player promise</p><h2>Raid-night teamwork.<br>Lunch-break length.</h2></div>
+        <p class="lead">Dungeoneers compresses the clarity and interdependence of MMO group combat into an arcade-paced first-person dungeon. It should create stories of saves, interrupts and risky extractions without asking for a two-hour commitment.</p>
+      </div>
+      <div class="principle-grid gameplay-principles">
+        <article><b>01</b><h3>Start quickly</h3><p>From landing page to first decision in under 60 seconds. No town chores before play.</p></article>
+        <article><b>02</b><h3>Need each other</h3><p>Roles multiply one another. Teamwork is more valuable than four parallel damage rotations.</p></article>
+        <article><b>03</b><h3>Read, then act</h3><p>Enemy intent is visible early enough for a good response, never hidden behind visual noise.</p></article>
+        <article><b>04</b><h3>Leave satisfied</h3><p>Every floor pays off a complete arc. Continuing is temptation, not an obligation.</p></article>
+      </div>
+      <blockquote class="gameplay-thesis">“The party should win because it understood the room—not because its numbers were bigger.”</blockquote>
+    </section>
+
+    <section id="loops" class="section frame">
+      <div class="section-heading">
+        <div><p class="section-index">02 / The loops</p><h2>Five seconds.<br>Ten minutes.<br>One more floor.</h2></div>
+        <p class="lead">Three loops nest inside one another. The combat loop creates tactile teamwork, the delve loop gives that teamwork an arc, and the career loop gives players reasons to clock in again without invalidating skill.</p>
+      </div>
+      <figure class="art-frame wide-art loop-figure">
+        <img src="assets/core-loop.svg" alt="Target loop from lobby and job board through a ten-minute delve to an extraction or descent choice and debrief.">
+        <figcaption><b>System plate 01.</b> Extraction is available after every floor. Descending continues the same expedition with higher threat, stranger modifiers and a larger unbanked payout.</figcaption>
+      </figure>
+      <div class="nested-loops">
+        <article><span>5–20 SEC</span><h3>Combat heartbeat</h3><p>Read intent → claim space → commit abilities → recover position.</p><div class="micro-flow"><i></i><i></i><i></i><i></i></div></article>
+        <article><span>8–12 MIN</span><h3>Complete delve</h3><p>Orient → fight → branch → gear → guardian → objective → extract.</p><div class="micro-flow six"><i></i><i></i><i></i><i></i><i></i><i></i></div></article>
+        <article><span>MANY SHIFTS</span><h3>Role mastery</h3><p>Learn a role → unlock variants → attempt harder contracts → express identity.</p><div class="micro-flow career"><i></i><i></i><i></i><i></i></div></article>
+      </div>
+    </section>
+
+    <section class="section frame delve-clock" aria-labelledby="clock-title">
+      <div class="section-heading">
+        <div><p class="section-index">03 / Delve pacing</p><h2 id="clock-title">Ten minutes with a beginning, middle and end.</h2></div>
+        <p class="lead">The clock is a pacing promise, not a speedrun timer. Room topology already supplies halls, hubs, treasure branches and guardian beats; the encounter director turns those roles into a deliberate tension curve.</p>
+      </div>
+      <div class="timeline" role="list" aria-label="Target timeline for one dungeon floor">
+        <article role="listitem" style="--at:0%;--span:11%"><time>0:00</time><b>Drop</b><small>Orient · establish kit</small></article>
+        <article role="listitem" style="--at:11%;--span:18%"><time>1:00</time><b>First test</b><small>Teach this floor's threat</small></article>
+        <article role="listitem" style="--at:29%;--span:20%"><time>3:00</time><b>Branch</b><small>Safety or side reward</small></article>
+        <article role="listitem" style="--at:49%;--span:20%"><time>5:00</time><b>Perk turn</b><small>Guardian · choose one of three</small></article>
+        <article role="listitem" style="--at:69%;--span:17%"><time>7:00</time><b>Payoff</b><small>Use new perk · find loot</small></article>
+        <article role="listitem" style="--at:86%;--span:14%"><time>9:00</time><b>Finale</b><small>Objective · exit decision</small></article>
+      </div>
+      <div class="pacing-rules">
+        <article><span>MAIN PATH</span><strong>Always legible</strong><p>A party that declines side rooms reaches the finale without getting lost or starved.</p></article>
+        <article><span>SIDE PATH</span><strong>Visible temptation</strong><p>Treasure, armory, shrine and secret rooms trade time or danger for extractable loot.</p></article>
+        <article><span>GUARDIANS</span><strong>Skill checks</strong><p>Two pressure spikes test the party's current answer before the final objective.</p></article>
+        <article><span>EXIT</span><strong>A real choice</strong><p>Bank the floor's rewards or wager them against a harder, more valuable descent.</p></article>
+      </div>
+    </section>
+
+    <section id="combat" class="section frame dark-section combat-section">
+      <div class="section-heading">
+        <div><p class="section-index">04 / Combat grammar</p><h2>First-person action.<br>Tile-readable tactics.</h2></div>
+        <p class="lead">Movement should feel immediate, but combat logic remains grounded in the dungeon grid. Abilities claim tiles, enemy attacks advertise footprints, doorways matter, and line of sight is a resource the party can understand together.</p>
+      </div>
+      <div class="combat-cycle">
+        <article><span>01</span><div><h3>Read</h3><p>See enemy intent, armor, priority casts and the room's dangerous tiles.</p></div></article>
+        <article><span>02</span><div><h3>Claim</h3><p>Tank establishes the front; healer creates a sustainable position; DPS finds angles.</p></div></article>
+        <article><span>03</span><div><h3>Commit</h3><p>Spend cooldowns on a shared window: gather, interrupt, break armor, burst.</p></div></article>
+        <article><span>04</span><div><h3>Recover</h3><p>Clear hazards, rescue mistakes, rotate resources and choose the next pocket of space.</p></div></article>
+      </div>
+      <div class="combat-contracts">
+        <div><b>Abilities are verbs.</b><p>Taunt, block, pull, cleanse, root, flank and interrupt change the room. Raw damage is not enough.</p></div>
+        <div><b>Intent beats reflex tests.</b><p>Telegraphs create decisions. Fast attacks may test reactions only after their language is learned.</p></div>
+        <div><b>Control has visible value.</b><p>An interrupted cast, held doorway or rescued ally must be as celebrated as a critical hit.</p></div>
+      </div>
+    </section>
+
+    <section id="roles" class="section frame">
+      <div class="section-heading">
+        <div><p class="section-index">05 / Trinity combat</p><h2>Space. Safety. Damage.</h2></div>
+        <p class="lead">The trinity is a dependency chain, not a matchmaking lock. Any composition may enter, but a balanced group gets more tactical answers—not merely better stats.</p>
+      </div>
+      <figure class="art-frame wide-art encounter-figure">
+        <img src="assets/encounter-board.svg" alt="Tactical room diagram showing a tank controlling a doorway, healer safe zone, flanking damage dealers and enemy intent arrows.">
+        <figcaption><b>System plate 02.</b> A room is solved spatially: the tank chooses where pressure lands, the healer establishes where the party can remain, and DPS turns that temporary stability into a decisive end.</figcaption>
+      </figure>
+
+      <div class="role-grid">
+        <article class="tank"><span>TANK</span><h3>Own pressure</h3><p>Controls enemy attention and pathing. Converts doorways, corners and displacement into protection.</p><ul><li>Taunt and threat</li><li>Block and mitigation</li><li>Gather and displace</li></ul></article>
+        <article class="healer"><span>HEALER</span><h3>Own stability</h3><p>Maintains the party's usable space. Solves line of sight, cleansing, triage and rescue timing.</p><ul><li>Heal and shield</li><li>Cleanse and prevent</li><li>Zone and revive</li></ul></article>
+        <article class="dps"><span>DPS</span><h3>Own the clock</h3><p>Ends priority threats before control collapses. Trades positioning and setup for decisive output.</p><ul><li>Burst and cleave</li><li>Interrupt and break</li><li>Flank and execute</li></ul></article>
+      </div>
+
+      <div class="roster-heading"><div><p class="section-index">Target roster</p><h3>Four classes. Two variants each.</h3></div><p>Choose a familiar base class, then one of its two complete combat variants. Every variant starts with Attack, Big Attack, Control, Move and Ultimate. Floor perks reshape that chosen kit; they never add a sixth action.</p></div>
+      <div class="roster-grid">
+        <article><span class="role-tag tank-tag">FIGHTER · PROTECTOR</span><h4>Iron Vanguard</h4><p>A shield-and-steel specialist who turns doorways into unbreakable battle lines.</p></article>
+        <article><span class="role-tag tank-tag">FIGHTER · AGGRESSOR</span><h4>Bloodreaver</h4><p>A brutal great-weapon bruiser who protects by staggering, scattering and dominating foes.</p></article>
+        <article><span class="role-tag dps-tag">ROGUE · ASSASSIN</span><h4>Nightblade</h4><p>A lethal infiltrator built around stealth, poison, interruption and sneak attack.</p></article>
+        <article><span class="role-tag dps-tag">ROGUE · ARCHER</span><h4>Deadeye</h4><p>A patient killer who marks prey, controls paths and lands impossible shots.</p></article>
+        <article><span class="role-tag dps-tag">MAGE · ELEMENTALIST</span><h4>Ashen Evoker</h4><p>An elemental artillery caster wielding Fireball, frost walls and Meteor Swarm.</p></article>
+        <article><span class="role-tag dps-tag">MAGE · OCCULTIST</span><h4>Hexbinder</h4><p>A forbidden caster who stacks curses, harvests souls and opens the Black Gate.</p></article>
+        <article><span class="role-tag healer-tag">CLERIC · RESTORER</span><h4>Dawnbringer</h4><p>A battle priest who burns foes with sacred light and converts faith into salvation.</p></article>
+        <article><span class="role-tag healer-tag">CLERIC · WARDER</span><h4>Gravewarden</h4><p>A grim priest who prevents death through barriers, spirits and sacred grave magic.</p></article>
+      </div>
+    </section>
+
+    <section class="section frame encounter-design" aria-labelledby="enemy-title">
+      <div class="section-heading">
+        <div><p class="section-index">06 / Encounters</p><h2 id="enemy-title">Every enemy asks a question.</h2></div>
+        <p class="lead">Encounters are small tactical sentences. A room combines two or three readable enemy functions, then changes terrain or timing so the party must form a new answer.</p>
+      </div>
+      <div class="enemy-grid">
+        <article><span>BREAKER</span><h3>Can the tank hold?</h3><p>Heavy pressure, armor and knockback. Punishes a weak front but exposes flanks.</p><small>Tests: threat · mitigation · rear access</small></article>
+        <article><span>CASTER</span><h3>Who interrupts?</h3><p>Long, legible casts that become catastrophic if the party ignores priority.</p><small>Tests: focus · line of sight · cooldowns</small></article>
+        <article><span>STALKER</span><h3>Can the backline react?</h3><p>Bypasses the obvious front and forces peel, relocation or controlled bait.</p><small>Tests: awareness · rescue · displacement</small></article>
+        <article><span>SWARM</span><h3>Is the setup ready?</h3><p>Numerous fragile bodies overwhelm single-target play and consume floor space.</p><small>Tests: gather · zones · area damage</small></article>
+        <article><span>GUARDIAN</span><h3>Can the party adapt?</h3><p>Boss-scale enemy with phases tied to the room's architecture and hazards.</p><small>Tests: complete trinity chain</small></article>
+      </div>
+      <aside class="implementation-note"><b>Encounter director.</b> Room roles already exist in the generator. Halls introduce, hubs combine, treasure rooms tempt, guardians test and exits climax. The target director attaches enemy budgets, objective scripts and hazard sets to that existing topology instead of spawning arbitrary packs everywhere.</aside>
+    </section>
+
+    <section id="rewards" class="section frame rewards-section">
+      <div class="section-heading">
+        <div><p class="section-index">07 / Rogue + rogue-lite</p><h2>Change the verb now.<br>Grow the numbers later.</h2></div>
+        <p class="lead">The run and the career reward different things. Temporary floor perks transform the five abilities you already own. Extracted loot persists between shifts and raises a bounded set of long-term stats.</p>
+      </div>
+      <div class="reward-lanes">
+        <article>
+          <span class="reward-scope">ROGUE / THIS EXPEDITION</span><h3>Perks transform</h3>
+          <div class="reward-item"><b>One perk per floor</b><p>A guaranteed mid-floor shrine offers one of three perks, so even a one-floor contract gets to use its build choice.</p></div>
+          <div class="reward-item"><b>Five actions stay fixed</b><p>A perk improves, converts or replaces an existing Attack, Big Attack, Control, Move or Ultimate—never a sixth button.</p></div>
+          <div class="reward-item"><b>Reset on return</b><p>Run perks disappear after extraction or defeat. A five-floor expedition reaches at most five active perks.</p></div>
+        </article>
+        <article>
+          <span class="reward-scope">ROGUE-LITE / BETWEEN SHIFTS</span><h3>Loot accumulates</h3>
+          <div class="reward-item"><b>Extracted stat gear</b><p>Weapons, armor and trinkets persist, improving Power, Guard, Vitality, Haste or Recovery within bounded tiers.</p></div>
+          <div class="reward-item"><b>Perk library</b><p>Mastery feats unlock new class perks into future offer pools. Core abilities are always available from the first run.</p></div>
+          <div class="reward-item"><b>Instanced loot</b><p>Each player receives a personal drop from the same chest. Unextracted finds remain at risk.</p></div>
+        </article>
+      </div>
+      <div class="risk-ladder">
+        <div><span>EXTRACT NOW</span><b>100% banked</b><small>Complete contract · safe payout</small></div>
+        <i>→</i><div><span>DESCEND</span><b>+ threat</b><small>Keep build · add modifier</small></div>
+        <i>→</i><div><span>FLOOR V</span><b>Maximum stake</b><small>Boss objective · rare expression reward</small></div>
+      </div>
+    </section>
+
+    <section class="section frame co-op-section" aria-labelledby="coop-title">
+      <div class="section-heading">
+        <div><p class="section-index">08 / Co-op contract</p><h2 id="coop-title">Friendly to join.<br>Meaningful to save.</h2></div>
+        <p class="lead">Short sessions reduce social friction. The game must also protect a party from loot arguments, one mistake ending the night, and a disconnect invalidating ten minutes of teamwork.</p>
+      </div>
+      <div class="coop-grid">
+        <article><span>DROP IN / OUT</span><h3>Join at safe thresholds</h3><p>Late players arrive in the next cleared room. Encounter budgets update at the next unopened door, never mid-fight.</p></article>
+        <article><span>DOWNED STATE</span><h3>Thirty seconds to matter</h3><p>A downed player can crawl and ping. An ally must enter danger and commit to a rescue, creating the run's best stories.</p></article>
+        <article><span>PARTY WIPE</span><h3>Lose the wager, not the evening</h3><p>Unbanked expedition value is lost; mastery progress and already banked rewards remain.</p></article>
+        <article><span>COMMUNICATION</span><h3>Useful without voice</h3><p>Context pings cover focus, retreat, hold, interact and descend. Enemy intent does most of the talking.</p></article>
+      </div>
+      <div class="composition-note"><b>No role gate.</b><p>Any 1–4 player composition can launch. Scaling adjusts enemy count, health and simultaneous mechanics, but it does not erase role identity. A party without a healer must create recovery through consumables and cleaner execution; a party without a tank must kite and control rather than receiving a hidden substitute tank.</p></div>
+    </section>
+
+    <section id="vertical-slice" class="section frame production">
+      <div class="section-heading">
+        <div><p class="section-index">09 / First playable target</p><h2>Prove one floor before building five.</h2></div>
+        <p class="lead">The first slice should validate the social combat loop, not the breadth of the roguelike. One coherent contract is enough to prove whether the game deserves more classes, enemies and floors.</p>
+      </div>
+      <div class="slice-flow">
+        <article><span>01</span><h3>Party shell</h3><p>Host/join, lobby, role selection, reconnect and ready state.</p></article>
+        <article><span>02</span><h3>Four classes / eight kits</h3><p>Fighter, Rogue, Mage and Cleric; each selects one of two complete variants before the delve.</p></article>
+        <article><span>03</span><h3>One contract</h3><p>A single 8–12 minute floor using entrance, hall, branch, guardian and exit roles.</p></article>
+        <article><span>04</span><h3>Five enemy verbs</h3><p>Breaker, Caster, Stalker, Swarm and one architecture-aware Guardian.</p></article>
+        <article><span>05</span><h3>Both reward layers</h3><p>One guaranteed run perk, one instanced stat drop, extraction results and immediate replay.</p></article>
+      </div>
+
+      <div class="success-metrics">
+        <p class="label">Vertical-slice acceptance</p>
+        <div><strong>&lt; 60s</strong><span>landing page to controllable party</span></div>
+        <div><strong>8–12m</strong><span>median complete-floor time</span></div>
+        <div><strong>3+</strong><span>visible cross-role saves per delve</span></div>
+        <div><strong>1 click</strong><span>from debrief to “run it again”</span></div>
+      </div>
+      <div class="not-yet-grid">
+        <article><p class="label good">Build to prove</p><ul><li>Network authority and party state</li><li>Readable first-person enemy intent</li><li>Threat, healing, damage and control interactions</li><li>Downed/rescue and complete-floor loop</li><li>One meaningful perk transform per starter</li></ul></article>
+        <article><p class="label bad">Defer until proven</p><ul><li>All eight variants and large perk catalog</li><li>Five architectural floors</li><li>Complex metagame economy</li><li>Ranked difficulty ladder</li><li>Broad narrative or cosmetic store</li></ul></article>
+      </div>
+
+      <div class="acceptance gameplay-acceptance">
+        <p class="section-index">Definition of fun</p>
+        <p>A delve succeeds when four players can point to a moment that only happened because someone else did their job—and the party chooses “one more floor” before anyone asks.</p>
+      </div>
+    </section>
+  </main>
+
+  <footer class="frame">
+    <span>DUNGEONEERS / GAMEPLAY TARGET</span>
+    <span>SPACE · SAFETY · DAMAGE</span>
+    <a href="#top">Back to top ↑</a>
+  </footer>
+  <script src="../art-direction/script.js"></script>
+</body>
+</html>
