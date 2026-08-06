@@ -232,6 +232,7 @@ test('blood and dust have dedicated shader blocks and live editor schemas', asyn
 test('damage uses non-stretched 3D detail and live appearance controls', async () => {
   const shader = await fs.readFile(path.join(process.cwd(), 'render', 'shader-lib', 'modifiers.wgsl.js'), 'utf8');
   const sceneShader = await fs.readFile(path.join(process.cwd(), 'render', 'shader-lib', 'scene.wgsl.js'), 'utf8');
+  const shadersWgsl = await fs.readFile(path.join(process.cwd(), 'render', 'shaders-wgsl.js'), 'utf8');
   const renderer = await fs.readFile(path.join(process.cwd(), 'render', 'renderer-gpu.js'), 'utf8');
   const editor = await fs.readFile(path.join(process.cwd(), 'editor.js'), 'utf8');
   const config = JSON.parse(await fs.readFile(path.join(process.cwd(), 'assets', 'config', 'rendering', 'material-modifiers.json'), 'utf8'));
@@ -248,6 +249,12 @@ test('damage uses non-stretched 3D detail and live appearance controls', async (
   assert(config.modifiers.damaged.appearance.colorStrength > 0);
   assert(config.ui.damaged.appearance.colorStrength.max > config.modifiers.damaged.appearance.colorStrength);
   assert(config.ui.generator.damaged.wallWeight.max >= config.generator.damaged.wallWeight);
+  assert(config.ui.debug.view.options.includes(config.debug.view), 'configured debug view is a supported live option');
+  assert(config.ui.debug.view.options.includes('damagedNoise') && config.ui.debug.view.options.includes('damagedFinal'));
+  assert(shadersWgsl.includes("makeDebugFS('frame.pbrDebugMode')"), 'one runtime-selected debug shader serves every view');
+  assert(renderer.includes('createRenderPipelineAsync'), 'first debug pipeline compilation is non-blocking when supported');
+  assert(!renderer.includes('_debugPBRSourceCache'), 'renderer no longer compiles a shader per debug mode');
+  assert(renderer.includes('setModifierDebugView(mm.debug?.view'), 'JSON debug selection is applied live');
   assert(editor.includes('dottedRemainder'), 'legacy dotted damage schemas remain live-editable');
 });
 

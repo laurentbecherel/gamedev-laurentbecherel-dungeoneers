@@ -25,19 +25,7 @@ import {
   vsSpriteWgsl,
   fsSpriteWgsl,
   MAX_LIGHTS,
-  fsDebugMossWgsl,
-  fsDebugMossNoiseWgsl,
-  fsDebugMossEnvWgsl,
-  fsDebugMossMaterialWgsl,
-  fsDebugMossCombinedWgsl,
-  fsDebugPuddleWgsl,
-  fsDebugDamagedWgsl,
-  fsDebugDamagedNoiseWgsl,
-  fsDebugStructuralWgsl,
-  fsDebugBloodWgsl,
-  fsDebugDustWgsl,
-  fsDebugDamagedPlacementWgsl,
-  fsDebugDamagedFactorsWgsl
+  fsDebugModifiersWgsl
 } from './shaders-wgsl.js';
 
 import { generateMaterialArrayData } from '../world/materials.js';
@@ -66,6 +54,27 @@ function alignUp(v, a) { return Math.ceil(v / a) * a; }
 const FEATURE_UNIFORM_BYTES = 176;
 const MODIFIERS_VEC4_COUNT = 48;
 const MODIFIERS_UNIFORM_BYTES = MODIFIERS_VEC4_COUNT * 16;
+
+const MODIFIER_DEBUG_MODES = Object.freeze({
+  off: 0,
+  mossNoise: 1,
+  mossEnvironment: 2,
+  mossMaterial: 3,
+  mossFinal: 4,
+  puddleFinal: 5,
+  damagedFinal: 6,
+  damagedNoise: 7,
+  structural: 8,
+  bloodFinal: 9,
+  dustFinal: 10,
+  damagedPlacement: 11,
+  damagedFactors: 12,
+});
+
+function resolveModifierDebugMode(value) {
+  if (typeof value === 'number') return Math.max(0, Math.min(12, value | 0));
+  return MODIFIER_DEBUG_MODES[value] ?? 0;
+}
 
 function normalizeTextureFilter(value) {
   return String(value ?? 'nearest').toLowerCase() === 'linear' ? 'linear' : 'nearest';
@@ -1145,31 +1154,17 @@ export class GPURenderer {
       throw e; // trigger wrapper fallback
     }
 
-    // PBR Debug pipelines (key 6) – lazy, like WebGL2: null until first Digit6 press to avoid startup stall
-    // Store layout/module for lazy creation, don't compile 7 extra pipelines in init
+    // Modifier debug uses one runtime-selected shader. Compile it asynchronously
+    // on first use; every later JSON/keyboard view switch is uniform-only.
     this._pipelineLayoutRaymarch = pipelineLayoutRaymarch;
     this._vsModRay = vsModRay;
     this._createModule = createModule;
     this._checkShaderCompilation = checkShaderCompilation;
-    this._debugPBRSourceCache = [
-      null, // 0 = normal
-      fsDebugMossNoiseWgsl,
-      fsDebugMossEnvWgsl,
-      fsDebugMossMaterialWgsl,
-      fsDebugMossCombinedWgsl,
-      fsDebugPuddleWgsl,
-      fsDebugDamagedWgsl,
-      fsDebugDamagedNoiseWgsl,
-      fsDebugStructuralWgsl,
-      fsDebugBloodWgsl,
-      fsDebugDustWgsl,
-      fsDebugDamagedPlacementWgsl,
-      fsDebugDamagedFactorsWgsl
-    ];
-    this.pipelines.debugPBR = [];
-    this.pipelines.debugPBR[0] = this.pipelines.raymarch; // 0 alias
-    for (let i = 1; i < 13; i++) this.pipelines.debugPBR[i] = null;
-    console.log('[WebGPU] PBR debug pipelines lazy – init fast path (5 pipelines only)');
+    this._modifierDebugSource = fsDebugModifiersWgsl;
+    this._modifierDebugPipelinePromise = null;
+    this._modifierDebugPipelineFailed = false;
+    this.pipelines.modifierDebug = null;
+    console.log('[WebGPU] modifier debug pipeline ready for background compilation');
 
     // SSR pipeline
     const vsModSSR = vsModRay; // reuse
@@ -1551,6 +1546,7 @@ export class GPURenderer {
     this.cornerEnabled = (cornerEnabled !== false) ? 1 : 0;
     const modCfg = cfg.materialModifiers || cfg['material-modifiers'] || {};
     this.modifiersEnabled = (modCfg.enabled === true) ? 1 : 0;
+    this.setModifierDebugView(modCfg.debug?.view ?? modCfg.debugView ?? 'off');
   }
 
   rebuildPalette() {
@@ -1602,7 +1598,12 @@ export class GPURenderer {
   setCornerEnabled(v) { this.cornerEnabled = v ? 1 : 0; }
   setModifiersEnabled(v){ this.modifiersEnabled = v ? 1 : 0; }
   setSSREnabled(v){ this.ssrEnabled = v ? 1 : 0; }
-  setPBRDebugMode(v) { this.pbrDebugMode = Math.max(0, Math.min(12, v | 0)); }
+  setPBRDebugMode(v) {
+    this.pbrDebugMode = Math.max(0, Math.min(12, v | 0));
+    if (this.pbrDebugMode !== 0) this._ensureDebugPipeline(this.pbrDebugMode);
+    return this.pbrDebugMode;
+  }
+  setModifierDebugView(view) { return this.setPBRDebugMode(resolveModifierDebugMode(view)); }
   toggleGridDebug(){ this.gridDebug = this.gridDebug ? 0 : 1; return this.gridDebug; }
   toggleLighting(){ this.lightingEnabled = this.lightingEnabled ? 0 : 1; return this.lightingEnabled; }
   togglePBR(){ this.pbrEnabled = this.pbrEnabled ? 0 : 1; return this.pbrEnabled; }
@@ -1615,23 +1616,22 @@ export class GPURenderer {
   // SSR debug remains an independent 9-state cycle.
   cycleSSRDebug(){ this.ssrDebugMode = (this.ssrDebugMode + 1) % 9; return this.ssrDebugMode; }
   setFeatureDebug(v){
-    this.pbrDebugMode = v ? 8 : 0;
-    try { if (v) this._ensureDebugPipeline(8); } catch {}
-    return this.pbrDebugMode;
+    return this.setPBRDebugMode(v ? 8 : 0);
   }
   toggleFeatureDebug(){ return this.setFeatureDebug(this.pbrDebugMode !== 8); }
   _ensureDebugPipeline(mode) {
     if (!this.device) return null;
     mode = mode | 0;
     if (mode <= 0 || mode >= 13) return this.pipelines.raymarch;
-    if (this.pipelines.debugPBR && this.pipelines.debugPBR[mode]) return this.pipelines.debugPBR[mode];
-    const src = this._debugPBRSourceCache && this._debugPBRSourceCache[mode];
-    if (!src) return this.pipelines.raymarch;
+    if (this.pipelines.modifierDebug) return this.pipelines.modifierDebug;
+    if (this._modifierDebugPipelinePromise || this._modifierDebugPipelineFailed) return this.pipelines.raymarch;
     try {
       const device = this.device;
-      const mod = this._createModule ? this._createModule(src, `fsDebugPBR_${mode}`) : device.createShaderModule({ code: src, label: `fsDebugPBR_${mode}` });
-      if (this._checkShaderCompilation) this._checkShaderCompilation(device, mod, `fsDebugPBR_${mode}`).catch(()=>{});
-      const pipe = device.createRenderPipeline({
+      const mod = this._createModule
+        ? this._createModule(this._modifierDebugSource, 'fsModifierDebugRuntime')
+        : device.createShaderModule({ code: this._modifierDebugSource, label: 'fsModifierDebugRuntime' });
+      if (this._checkShaderCompilation) this._checkShaderCompilation(device, mod, 'fsModifierDebugRuntime').catch(()=>{});
+      const descriptor = {
         layout: this._pipelineLayoutRaymarch,
         vertex: { module: this._vsModRay, entryPoint: 'vs_main' },
         fragment: {
@@ -1643,24 +1643,37 @@ export class GPURenderer {
           ]
         },
         primitive: { topology: 'triangle-list' },
-        label: `debugPBR_${mode}`
-      });
-      if (!this.pipelines.debugPBR) this.pipelines.debugPBR = [];
-      this.pipelines.debugPBR[mode] = pipe;
-      console.log(`[WebGPU] lazy compiled PBR debug pipeline ${mode}`);
-      return pipe;
+        label: 'modifierDebugRuntime'
+      };
+      if (typeof device.createRenderPipelineAsync === 'function') {
+        this._modifierDebugPipelinePromise = device.createRenderPipelineAsync(descriptor)
+          .then(pipe => {
+            this.pipelines.modifierDebug = pipe;
+            this._modifierDebugPipelinePromise = null;
+            console.log('[WebGPU] modifier debug pipeline compiled in background');
+            return pipe;
+          })
+          .catch(error => {
+            this._modifierDebugPipelinePromise = null;
+            this._modifierDebugPipelineFailed = true;
+            console.warn('[WebGPU] modifier debug pipeline failed', error);
+            return null;
+          });
+        return this.pipelines.raymarch;
+      }
+      this.pipelines.modifierDebug = device.createRenderPipeline(descriptor);
+      console.log('[WebGPU] modifier debug pipeline compiled');
+      return this.pipelines.modifierDebug;
     } catch (e) {
-      console.warn(`[WebGPU] PBR debug pipeline ${mode} failed`, e);
+      this._modifierDebugPipelineFailed = true;
+      console.warn('[WebGPU] modifier debug pipeline failed', e);
       return this.pipelines.raymarch;
     }
   }
 
   cyclePBRDebug() {
     const next = (this.pbrDebugMode + 1) % 13;
-    this.pbrDebugMode = next;
-    // Lazy compile on first use – restores old WebGL2 behavior to keep init fast
-    try { if (next !== 0) this._ensureDebugPipeline(next); } catch {}
-    return this.pbrDebugMode;
+    return this.setPBRDebugMode(next);
   }
   isReady() { return this.ready && (!!this.device || !!this._fallback2D); }
 
@@ -1846,6 +1859,9 @@ export class GPURenderer {
     this._cfgCache.materialModifiers=mm;
     this._modifierGeneratorSignature = nextGeneratorSignature;
     this.modifiersEnabled = (mm.enabled===true)?1:0;
+    if (mm.debug?.view !== undefined || mm.debugView !== undefined) {
+      this.setModifierDebugView(mm.debug?.view ?? mm.debugView);
+    }
     try {
       if (this.device && this.buffers.modifiersUniform) {
         const tmp = new ArrayBuffer(MODIFIERS_UNIFORM_BYTES);
@@ -2263,14 +2279,10 @@ export class GPURenderer {
     let raymarchPipeline = this.pipelines.raymarch;
     if (isPBRDebug) {
       const dbgIdx = this.pbrDebugMode | 0;
-      // Lazy ensure – compile on demand to keep init fast (old WebGL2 did same)
+      // One background-compiled runtime pipeline serves every debug view.
       try {
         const ensured = this._ensureDebugPipeline(dbgIdx);
         if (ensured) raymarchPipeline = ensured;
-        else {
-          const dbgPipe = this.pipelines.debugPBR && this.pipelines.debugPBR[dbgIdx];
-          if (dbgPipe) raymarchPipeline = dbgPipe;
-        }
       } catch {}
     }
 

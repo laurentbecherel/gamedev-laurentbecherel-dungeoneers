@@ -257,6 +257,63 @@ body.editor {
 .json-editor { min-height: 520px; padding: 20px; font-size: 12px; }
 
 .nested-object { border-left-color: #3a433e; }
+.object-section {
+  margin-bottom: 7px;
+  padding: 0;
+}
+.form-root > .object-section {
+  padding: 0;
+}
+.object-section-toggle {
+  width: 100%;
+  min-height: 42px;
+  display: grid;
+  grid-template-columns: 18px 1fr auto;
+  align-items: center;
+  gap: 8px;
+  padding: 11px 13px;
+  border: 0;
+  color: #adb5b0;
+  background: transparent;
+  cursor: pointer;
+  text-align: left;
+  font: 700 9px/1.2 var(--mono);
+  letter-spacing: .13em;
+  text-transform: uppercase;
+}
+.object-section-toggle:hover {
+  color: var(--ink);
+  background: rgba(255,255,255,.025);
+}
+.object-section-toggle:focus-visible {
+  outline: 1px solid var(--ember-dark);
+  outline-offset: -1px;
+}
+.object-section-chevron {
+  color: var(--ember);
+  font-size: 17px;
+  line-height: 1;
+  transform-origin: center;
+  transition: transform .12s ease;
+}
+.object-section.is-expanded > .object-section-toggle .object-section-chevron {
+  transform: rotate(90deg);
+}
+.object-section-count {
+  min-width: 22px;
+  padding: 2px 5px;
+  border: 1px solid #303735;
+  color: var(--dim);
+  text-align: center;
+  font-size: 8px;
+  letter-spacing: 0;
+}
+.object-section-content {
+  margin: 0 13px 13px 21px;
+  padding: 3px 0 0 14px;
+}
+.object-section-content[hidden] { display: none; }
+.object-section-content > .field-group:last-child { margin-bottom: 0; }
 .array-item,
 .palette-editor-root,
 .palette-field,

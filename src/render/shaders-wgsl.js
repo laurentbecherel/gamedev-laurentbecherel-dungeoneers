@@ -1634,18 +1634,21 @@ function makeDebugFS(mode) {
   );
 }
 
-export const fsDebugMossNoiseWgsl = makeDebugFS(1);
-export const fsDebugMossEnvWgsl = makeDebugFS(2);
-export const fsDebugMossMaterialWgsl = makeDebugFS(3);
-export const fsDebugMossCombinedWgsl = makeDebugFS(4);
-export const fsDebugPuddleWgsl = makeDebugFS(5);
-export const fsDebugDamagedWgsl = makeDebugFS(6);
-export const fsDebugDamagedNoiseWgsl = makeDebugFS(7);
-export const fsDebugStructuralWgsl = makeDebugFS(8);
-export const fsDebugBloodWgsl = makeDebugFS(9);
-export const fsDebugDustWgsl = makeDebugFS(10);
-export const fsDebugDamagedPlacementWgsl = makeDebugFS(11);
-export const fsDebugDamagedFactorsWgsl = makeDebugFS(12);
+// One runtime-selected debug shader replaces the old per-mode variants. The
+// pipeline is compiled once and frame.pbrDebugMode changes are then uniform-only.
+export const fsDebugModifiersWgsl = makeDebugFS('frame.pbrDebugMode');
+export const fsDebugMossNoiseWgsl = fsDebugModifiersWgsl;
+export const fsDebugMossEnvWgsl = fsDebugModifiersWgsl;
+export const fsDebugMossMaterialWgsl = fsDebugModifiersWgsl;
+export const fsDebugMossCombinedWgsl = fsDebugModifiersWgsl;
+export const fsDebugPuddleWgsl = fsDebugModifiersWgsl;
+export const fsDebugDamagedWgsl = fsDebugModifiersWgsl;
+export const fsDebugDamagedNoiseWgsl = fsDebugModifiersWgsl;
+export const fsDebugStructuralWgsl = fsDebugModifiersWgsl;
+export const fsDebugBloodWgsl = fsDebugModifiersWgsl;
+export const fsDebugDustWgsl = fsDebugModifiersWgsl;
+export const fsDebugDamagedPlacementWgsl = fsDebugModifiersWgsl;
+export const fsDebugDamagedFactorsWgsl = fsDebugModifiersWgsl;
 export const fsDebugMossWgsl = fsDebugMossCombinedWgsl;
 
 // Compatibility exports matching old shaders.js names (non-WGSL suffix)

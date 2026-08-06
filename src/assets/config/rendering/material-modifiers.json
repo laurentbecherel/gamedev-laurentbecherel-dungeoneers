@@ -1,7 +1,10 @@
 {
-  "version": 8,
+  "version": 9,
   "enabled": true,
   "note": "v16 moss decomposed: noise (natural), env/nearwall (corners+seams+room biome), material (AO/Height/Rough combo), combined final. All tunable via JSON/UBO, no hard-coded magic.",
+  "debug": {
+    "view": "damagedPlacement"
+  },
   "noise": {
     "size": 128,
     "seed": null,
@@ -205,29 +208,29 @@
         "desc": "Exposed stone color and its blend strength. Set colorStrength to 0 to preserve host albedo while retaining PBR damage."
       },
       "noise": {
-        "scale": 2.2,
-        "threshold": 0.48,
-        "feather": 0.16,
-        "warpStrength": 0.55,
+        "scale": 2.3,
+        "threshold": 0.54,
+        "feather": 0.1,
+        "warpStrength": 0,
         "desc": "True 3D damage field. Higher threshold makes scars sparser; feather controls the chipped boundary."
       },
       "scales": {
-        "large": 1,
-        "medium": 2.4,
-        "small": 5.8,
-        "crack": 3.2,
+        "large": 0.3,
+        "medium": 2.8,
+        "small": 14.4,
+        "crack": 11.3,
         "desc": "Frequency multipliers for large/medium/small/crack layers relative to base scale"
       },
       "weights": {
-        "large": 0.45,
-        "medium": 0.28,
-        "small": 0.15,
-        "crack": 0.38,
+        "large": 0.85,
+        "medium": 0.55,
+        "small": 0.25,
+        "crack": 0.25,
         "desc": "Weights of the large chips, medium impacts, fine grit and ridged crack layers. Oriented scratch strength lives under crack.scratchWeight."
       },
       "crack": {
-        "ridgeStrength": 1,
-        "scratchScale": 8.5,
+        "ridgeStrength": 0.9,
+        "scratchScale": 8,
         "scratchWeight": 0.2,
         "edgeSharpen": 2.2,
         "detailScale": 12,
@@ -245,7 +248,7 @@
         "desc": "Material gating – full 0-1 range by default (damage everywhere on brick). Lower base=strong gating, combine 0=max permissive, 1=mul restrictive"
       },
       "final": {
-        "biomeBase": 0.2,
+        "biomeBase": 0.38,
         "envBase": 0.4,
         "matBase": 0.55,
         "boost": 1.5,
@@ -410,6 +413,9 @@
     }
   },
   "docs": {
+    "debug": {
+      "view": "Live modifier visualization. Damage views: Noise shows isotropic 3D chips/cracks; Placement shows the generated room/wall field (blue low, orange high); Factors uses R=noise, G=placement, B=material × environment; Final shows the actual application mask. One shared shader is compiled asynchronously, then all view changes are uniform-only."
+    },
     "generator": {
       "damaged": {
         "threshold": "Coverage cutoff for the coarse room-scale damage field.",
@@ -847,6 +853,39 @@
     "system": "Moss, puddle, blood, dust, and damaged parameters use a 48-vec4 (768B) T1 live UBO. Modifier-map generator changes are also re-baked and uploaded during live edits."
   },
   "ui": {
+    "debug": {
+      "view": {
+        "type": "enum",
+        "options": [
+          "off",
+          "damagedNoise",
+          "damagedPlacement",
+          "damagedFactors",
+          "damagedFinal",
+          "mossNoise",
+          "mossEnvironment",
+          "mossMaterial",
+          "mossFinal",
+          "puddleFinal",
+          "bloodFinal",
+          "dustFinal"
+        ],
+        "labels": {
+          "off": "Off — normal rendering",
+          "damagedNoise": "Damage — 3D noise",
+          "damagedPlacement": "Damage — room/wall placement",
+          "damagedFactors": "Damage — RGB factor breakdown",
+          "damagedFinal": "Damage — final application mask",
+          "mossNoise": "Moss — 3D noise",
+          "mossEnvironment": "Moss — environment",
+          "mossMaterial": "Moss — material eligibility",
+          "mossFinal": "Moss — final mask",
+          "puddleFinal": "Puddle — final mask",
+          "bloodFinal": "Blood — final mask",
+          "dustFinal": "Dust — final mask"
+        }
+      }
+    },
     "moss": {
       "noiseScale": {
         "min": 0,

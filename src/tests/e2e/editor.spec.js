@@ -66,6 +66,41 @@ test("config/display shows rendering.json with fov and toggles", async ({ page }
   expect(panelText.toLowerCase()).toContain("fov");
 });
 
+test("material modifiers exposes a live debug-view dropdown", async ({ page, context }) => {
+  const gamePage = await context.newPage();
+  await gamePage.goto("/game.html");
+  await gamePage.waitForFunction(() => !!window._gameRenderer, null, { timeout: 10000 });
+  await page.goto("/editor.html");
+  await expect(page.locator(".tree-file").first()).toBeVisible({ timeout: 5000 });
+  await page.locator(".tree-file", { hasText: "material-modifiers.json" }).first().click();
+  await page.waitForTimeout(350);
+  const topSections = page.locator(".form-root > .object-section > .object-section-toggle");
+  const debugToggle = topSections.filter({ hasText: "Debug" }).first();
+  const modifiersToggle = topSections.filter({ hasText: "Modifiers" }).first();
+  await expect(debugToggle).toHaveAttribute("aria-expanded", "false");
+  await expect(modifiersToggle).toHaveAttribute("aria-expanded", "false");
+  await debugToggle.click();
+  await expect(debugToggle).toHaveAttribute("aria-expanded", "true");
+  const debugSelect = page.locator("select.field-select").first();
+  await expect(debugSelect).toBeVisible({ timeout: 3000 });
+  await expect(debugSelect.locator('option[value="damagedNoise"]')).toHaveCount(1);
+  await expect(debugSelect.locator('option[value="damagedPlacement"]')).toHaveCount(1);
+  await expect(debugSelect.locator('option[value="damagedFactors"]')).toHaveCount(1);
+  await expect(debugSelect.locator('option[value="damagedFinal"]')).toHaveCount(1);
+  await debugSelect.selectOption("damagedFactors");
+  await expect(debugSelect).toHaveValue("damagedFactors");
+  await expect.poll(() => gamePage.evaluate(() => window._gameRenderer?.pbrDebugMode)).toBe(12);
+  await debugSelect.selectOption("off");
+  await expect.poll(() => gamePage.evaluate(() => window._gameRenderer?.pbrDebugMode)).toBe(0);
+  await modifiersToggle.click();
+  await expect(modifiersToggle).toHaveAttribute("aria-expanded", "true");
+  const mossToggle = page.locator(".object-section-toggle").filter({ hasText: "Moss" }).first();
+  await expect(mossToggle).toBeVisible();
+  await expect(mossToggle).toHaveAttribute("aria-expanded", "false");
+  await mossToggle.click();
+  await expect(mossToggle).toHaveAttribute("aria-expanded", "true");
+});
+
 test("pom.json shows centered reference plane 0.5 and clamping fields", async ({ page }) => {
   await page.goto("/editor.html");
   await page.locator(".tree-file", { hasText: "pom.json" }).first().click();

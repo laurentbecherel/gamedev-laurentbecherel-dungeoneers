@@ -4,6 +4,7 @@ import { getLiveConfigManager } from "./config/live-config.js";
 const $ = id => document.getElementById(id);
 let current = null, currentData = null, lastSavedData = null, mode = "visual";
 const collapsed = new Set();
+const expandedFormSections = new Set();
 
 function clone(o){ try { return JSON.parse(JSON.stringify(o)); } catch { return o; } }
 function deepEqual(a,b){ try { return JSON.stringify(a)===JSON.stringify(b); } catch { return false; } }
@@ -951,6 +952,49 @@ function buildForm(container, obj, path) {
         continue;
       }
       const fg = document.createElement("div"); fg.className = "field-group";
+      const isObjectSection = val !== null && typeof val === "object" && !Array.isArray(val);
+      if (isObjectSection) {
+        fg.classList.add('object-section');
+        const assetKey = current ? `${current.category}/${current.name}` : 'unknown';
+        const sectionKey = `form:${assetKey}:${fp}`;
+        const isExpanded = expandedFormSections.has(sectionKey);
+        const displayName = key.replace(/([A-Z])/g, ' $1').replace(/^./, s => s.toUpperCase());
+        const childCount = Object.keys(val).filter(k => !k.startsWith('_') && !['docs','ui','ranges','schema','editor'].includes(k)).length;
+        const toggle = document.createElement('button');
+        toggle.type = 'button';
+        toggle.className = 'object-section-toggle';
+        toggle.setAttribute('aria-expanded', String(isExpanded));
+        toggle.setAttribute('aria-controls', `section-${sectionKey.replace(/[^a-z0-9_-]/gi, '-')}`);
+        const docText = getDocForPath(fp);
+        if (docText) toggle.title = docText;
+        const chevron = document.createElement('span'); chevron.className = 'object-section-chevron'; chevron.setAttribute('aria-hidden', 'true'); chevron.textContent = '›';
+        const title = document.createElement('span'); title.className = 'object-section-title'; title.textContent = displayName;
+        const count = document.createElement('span'); count.className = 'object-section-count'; count.textContent = String(childCount);
+        toggle.append(chevron, title, count);
+        fg.appendChild(toggle);
+
+        const sub = document.createElement('div');
+        sub.className = 'nested-object object-section-content';
+        sub.id = toggle.getAttribute('aria-controls');
+        sub.hidden = !isExpanded;
+        buildForm(sub, val, fp);
+        fg.appendChild(sub);
+
+        const setExpanded = expanded => {
+          if (expanded) expandedFormSections.add(sectionKey); else expandedFormSections.delete(sectionKey);
+          toggle.setAttribute('aria-expanded', String(expanded));
+          sub.hidden = !expanded;
+          fg.classList.toggle('is-expanded', expanded);
+        };
+        fg.classList.toggle('is-expanded', isExpanded);
+        toggle.onclick = () => setExpanded(toggle.getAttribute('aria-expanded') !== 'true');
+        toggle.onkeydown = event => {
+          if (event.key === 'ArrowRight') { event.preventDefault(); setExpanded(true); }
+          else if (event.key === 'ArrowLeft') { event.preventDefault(); setExpanded(false); }
+        };
+        container.appendChild(fg);
+        continue;
+      }
       const lbl = document.createElement("label"); lbl.className = "field-label";
       // tooltip from docs
       const docText = getDocForPath(fp);
