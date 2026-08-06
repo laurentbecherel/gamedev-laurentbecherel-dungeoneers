@@ -275,10 +275,10 @@ fn shadeWallCell(wallU: f32, wallV: f32, matId: f32, wc: f32, side: i32, stepDir
   let insideChannelOpening: bool = abs(wallU - 0.5) <= featureUniforms.channel.x * 0.5;
   let extendsToWater: bool = hasGrille && insideChannelOpening;
   let wallFloor: f32 = select(0.0, grilleFloor, extendsToWater);
-  let worldPos: vec3<f32> = vec3<f32>(hitPos.x, hitPos.y, mix(1.15, wallFloor, wallV));
+  let worldPos: vec3<f32> = vec3<f32>(hitPos.x, hitPos.y, mix(frame.wallWorldHeight, wallFloor, wallV));
   // Preserve the host masonry scale above z=0. Mirror the small submerged
   // continuation instead of stretching one texel row down the wall skirt.
-  let hostVRaw: f32 = (1.15 - worldPos.z) / 1.15;
+  let hostVRaw: f32 = (frame.wallWorldHeight - worldPos.z) / max(frame.wallWorldHeight, 0.0001);
   let hostV: f32 = clamp(select(hostVRaw, 2.0 - hostVRaw, hostVRaw > 1.0), 0.0, 1.0);
   uv.y = hostV;
   let viewDir: vec3<f32> = normalize(vec3<f32>(frame.playerPos, frame.playerHeight) - worldPos);

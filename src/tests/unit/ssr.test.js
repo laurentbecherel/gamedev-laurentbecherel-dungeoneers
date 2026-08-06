@@ -63,6 +63,14 @@ describe('SSR Math — worldToScreen projection', () => {
     assert.ok(Math.abs(proj.uv[1]-0.5) < 0.05, `uvY ${proj.uv[1]} not centered`);
   });
 
+  it('custom horizon shifts projection without changing horizontal aim', () => {
+    const camPos=[4,4], eyeZ=0.5, angle=0, planeLen=Math.tan(1.0*0.5), res=[640,360];
+    const forward = [6,4,0.5];
+    const proj = worldToScreenUV(forward, camPos, eyeZ, angle, planeLen, res, 0, 0.38);
+    assert.ok(Math.abs(proj.uv[0]-0.5) < 0.001);
+    assert.ok(Math.abs(proj.uv[1]-0.38) < 0.001);
+  });
+
   it('left/right produce uvX <0.5 / >0.5 regardless of angle', () => {
     const angles = [0, Math.PI/4, -Math.PI/2, Math.PI, 2.1];
     for (const ang of angles) {

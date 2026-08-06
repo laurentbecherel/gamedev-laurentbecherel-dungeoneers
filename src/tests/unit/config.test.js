@@ -130,6 +130,8 @@ test("rendering.json fov + eye + surface + toggles", async () => {
   const r = JSON.parse(await fs.readFile(path.join(CONFIG_ROOT, "rendering/rendering.json"), "utf8"));
   assert(r.fov === 1.0 || r.fov >= 0.8, "fov ~1.0");
   assert(r.eye && typeof r.eye.height === 'number' && r.eye.height === 0.5, "eye height 0.5");
+  assert(r.eye.horizon > 0 && r.eye.horizon < 1, "horizon is a normalized screen position");
+  assert(r.geometry && typeof r.geometry.wallHeight === 'number' && r.geometry.wallHeight > 0, "wall height is configurable");
   assert(r.surface.floorAlbedoMul === 0.7 && r.surface.ceilAlbedoMul === 0.8 && r.surface.wallDarkenSide === 0.85);
   assert(r.toggles && r.toggles.chamferDefault === true && r.toggles.cornerDefault === true, "toggles include chamfer/corner default true");
 });

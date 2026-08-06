@@ -207,6 +207,8 @@ const FRAME_OFFSETS = {
   ssrTintStrength: 612,
   ssrAdditiveBoost: 616,
   ssrTint: 624,
+  horizon: 640,
+  wallWorldHeight: 644,
 };
 const FRAME_UNIFORM_SIZE = 656;
 
@@ -231,6 +233,8 @@ function packFrameUniforms(buf, cfg) {
   wF32(FRAME_OFFSETS.fov, cfg.fov ?? 1.0);
   wF32(FRAME_OFFSETS.playerHeight, cfg.playerHeight ?? 0.5);
   wF32(FRAME_OFFSETS.bobPixels, cfg.bobPixels ?? 0);
+  wF32(FRAME_OFFSETS.horizon, cfg.horizon ?? 0.5);
+  wF32(FRAME_OFFSETS.wallWorldHeight, cfg.wallWorldHeight ?? 1.15);
   wVec2(FRAME_OFFSETS.mapSize, cfg.mapSize || [32,32]);
   wF32(FRAME_OFFSETS.time, cfg.time ?? 0);
   wF32(FRAME_OFFSETS.wallCount, cfg.wallCount ?? 1);
@@ -1998,6 +2002,8 @@ export class GPURenderer {
       fov: this._resolveConfigValue(cfg, ['rendering.fov','renderer.fov'], 1.0),
       playerHeight: rawPos.z ?? player.height ?? 0.5,
       bobPixels,
+      horizon: getDeep(cfg, ['rendering.eye.horizon','rendering.horizon'], renderingCfg.eye?.horizon ?? 0.5),
+      wallWorldHeight: getDeep(cfg, ['rendering.geometry.wallHeight'], renderingCfg.geometry?.wallHeight ?? 1.15),
       mapSize: [dungeon.w, dungeon.h],
       time: timeSec,
       wallCount: this.materialInfo?.wallCount||1,
@@ -2216,6 +2222,7 @@ export class GPURenderer {
           resolution: [this.canvas.width||640, this.canvas.height||360],
           bobPixels,
           eyeZ: rawPos.z ?? player.height ?? 0.5,
+          horizon: frameUniformValues.horizon,
         };
         const spritesForRender = [];
         for (const orig of this._sprites) {

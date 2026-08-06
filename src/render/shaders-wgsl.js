@@ -184,7 +184,8 @@ struct FrameUniforms {
   ssrAdditiveBoost: f32,
   ssrTint: vec3<f32>,
   _padTint: f32,
-  _padEnd: vec2<i32>,
+  horizon: f32,
+  wallWorldHeight: f32,
 };
 
 struct LightEntry {
@@ -253,6 +254,8 @@ var<private> u_playerAngle: f32;
 var<private> u_fov: f32;
 var<private> u_playerHeight: f32;
 var<private> u_bobPixels: f32;
+var<private> u_horizon: f32;
+var<private> u_wallWorldHeight: f32;
 var<private> u_mapSize: vec2<f32>;
 var<private> u_time: f32;
 var<private> u_wallCount: f32;
@@ -381,6 +384,8 @@ fn initUniforms() {
   u_fov = frame.fov;
   u_playerHeight = frame.playerHeight;
   u_bobPixels = frame.bobPixels;
+  u_horizon = frame.horizon;
+  u_wallWorldHeight = frame.wallWorldHeight;
   u_mapSize = frame.mapSize;
   u_time = frame.time;
   u_wallCount = frame.wallCount;
@@ -597,7 +602,7 @@ fn fs_main(@location(0) v_uv: vec2<f32>, @builtin(position) fragPos: vec4<f32>) 
   var resolvedReflection: f32 = 0.0;
 
   if (hit == 1) {
-    var floorH: f32 = 0.0; var ceilH: f32 = 1.15;
+    var floorH: f32 = 0.0; var ceilH: f32 = u_wallWorldHeight;
     let hitFeatureWord: u32 = loadFeatureCell(hitCell);
     var wallU: f32;
     if (side == 0) { wallU = hitPos.y - floor(hitPos.y); } else { wallU = hitPos.x - floor(hitPos.x); }
@@ -609,12 +614,12 @@ fn fs_main(@location(0) v_uv: vec2<f32>, @builtin(position) fragPos: vec4<f32>) 
     }
     let eyeZ: f32 = u_playerHeight;
     let wallH_full: f32 = resolution.y / max(perpDist, 0.0001) * resolution.x / resolution.y * 0.5 / tan(u_fov * 0.5);
-    let drawStart: f32 = resolution.y * 0.5 - (ceilH - eyeZ) * wallH_full;
-    let drawEnd: f32 = resolution.y * 0.5 + (eyeZ - floorH) * wallH_full;
+    let drawStart: f32 = resolution.y * u_horizon - (ceilH - eyeZ) * wallH_full;
+    let drawEnd: f32 = resolution.y * u_horizon + (eyeZ - floorH) * wallH_full;
     let wallV_raw: f32 = (fragCoord.y - drawStart) / max(drawEnd - drawStart, 0.001);
     gWallV_raw = wallV_raw;
     if (wallV_raw < 0.0 || wallV_raw > 1.0) {
-      let horizon: f32 = 0.5; let vNorm: f32 = fragCoord.y / resolution.y;
+      let horizon: f32 = u_horizon; let vNorm: f32 = fragCoord.y / resolution.y;
       if (vNorm > horizon) {
         let projection: f32 = resolution.x / resolution.y * 0.5 / tan(u_fov * 0.5);
         let verticalSlope: f32 = max(0.0001, vNorm - horizon) / projection;
@@ -628,12 +633,12 @@ fn fs_main(@location(0) v_uv: vec2<f32>, @builtin(position) fragPos: vec4<f32>) 
         let shade = shadeFloorCell(floorWorld, floorUV, matId, fc, ray, eyeZ, floorH2);
         finalColor = shade.color; perpDist = dist; resolvedNormal = shade.normal; resolvedReflection = shade.reflectionWeight;
       } else {
-        var dist: f32 = (1.15 - eyeZ) / max(0.0001, horizon - vNorm) * resolution.x / resolution.y * 0.5 / tan(u_fov * 0.5);
+        var dist: f32 = (u_wallWorldHeight - eyeZ) / max(0.0001, horizon - vNorm) * resolution.x / resolution.y * 0.5 / tan(u_fov * 0.5);
         dist = max(dist, 0.001);
         let ceilWorld: vec2<f32> = u_playerPos + ray * dist;
         let ceilUV: vec2<f32> = fract(ceilWorld);
         let matId: f32 = fetchCeilMatId(vec2<i32>(floor(ceilWorld)));
-        let shade = shadeCeilCell(ceilWorld, ceilUV, matId, cc, ray, eyeZ, 1.15);
+        let shade = shadeCeilCell(ceilWorld, ceilUV, matId, cc, ray, eyeZ, u_wallWorldHeight);
         finalColor = shade.color; perpDist = dist; resolvedNormal = shade.normal;
       }
     } else {
@@ -645,7 +650,7 @@ fn fs_main(@location(0) v_uv: vec2<f32>, @builtin(position) fragPos: vec4<f32>) 
       else { resolvedNormal = vec3<f32>(0.0,f32(-stepDir.y),0.0); }
     }
   } else {
-    let horizon: f32 = 0.5; let vNorm2: f32 = 1.0 - v_uv.y;
+    let horizon: f32 = u_horizon; let vNorm2: f32 = 1.0 - v_uv.y;
     let pc: vec2<i32> = vec2<i32>(vec2<i32>(floor(u_playerPos)));
     var pfH: f32 = 0.0;
     if (pc.x >= 0 && pc.y >= 0 && pc.x < i32(u_mapSize.x) && pc.y < i32(u_mapSize.y)) {
@@ -666,7 +671,7 @@ fn fs_main(@location(0) v_uv: vec2<f32>, @builtin(position) fragPos: vec4<f32>) 
       let shade = shadeFloorCell(floorWorld, floorUV, matId, fc, ray, eyeZ2, floorH);
       finalColor = shade.color; perpDist = dist; resolvedNormal = shade.normal; resolvedReflection = shade.reflectionWeight;
     } else {
-      var ceilH: f32 = 1.15; var dist: f32 = 0.001; var ceilWorld: vec2<f32> = vec2<f32>(0.0);
+      var ceilH: f32 = u_wallWorldHeight; var dist: f32 = 0.001; var ceilWorld: vec2<f32> = vec2<f32>(0.0);
       for (var it: i32 = 0; it < 3; it++) {
         dist = (ceilH - eyeZ2) / max(0.0001, horizon - vNorm2) * resolution.x / resolution.y * 0.5 / tan(u_fov * 0.5);
         if (dist < 0.001) { dist = 0.001; }
@@ -860,7 +865,8 @@ struct FrameUniforms {
   ssrAdditiveBoost: f32,
   ssrTint: vec3<f32>,
   _padTint: f32,
-  _padEnd: vec2<i32>,
+  horizon: f32,
+  wallWorldHeight: f32,
 };
 
 @group(0) @binding(3) var<uniform> frame: FrameUniforms;
@@ -894,7 +900,7 @@ fn worldToScreenUVSSR_Full(worldPos: vec3<f32>, camPos: vec2<f32>, eyeZ: f32, pl
   let fovFactor: f32 = 1.0 / max(0.0001, planeLen);
   let aspect: f32 = resolution.x / max(1.0, resolution.y);
   let yShift: f32 = (eyeZ - worldPos.z) / forwardDist * fovFactor * 0.5 * aspect;
-  let uvY_noBob: f32 = 0.5 - yShift;
+  let uvY_noBob: f32 = frame.horizon - yShift;
   let uvY: f32 = uvY_noBob + bobPixels / max(1.0, resolution.y);
   return vec3<f32>(uvX, uvY, forwardDist);
 }
@@ -1063,7 +1069,7 @@ fn fs_main(@location(0) v_uv: vec2<f32>) -> SSRFSOut {
   // raymarch pass. Reflective structural water is recessed and cannot assume z=0.
   let sourceVNorm: f32 = fragCoord.y / resolution.y + frame.bobPixels / max(1.0, resolution.y);
   let projectionScale: f32 = resolution.x / resolution.y * 0.5 / max(tan(frame.fov * 0.5), 0.0001);
-  let sourceHeight: f32 = frame.playerHeight - linearDepth * (sourceVNorm - 0.5) / projectionScale;
+  let sourceHeight: f32 = frame.playerHeight - linearDepth * (sourceVNorm - frame.horizon) / projectionScale;
   let worldPos: vec3<f32> = vec3<f32>(frame.playerPos + ray * linearDepth, sourceHeight);
   let eyePos: vec3<f32> = vec3<f32>(frame.playerPos, frame.playerHeight);
   let V: vec3<f32> = normalize(eyePos - worldPos);
@@ -1129,7 +1135,7 @@ struct FrameUniforms {
   chamferGridEnabled: i32, chamferGridFloorSize: f32, chamferGridCeilSize: f32, chamferGridFloorDarken: f32, chamferGridCeilDarken: f32, chamferGridFloorTrim: f32, chamferGridCeilTrim: f32, chamferGridFloorRough: f32, chamferGridCeilRough: f32, chamferGridFloorBlend: f32, chamferGridCeilBlend: f32, chamferGridCreviceEnd: f32, chamferGridCreviceSmoothEnd: f32, chamferGridTrimStart: f32, chamferGridTrimMid: f32, chamferGridTrimEnd: f32,
   cornerEnabled: i32, cornerRadius: f32, cornerMode: i32, cornerInner: i32, cornerBandNear: f32, cornerBandFarExtra: f32, cornerBandFarFactor: f32, cornerSectorThresh: f32, cornerNormalMix: f32, cornerAlbedoBoost: f32, cornerRoughMul: f32, cornerAoMul: f32,
   shadowBiasN: f32, shadowBiasDir: f32, shadowSunFactor: f32, shadowPointFactor: f32, shadowSunMax: f32, shadowPointEps: f32, shadowNormalThresh: f32,
-  pbrEmissiveAlbedoMul: f32, pbrEmissiveStrength: f32, pbrF0: f32, pbrAttenQuad: f32, pbrGGXEps: f32, renderFloorMul: f32, renderCeilMul: f32, renderWallDarken: f32, renderEyeFactor: f32, ssrDebugMode: i32, ssrSteps: i32, ssrBinarySteps: i32, ssrMaxDistance: f32, ssrThickness: f32, ssrStride: f32, ssrJitter: f32, ssrDepthBias: f32, ssrZThicknessScale: f32, ssrMinPuddleMask: f32, ssrNormalThreshold: f32, ssrMaxGrazingAngle: f32, ssrEdgeFadeStart: f32, ssrEdgeFadeEnd: f32, ssrDistanceFadeStart: f32, ssrDistanceFadeEnd: f32, ssrFresnelPower: f32, ssrFresnelMin: f32, ssrFresnelMax: f32, ssrBlendStrength: f32, ssrPuddleMaskInfluence: f32, ssrTintStrength: f32, ssrAdditiveBoost: f32, ssrTint: vec3<f32>, _padTint: f32, _padEnd: vec2<i32>,
+  pbrEmissiveAlbedoMul: f32, pbrEmissiveStrength: f32, pbrF0: f32, pbrAttenQuad: f32, pbrGGXEps: f32, renderFloorMul: f32, renderCeilMul: f32, renderWallDarken: f32, renderEyeFactor: f32, ssrDebugMode: i32, ssrSteps: i32, ssrBinarySteps: i32, ssrMaxDistance: f32, ssrThickness: f32, ssrStride: f32, ssrJitter: f32, ssrDepthBias: f32, ssrZThicknessScale: f32, ssrMinPuddleMask: f32, ssrNormalThreshold: f32, ssrMaxGrazingAngle: f32, ssrEdgeFadeStart: f32, ssrEdgeFadeEnd: f32, ssrDistanceFadeStart: f32, ssrDistanceFadeEnd: f32, ssrFresnelPower: f32, ssrFresnelMin: f32, ssrFresnelMax: f32, ssrBlendStrength: f32, ssrPuddleMaskInfluence: f32, ssrTintStrength: f32, ssrAdditiveBoost: f32, ssrTint: vec3<f32>, _padTint: f32, horizon: f32, wallWorldHeight: f32,
 };
 @group(0) @binding(3) var<uniform> frame: FrameUniforms;
 @group(1) @binding(0) var sceneTex: texture_2d<f32>;
@@ -1203,7 +1209,7 @@ struct FrameUniforms {
   chamferGridEnabled: i32, chamferGridFloorSize: f32, chamferGridCeilSize: f32, chamferGridFloorDarken: f32, chamferGridCeilDarken: f32, chamferGridFloorTrim: f32, chamferGridCeilTrim: f32, chamferGridFloorRough: f32, chamferGridCeilRough: f32, chamferGridFloorBlend: f32, chamferGridCeilBlend: f32, chamferGridCreviceEnd: f32, chamferGridCreviceSmoothEnd: f32, chamferGridTrimStart: f32, chamferGridTrimMid: f32, chamferGridTrimEnd: f32,
   cornerEnabled: i32, cornerRadius: f32, cornerMode: i32, cornerInner: i32, cornerBandNear: f32, cornerBandFarExtra: f32, cornerBandFarFactor: f32, cornerSectorThresh: f32, cornerNormalMix: f32, cornerAlbedoBoost: f32, cornerRoughMul: f32, cornerAoMul: f32,
   shadowBiasN: f32, shadowBiasDir: f32, shadowSunFactor: f32, shadowPointFactor: f32, shadowSunMax: f32, shadowPointEps: f32, shadowNormalThresh: f32,
-  pbrEmissiveAlbedoMul: f32, pbrEmissiveStrength: f32, pbrF0: f32, pbrAttenQuad: f32, pbrGGXEps: f32, renderFloorMul: f32, renderCeilMul: f32, renderWallDarken: f32, renderEyeFactor: f32, ssrDebugMode: i32, ssrSteps: i32, ssrBinarySteps: i32, ssrMaxDistance: f32, ssrThickness: f32, ssrStride: f32, ssrJitter: f32, ssrDepthBias: f32, ssrZThicknessScale: f32, ssrMinPuddleMask: f32, ssrNormalThreshold: f32, ssrMaxGrazingAngle: f32, ssrEdgeFadeStart: f32, ssrEdgeFadeEnd: f32, ssrDistanceFadeStart: f32, ssrDistanceFadeEnd: f32, ssrFresnelPower: f32, ssrFresnelMin: f32, ssrFresnelMax: f32, ssrBlendStrength: f32, ssrPuddleMaskInfluence: f32, ssrTintStrength: f32, ssrAdditiveBoost: f32, ssrTint: vec3<f32>, _padTint: f32, _padEnd: vec2<i32>,
+  pbrEmissiveAlbedoMul: f32, pbrEmissiveStrength: f32, pbrF0: f32, pbrAttenQuad: f32, pbrGGXEps: f32, renderFloorMul: f32, renderCeilMul: f32, renderWallDarken: f32, renderEyeFactor: f32, ssrDebugMode: i32, ssrSteps: i32, ssrBinarySteps: i32, ssrMaxDistance: f32, ssrThickness: f32, ssrStride: f32, ssrJitter: f32, ssrDepthBias: f32, ssrZThicknessScale: f32, ssrMinPuddleMask: f32, ssrNormalThreshold: f32, ssrMaxGrazingAngle: f32, ssrEdgeFadeStart: f32, ssrEdgeFadeEnd: f32, ssrDistanceFadeStart: f32, ssrDistanceFadeEnd: f32, ssrFresnelPower: f32, ssrFresnelMin: f32, ssrFresnelMax: f32, ssrBlendStrength: f32, ssrPuddleMaskInfluence: f32, ssrTintStrength: f32, ssrAdditiveBoost: f32, ssrTint: vec3<f32>, _padTint: f32, horizon: f32, wallWorldHeight: f32,
 };
 struct QuantOut { @location(0) color: vec4<f32>, };
 @group(1) @binding(0) var sceneTex: texture_2d<f32>;
@@ -1274,6 +1280,7 @@ struct CameraUniforms {
   bobPixels: f32,
   eyeZ: f32,
   time: f32,
+  horizon: f32,
   sunDir: vec3<f32>,
   sunIntensity: f32,
   sunColor: vec3<f32>,
@@ -1322,7 +1329,7 @@ fn vs_main(
   if (transformY <= 0.12) { out.pos = vec4<f32>(2.0,2.0,0.0,1.0); return out; }
   let screenX: f32 = 0.5 * (1.0 + transformX / transformY);
   let lineH: f32 = cam.resolution.y / transformY;
-  var yAtWorldZ: f32 = cam.resolution.y * 0.5 + lineH * (cam.eyeZ - worldPos.z);
+  var yAtWorldZ: f32 = cam.resolution.y * cam.horizon + lineH * (cam.eyeZ - worldPos.z);
   yAtWorldZ -= cam.bobPixels;
   let wScreen: f32 = lineH * a_size.x;
   let xScreen: f32 = screenX * cam.resolution.x + a_corner.x * wScreen * 0.5;
@@ -1358,6 +1365,7 @@ struct CameraUniforms {
   bobPixels: f32,
   eyeZ: f32,
   time: f32,
+  horizon: f32,
   sunDir: vec3<f32>,
   sunIntensity: f32,
   sunColor: vec3<f32>,
@@ -1519,7 +1527,7 @@ function makeDebugFS(mode) {
     if (hit == 1) {
       let wV: f32 = gWallV_raw;
       if (wV >= 0.0 && wV <= 1.0) {
-        dbgWPos = vec3<f32>(hitPos, (1.0 - wV) * 1.15);
+        dbgWPos = vec3<f32>(hitPos, (1.0 - wV) * u_wallWorldHeight);
         dbgIsFloor = 0.0;
         var wU: f32 = 0.0;
         if (side == 0) { wU = hitPos.y - floor(hitPos.y); } else { wU = hitPos.x - floor(hitPos.x); }
@@ -1527,12 +1535,12 @@ function makeDebugFS(mode) {
         dbgWallU = wU;
         dbgWallV = wV;
       } else {
-        if (vN > 0.5) { dbgWPos = vec3<f32>(u_playerPos + ray * perpDist, 0.0); dbgIsFloor = 1.0; }
-        else { dbgWPos = vec3<f32>(u_playerPos + ray * perpDist, 1.15); dbgIsFloor = 1.0; }
+        if (vN > u_horizon) { dbgWPos = vec3<f32>(u_playerPos + ray * perpDist, 0.0); dbgIsFloor = 1.0; }
+        else { dbgWPos = vec3<f32>(u_playerPos + ray * perpDist, u_wallWorldHeight); dbgIsFloor = 1.0; }
       }
     } else {
-      if (vN > 0.5) { dbgWPos = vec3<f32>(u_playerPos + ray * perpDist, 0.0); dbgIsFloor = 1.0; }
-      else { dbgWPos = vec3<f32>(u_playerPos + ray * perpDist, 1.15); dbgIsFloor = 1.0; }
+      if (vN > u_horizon) { dbgWPos = vec3<f32>(u_playerPos + ray * perpDist, 0.0); dbgIsFloor = 1.0; }
+      else { dbgWPos = vec3<f32>(u_playerPos + ray * perpDist, u_wallWorldHeight); dbgIsFloor = 1.0; }
     }
 
     var dbgCol: vec3<f32> = finalColor;
@@ -1549,7 +1557,7 @@ function makeDebugFS(mode) {
       var dbgAo: f32 = 0.85;
       var dbgRough: f32 = 0.7;
       if (dbgIsFloor > 0.5) {
-        if (vN > 0.5) {
+        if (vN > u_horizon) {
           let fcCell: vec2<i32> = vec2<i32>(floor(dbgFloorWorld));
           let matId: f32 = fetchFloorMatId(fcCell);
           let layer: i32 = clampLayer(matId, fc);
@@ -1593,7 +1601,7 @@ function makeDebugFS(mode) {
     } else if (${mode} == 8) {
       // Structural feature isolate: ordinary surfaces nearly black, channel
       // banks/water cyan-violet, and wall fixtures amber.
-      let isFloorPixel: bool = dbgIsFloor > 0.5 && vN > 0.5;
+      let isFloorPixel: bool = dbgIsFloor > 0.5 && vN > u_horizon;
       let isWallPixel: bool = dbgIsFloor < 0.5;
       let featureCell: vec2<i32> = select(hitCell, vec2<i32>(floor(dbgWPos.xy)), isFloorPixel);
       let featureWord: u32 = loadFeatureCell(featureCell);

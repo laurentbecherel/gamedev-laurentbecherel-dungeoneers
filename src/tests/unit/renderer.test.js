@@ -4,7 +4,7 @@ import fs from "fs/promises";
 import path from "path";
 
 // New WebGPU shader imports
-import { vsFullscreenWgsl, fsRaymarchWgsl, fsQuantizeWgsl, fsUIWgsl, vsUIWgsl, fsDebugStructuralWgsl, MAX_LIGHTS } from "../../render/shaders-wgsl.js";
+import { vsFullscreenWgsl, fsRaymarchWgsl, fsQuantizeWgsl, fsUIWgsl, vsUIWgsl, vsSpriteWgsl, fsDebugStructuralWgsl, MAX_LIGHTS } from "../../render/shaders-wgsl.js";
 import { isWebGPUSupported, isWebGL2Supported, createTexture, createTexture2DArray, createUniformBuffer } from "../../render/gpu-utils.js";
 
 const rendererPath = path.join(process.cwd(), "render", "renderer-gpu.js");
@@ -215,6 +215,20 @@ test("structural debug shader isolates channels and grilles", () => {
   assert(fsDebugStructuralWgsl.includes("FEATURE_GRILLE"));
   assert(fsDebugStructuralWgsl.includes("Structural feature isolate"));
   assert(fsRaymarchWgsl.includes("traceFeatureFloorSurface"), "recessed features use a stable nearest-hit floor trace");
+});
+
+test("raycaster and sprite shaders share the configurable camera horizon", () => {
+  assert(fsRaymarchWgsl.includes("frame.horizon"));
+  assert(fsRaymarchWgsl.includes("u_horizon"));
+  assert(vsSpriteWgsl.includes("cam.horizon"));
+});
+
+test("wall world height is asset-driven throughout projection and shading", async () => {
+  const rendererSource = await fs.readFile(rendererPath, "utf8");
+  assert(rendererSource.includes("rendering.geometry.wallHeight"));
+  assert(rendererSource.includes("FRAME_OFFSETS.wallWorldHeight"));
+  assert(fsRaymarchWgsl.includes("frame.wallWorldHeight"));
+  assert(fsRaymarchWgsl.includes("u_wallWorldHeight"));
 });
 
 test("sewer appearance and intersection tuning are asset-driven", async () => {

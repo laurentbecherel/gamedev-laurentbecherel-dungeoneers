@@ -152,6 +152,7 @@ export class SpriteGpuRenderer {
       f32(24, camera.bobPixels || 0);
       f32(28, camera.eyeZ || 0.5);
       f32(32, time);
+      f32(36, camera.horizon ?? 0.5);
       f32(48, opts.sunDir?.x ?? -0.55);
       f32(52, opts.sunDir?.y ?? -0.45);
       f32(56, opts.sunDir?.z ?? -0.7);

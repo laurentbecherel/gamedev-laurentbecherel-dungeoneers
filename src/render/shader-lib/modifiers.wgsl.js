@@ -225,8 +225,9 @@ fn mossEnvMask(worldPos: vec3<f32>, isFloorSurface: f32) -> f32 {
   let wallBaseMask: f32 = mix(wallBase, 1.0, bottomBias);
   let wallEdgeMask: f32 = mix(wallEdgeBase, 1.0, nearWallWall);
   let wallMask: f32 = wallBaseMask * wallEdgeMask;
-  let ceilReduce: f32 = 1.0 - smoothstep(0.7, 1.15, worldPos.z) * ceilReduceF;
-  floorMask = floorMask * mix(1.0, ceilReduce, step(0.7, worldPos.z));
+  let wallUpperStart: f32 = frame.wallWorldHeight * 0.60869565;
+  let ceilReduce: f32 = 1.0 - smoothstep(wallUpperStart, frame.wallWorldHeight, worldPos.z) * ceilReduceF;
+  floorMask = floorMask * mix(1.0, ceilReduce, step(wallUpperStart, worldPos.z));
   return clamp(mix(wallMask, floorMask, isFloor), 0.0, 1.0);
 }
 
@@ -444,7 +445,7 @@ fn damagedNoiseShape(w: vec3<f32>) -> f32 {
 fn damagedEnvMask(w: vec3<f32>, isFloor: f32) -> f32 {
   let eBase: f32 = mossDefault(modifiersBlock.modDamagedFinal.y, 0.25);
   let bot: f32 = 1.0 - smoothstep(0.0, 0.18, w.z) * 0.10;
-  let top: f32 = 1.0 - smoothstep(0.70, 1.15, w.z) * 0.30;
+  let top: f32 = 1.0 - smoothstep(frame.wallWorldHeight * 0.60869565, frame.wallWorldHeight, w.z) * 0.30;
   let wall: f32 = mix(eBase, 1.0, bot * top);
   return clamp(mix(wall, 1.0, step(0.5, isFloor)), 0.0, 1.0);
 }
