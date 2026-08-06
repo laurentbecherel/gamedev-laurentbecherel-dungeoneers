@@ -572,6 +572,7 @@ export async function generateDungeon(config, seedOverride = null) {
     const modMap = generateModifierMap(dungeon, config);
     dungeon.modifierMap = modMap;
     dungeon.modifierData = modMap.data;
+    dungeon.modifierData2 = modMap.data2;
   } catch(e){ console.warn('[gen] modifier map failed', e); dungeon.modifierMap = null; }
   dungeon.meta = {themeId:"classic", themeName:"Classic Dungeon", levelIndex, levelCount, boundaryWallId,
     zoneSummary: theme.zones.map(z=>z.name), edges: edges.length, rolesSummary: Object.fromEntries([...new Set(rooms.map(r=>r.role))].map(r=>[r, rooms.filter(rr=>rr.role===r).length])),

@@ -4,7 +4,7 @@ import fs from 'fs/promises';
 import path from 'path';
 import { generateMaterialArrayData } from '../../world/materials.js';
 import { generateNoiseTextureData, valueNoise2DPeriodic, fbm2DPeriodic } from '../../world/noise.js';
-import { MOD_CHANNELS, MOD2_CHANNELS, MOD_PACKING, generateModifierMap } from '../../world/modifiers.js';
+import { MOD_CHANNELS, MOD2_CHANNELS, MOD_PACKING, generateModifierMap, decodeModifierPixel } from '../../world/modifiers.js';
 
 const wallMats = [
   { id:1, base:[138,58,44], roughness:0.85, variationSeed:1, proc:{groutWidth:1, domeHeight:0.28} },
@@ -67,18 +67,53 @@ test('P1: noise texture seamless - periodic wrapping', () => {
   assert(borderJump < 100, 'seamless border jump <100, got ' + borderJump);
 });
 
-test('P2: modifier channel mapping enum matches shader and packing v2 (2 textures)', () => {
+test('modifier channel mapping matches packing v3 (2 textures)', () => {
   assert(MOD_CHANNELS.MOSS === 0, 'MOSS channel 0 R tex1');
   assert(MOD_CHANNELS.WATER === 1, 'WATER channel 1 G tex1');
   assert(MOD_CHANNELS.PUDDLE === 2, 'PUDDLE channel 2 B tex1');
-  assert(MOD_CHANNELS.DUST === 3, 'DUST channel 3 A tex1');
+  assert(MOD_CHANNELS.WALL_PROXIMITY === 3, 'tex1 A remains the moss wall-proximity field');
   assert(MOD2_CHANNELS.DAMAGED === 0, 'DAMAGED channel 0 R tex2');
   assert(MOD2_CHANNELS.BLOOD === 1, 'BLOOD channel 1 G tex2');
+  assert(MOD2_CHANNELS.DUST === 2, 'DUST channel 2 B tex2');
   assert(MOD_PACKING.tex1.channels.R.name === 'moss', 'tex1 R moss');
   assert(MOD_PACKING.tex1.channels.G.name === 'water', 'tex1 G water');
   assert(MOD_PACKING.tex1.channels.B.name === 'puddle', 'tex1 B puddle');
   assert(MOD_PACKING.tex2.channels.R.name === 'damaged', 'tex2 R damaged');
   assert(MOD_PACKING.tex2.channels.G.name === 'blood', 'tex2 G blood');
+  assert(MOD_PACKING.tex2.channels.B.name === 'dust', 'tex2 B dust');
+});
+
+test('blood and dust generator fields are nonzero, distinct, and decodable', () => {
+  const w = 12, h = 10;
+  const dungeon = {
+    w, h,
+    grid: new Uint8Array(w*h),
+    floorHeight: new Float32Array(w*h),
+    seed: 7331,
+    rooms: [{ x:1, y:1, w:10, h:8, role:'guardian' }]
+  };
+  const config = { materialModifiers: {
+    enabled: true,
+    generator: {
+      blood: { threshold:0, feather:0.4, boost:2, wallWeight:1 },
+      dust: { threshold:0, feather:0.4, boost:2, wallWeight:1 },
+      roleWeights: { guardian:{ moss:0, puddle:0, damaged:0, blood:1, dust:1 } }
+    }
+  } };
+  const map = generateModifierMap(dungeon, config);
+  let bloodMax = 0, dustMax = 0, proximityMax = 0;
+  for (let i=0; i<w*h; i++) {
+    bloodMax = Math.max(bloodMax, map.data2[i*4 + MOD2_CHANNELS.BLOOD]);
+    dustMax = Math.max(dustMax, map.data2[i*4 + MOD2_CHANNELS.DUST]);
+    proximityMax = Math.max(proximityMax, map.data[i*4 + MOD_CHANNELS.WALL_PROXIMITY]);
+  }
+  assert(bloodMax > 0, 'blood story field generated');
+  assert(dustMax > 0, 'dust story field generated');
+  assert(proximityMax > 0, 'moss wall proximity remains available');
+  const decoded = decodeModifierPixel([0,0,0,128], [0,64,192,0]);
+  assert.equal(decoded.blood, 64/255);
+  assert.equal(decoded.dust, 192/255);
+  assert.equal(decoded.wallProximity, 128/255);
 });
 
 test('P2: modifier map generation disabled returns all zeros but valid texture', () => {
@@ -149,6 +184,21 @@ test('moss modifier has independent albedo and surface detail', async () => {
   assert(shader.includes('clamp(mossStrength * mossColorStrength, 0.0, 1.0)'), 'moss gain cannot extrapolate its albedo blend');
 });
 
+test('blood and dust have dedicated shader blocks and live editor schemas', async () => {
+  const shader = await fs.readFile(path.join(process.cwd(), 'render', 'shader-lib', 'modifiers.wgsl.js'), 'utf8');
+  const renderer = await fs.readFile(path.join(process.cwd(), 'render', 'renderer-gpu.js'), 'utf8');
+  const config = JSON.parse(await fs.readFile(path.join(process.cwd(), 'assets', 'config', 'rendering', 'material-modifiers.json'), 'utf8'));
+  assert(shader.includes('fn bloodFinalMask') && shader.includes('fn dustFinalMask'));
+  assert(shader.includes('modBloodAlbedo') && shader.includes('modDustAlbedo'));
+  assert(shader.includes('mod2.g') && shader.includes('mod2.b'), 'shader reads dedicated blood and dust channels');
+  assert(renderer.includes('MODIFIERS_VEC4_COUNT = 47'));
+  assert(renderer.includes('this._modifierGeneratorSignature !== nextGeneratorSignature'), 'live generator edits rebake story fields');
+  assert(config.modifiers.blood.enabled && config.modifiers.dust.enabled);
+  assert(config.ui.blood.noise.scale.max > config.modifiers.blood.noise.scale);
+  assert(config.ui.dust.noise.detailScale.max > config.modifiers.dust.noise.detailScale);
+  assert(config.docs.blood.surface.roughTarget && config.docs.dust.material.heightLow);
+});
+
 test('P1: materials-proc.json no longer has forcedCount', async () => {
   const p = path.join(process.cwd(), 'assets', 'config', 'rendering', 'materials-proc.json');
   const j = JSON.parse(await fs.readFile(p, 'utf8'));
@@ -177,7 +227,7 @@ test('P1/P2: shaders.js is now modular - imports shader-lib (WebGPU)', async () 
     }
   } catch {}
   const hasUBO = combined.includes('ModifiersBlock');
-  assert(hasUBO, 'has ModifiersBlock UBO (34 vec4)');
+  assert(hasUBO, 'has ModifiersBlock UBO (47 vec4)');
   assert(combined.includes('modifierMap2') || combined.includes('u_modifierMap2'), 'has second modifier texture');
   assert(combined.includes('modMossAlbedoRough') || combined.includes('modMossAlbedo'), 'contains moss uniform');
   assert(combined.includes('shadeFloorCell') && combined.includes('shadeCeilCell') && combined.includes('shadeWallCell'), 'scene helpers exist');
@@ -199,11 +249,11 @@ test('P3: gl-utils shim re-exports gpu-utils (no WebGL2)', async () => {
   assert(txt.includes('createUniformBuffer'), 'shim has buffer helper via re-export');
 });
 
-test('P2: second modifier texture packing v2', () => {
-  // MOD_PACKING v2 should have 2 textures
-  assert(MOD_PACKING.version === 2, 'packing v2');
+test('second modifier texture packing v3', () => {
+  assert(MOD_PACKING.version === 3, 'packing v3');
   assert(MOD_PACKING.textures === 2, '2 textures');
   assert(MOD_PACKING.tex1.channels.R.name === 'moss', 'tex1 R moss');
   assert(MOD_PACKING.tex2.channels.R.name === 'damaged', 'tex2 R damaged');
   assert(MOD_PACKING.tex2.channels.G.name === 'blood', 'tex2 G blood');
+  assert(MOD_PACKING.tex2.channels.B.name === 'dust', 'tex2 B dust');
 });

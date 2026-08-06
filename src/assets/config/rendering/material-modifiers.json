@@ -1,5 +1,5 @@
 {
-  "version": 6,
+  "version": 7,
   "enabled": true,
   "note": "v16 moss decomposed: noise (natural), env/nearwall (corners+seams+room biome), material (AO/Height/Rough combo), combined final. All tunable via JSON/UBO, no hard-coded magic.",
   "noise": {
@@ -16,86 +16,100 @@
     "puddleFeather": 0.12,
     "puddleOctaves": 4,
     "debugPuddleBoost": 1.1,
+    "blood": {
+      "scale": 0.19,
+      "threshold": 0.5,
+      "feather": 0.16,
+      "boost": 1.65,
+      "wallWeight": 0.42
+    },
+    "dust": {
+      "scale": 0.1,
+      "threshold": 0.34,
+      "feather": 0.24,
+      "boost": 1.35,
+      "wallWeight": 0.18
+    },
     "roleWeights": {
       "entrance": {
         "moss": 0.28,
-        "dust": 0,
+        "dust": 0.08,
         "water": 0,
         "puddle": 0.85,
-        "blood": 0,
-        "damaged": 0.0
+        "blood": 0.05,
+        "damaged": 0
       },
       "exit": {
         "moss": 0.15,
-        "dust": 0,
+        "dust": 0.12,
         "water": 0,
         "puddle": 0.85,
-        "blood": 0,
-        "damaged": 0.0
+        "blood": 0.2,
+        "damaged": 0
       },
       "guardian": {
         "moss": 0.07,
-        "dust": 0,
+        "dust": 0.04,
         "water": 0,
         "puddle": 0.75,
-        "blood": 0,
-        "damaged": 0.0
+        "blood": 0.75,
+        "damaged": 0
       },
       "treasure": {
         "moss": 0.12,
-        "dust": 0,
+        "dust": 0.55,
         "water": 0,
         "puddle": 0.8,
-        "blood": 0,
-        "damaged": 0.0
+        "blood": 0.08,
+        "damaged": 0
       },
       "secret": {
         "moss": 0.35,
-        "dust": 0,
+        "dust": 0.78,
         "water": 0,
         "puddle": 0.8,
-        "blood": 0,
-        "damaged": 0.0
+        "blood": 0.04,
+        "damaged": 0
       },
       "shrine": {
         "moss": 0.42,
-        "dust": 0,
+        "dust": 0.35,
         "water": 0,
         "puddle": 0.85,
-        "blood": 0,
-        "damaged": 0.0
+        "blood": 0.18,
+        "damaged": 0
       },
       "hub": {
         "moss": 0.16,
-        "dust": 0,
+        "dust": 0.1,
         "water": 0,
         "puddle": 0.8,
-        "blood": 0,
-        "damaged": 0.0
+        "blood": 0.32,
+        "damaged": 0
       },
       "armory": {
         "moss": 0.08,
-        "dust": 0,
+        "dust": 0.32,
         "water": 0,
         "puddle": 0.75,
-        "blood": 0,
-        "damaged": 0.0
+        "blood": 0.42,
+        "damaged": 0
       },
       "hall": {
         "moss": 0.18,
-        "dust": 0,
+        "dust": 0.2,
         "water": 0,
         "puddle": 0.8,
-        "blood": 0,
-        "damaged": 0.0
+        "blood": 0.16,
+        "damaged": 0
       },
       "corridor": {
         "moss": 0.13,
-        "dust": 0,
+        "dust": 0.14,
         "water": 0,
         "puddle": 0.7,
-        "blood": 0,
-        "damaged": 0.0
+        "blood": 0.08,
+        "damaged": 0
       }
     }
   },
@@ -179,7 +193,7 @@
         "desc": "Base noise freq – higher threshold = sparser scars. Kept sparse by default so moss unchanged"
       },
       "scales": {
-        "large": 1.0,
+        "large": 1,
         "medium": 2.4,
         "small": 5.8,
         "crack": 3.2,
@@ -194,20 +208,20 @@
         "desc": "Weights of each noise layer – l=blobs/chips, m=mid damage, s=fine grit, crack=ridged cracks, scratch=oriented scratches"
       },
       "crack": {
-        "ridgeStrength": 1.0,
+        "ridgeStrength": 1,
         "scratchScale": 8.5,
         "scratchWeight": 0.2,
         "edgeSharpen": 2.2,
-        "detailScale": 12.0,
+        "detailScale": 12,
         "desc": "Ridge sharpness for cracks, scratch grain scale/weight, edge sharpen exponent, high-freq detail scale"
       },
       "material": {
-        "heightLow": 0.0,
-        "heightHigh": 1.0,
-        "aoLow": 0.0,
-        "aoHigh": 1.0,
-        "roughLow": 0.0,
-        "roughHigh": 1.0,
+        "heightLow": 0,
+        "heightHigh": 1,
+        "aoLow": 0,
+        "aoHigh": 1,
+        "roughLow": 0,
+        "roughHigh": 1,
         "base": 0.65,
         "combine": 0.25,
         "desc": "Material gating – full 0-1 range by default (damage everywhere on brick). Lower base=strong gating, combine 0=max permissive, 1=mul restrictive"
@@ -217,15 +231,15 @@
         "envBase": 0.25,
         "matBase": 0.35,
         "boost": 1.35,
-        "noiseWeight": 1.0,
+        "noiseWeight": 1,
         "envWeight": 0.35,
         "matWeight": 0.6,
         "biomeWeight": 0.5,
         "combine": 0.65,
         "contrast": 1.35,
-        "brightness": 0.0,
-        "minThreshold": 0.0,
-        "maxThreshold": 1.0,
+        "brightness": 0,
+        "minThreshold": 0,
+        "maxThreshold": 1,
         "power": 1.1,
         "desc": "Final combine – biome from modifierMap2.r (per-cell damaged), env=Z height mid bias, mat=AO/height/rough. Combine 0=max any, 0.5=avg, 1=mul all."
       },
@@ -238,7 +252,7 @@
         "roughAdd": 0.42,
         "roughVar": 0.28,
         "aoStrength": 0.38,
-        "depthBoost": 1.0,
+        "depthBoost": 1,
         "pomBoost": 1.4,
         "chipChance": 0.55,
         "desc": "Surface impact – depth negative pit depth, pitVar chaotic variation, ridgeHeight positive ridges along cracks, normalStrength dramatic, roughAdd/var chaotic roughness, aoStrength cavity darkening, pomBoost extra POM depth"
@@ -296,37 +310,106 @@
       "floorDepress": -0.08
     },
     "blood": {
-      "enabled": false,
+      "enabled": true,
       "albedo": [
-        0.55,
-        0.12,
-        0.12
+        92,
+        10,
+        8
       ],
-      "roughAdd": 0.12,
-      "heightAdd": 0.08,
-      "normalStrength": 0.5,
-      "colorStrength": 0.75,
-      "noiseScale": 0.32,
-      "threshold": 0.5,
-      "aoWeight": 0.6
+      "darkAlbedo": [
+        26,
+        2,
+        2
+      ],
+      "colorStrength": 2.2,
+      "noise": {
+        "scale": 2.6,
+        "threshold": 0.48,
+        "feather": 0.14,
+        "warp": 0.65
+      },
+      "shape": {
+        "splatterScale": 1,
+        "speckleScale": 7.5,
+        "streakScale": 0.24,
+        "satelliteWeight": 0.28,
+        "edgeDarken": 0.35
+      },
+      "surface": {
+        "roughTarget": 0.46,
+        "roughVariation": 0.16,
+        "heightAdd": 0.035,
+        "normalStrength": 0.28,
+        "aoWeight": 0.12
+      },
+      "placement": {
+        "floorWeight": 1,
+        "wallWeight": 0.48,
+        "wallBottomFade": 0.7
+      },
+      "final": {
+        "boost": 1.45,
+        "contrast": 1.25,
+        "power": 1
+      }
     },
     "dust": {
-      "enabled": false,
+      "enabled": true,
       "albedo": [
-        0.65,
-        0.6,
-        0.5
+        143,
+        128,
+        100
       ],
-      "roughAdd": 0.28,
-      "heightAdd": 0.12,
-      "normalStrength": 0.3,
-      "colorStrength": 0.45,
-      "noiseScale": 0.26,
-      "threshold": 0.35,
-      "aoWeight": 0.4
+      "colorStrength": 0.62,
+      "noise": {
+        "scale": 2.85,
+        "threshold": 0.75,
+        "feather": 0.491,
+        "detailScale": 16.1
+      },
+      "material": {
+        "heightLow": 0.12,
+        "heightHigh": 0.62,
+        "aoLow": 0.5,
+        "aoHigh": 0.92
+      },
+      "surface": {
+        "roughAdd": 0.11,
+        "heightAdd": 0.055,
+        "normalStrength": 0.16,
+        "aoWeight": 0.1
+      },
+      "placement": {
+        "floorWeight": 1.34,
+        "wallWeight": 0.47,
+        "ceilingWeight": 0.06,
+        "boost": 1.35
+      },
+      "final": {
+        "contrast": 1.25,
+        "power": 0.9,
+        "desaturate": 0.28
+      }
     }
   },
   "docs": {
+    "generator": {
+      "blood": {
+        "scale": "Frequency of the coarse story-placement field; separate from per-pixel splatter scale.",
+        "threshold": "Coverage cutoff for blood-bearing cells.",
+        "feather": "Softness of the coarse cell-field cutoff.",
+        "boost": "Multiplier applied to role blood weights.",
+        "wallWeight": "Coarse placement reduction on wall cells."
+      },
+      "dust": {
+        "scale": "Frequency of the broad room-scale dust field.",
+        "threshold": "Coverage cutoff for dust-bearing cells.",
+        "feather": "Softness of the broad dust-field cutoff.",
+        "boost": "Multiplier applied to role dust weights.",
+        "wallWeight": "Coarse placement reduction on wall cells."
+      },
+      "roleWeights": "Per-room-role story weights. Blood favors guardian/armory/hub; dust favors secret/treasure/shrine. Changes re-bake both modifier maps live."
+    },
     "moss": {
       "noiseScale": {
         "desc": "3D noise frequency for natural patches. Higher=smaller detailed moss islands. Tunable live via UBO slot0.z",
@@ -596,7 +679,75 @@
       "floorDepress": "-0.5..0.5 height depression where puddle (negative lowers floor). Now wired live, was dead before.",
       "seed_note": "Omitted - all noise/puddle seeds derived from master gameplay/generator.json seed via hash. One master seed = deterministic refresh."
     },
-    "system": "All moss+puddle are T1 live-edit via UBO ModifiersBlock 16 vec4 (256B) binding=1. Moss decomposed: noiseScale/threshold/feather live, env FloorBase/WallBase/WallEdgeBase/CornerBonus/BottomLow/BottomHigh/CeilReduce/SeamBoost live, material HeightLow/HeightHigh/AOLow/AOHigh/RoughLow/RoughHigh/Base live, final BiomeBase/EnvBase/MatBase/Boost live. No hard-coded magic."
+    "blood": {
+      "albedo": "Primary 0-255 blood color used in dense splatter centers.",
+      "darkAlbedo": "Dark dried color used around thin splatter edges.",
+      "colorStrength": "Visibility gain applied to the bounded blood mask.",
+      "noise": {
+        "scale": "World-space splatter frequency.",
+        "threshold": "Higher values make blood islands sparser.",
+        "feather": "Softness of splatter boundaries.",
+        "warp": "Amount of organic distortion in the splatter field."
+      },
+      "shape": {
+        "splatterScale": "Multiplier for primary blot size.",
+        "speckleScale": "Frequency of small satellite droplets.",
+        "streakScale": "Vertical compression used to form wall drips.",
+        "satelliteWeight": "Strength of isolated droplets around large stains.",
+        "edgeDarken": "Amount of dried dark color around thin edges."
+      },
+      "surface": {
+        "roughTarget": "Target roughness; lower reads fresher, higher reads dried.",
+        "roughVariation": "Per-pixel roughness variation.",
+        "heightAdd": "Shallow deposited height added by blood.",
+        "normalStrength": "Micro-relief strength along the host surface.",
+        "aoWeight": "Occlusion darkening inside dense blood."
+      },
+      "placement": {
+        "floorWeight": "Blood strength on upward-facing floors.",
+        "wallWeight": "Blood strength on vertical walls.",
+        "wallBottomFade": "Fraction of wall height receiving the strongest drips."
+      },
+      "final": {
+        "boost": "Final coverage multiplier.",
+        "contrast": "Final mask contrast.",
+        "power": "Final mask gamma."
+      }
+    },
+    "dust": {
+      "albedo": "0-255 dry dust color.",
+      "colorStrength": "Bounded dust tint strength.",
+      "noise": {
+        "scale": "World-space frequency of broad dust clouds.",
+        "threshold": "Higher values make accumulation sparser.",
+        "feather": "Softness of cloud boundaries.",
+        "detailScale": "Frequency of fine powder variation."
+      },
+      "material": {
+        "heightLow": "Height below which dust strongly accumulates.",
+        "heightHigh": "Height above which the height cue fades.",
+        "aoLow": "AO value treated as a deep crevice.",
+        "aoHigh": "AO value where the crevice cue fades."
+      },
+      "surface": {
+        "roughAdd": "Additional dry roughness.",
+        "heightAdd": "Powder accumulation height.",
+        "normalStrength": "Fine powder normal variation.",
+        "aoWeight": "Occlusion added beneath accumulated powder."
+      },
+      "placement": {
+        "floorWeight": "Dust strength on upward-facing floors.",
+        "wallWeight": "Dust strength on walls.",
+        "ceilingWeight": "Dust strength on downward-facing ceilings.",
+        "boost": "Final placement multiplier."
+      },
+      "final": {
+        "contrast": "Final mask contrast.",
+        "power": "Final mask gamma.",
+        "desaturate": "How much the configured dust color moves toward gray."
+      }
+    },
+    "system": "Moss, puddle, blood, dust, and damaged parameters use a 47-vec4 (752B) T1 live UBO. Modifier-map generator changes are also re-baked and uploaded during live edits."
   },
   "ui": {
     "moss": {
@@ -803,66 +954,577 @@
         "step": 0.01
       }
     },
+    "blood": {
+      "colorStrength": {
+        "min": 0,
+        "max": 6,
+        "step": 0.05
+      },
+      "noise": {
+        "scale": {
+          "min": 0.1,
+          "max": 12,
+          "step": 0.05
+        },
+        "threshold": {
+          "min": 0,
+          "max": 1,
+          "step": 0.01
+        },
+        "feather": {
+          "min": 0.001,
+          "max": 0.5,
+          "step": 0.01
+        },
+        "warp": {
+          "min": 0,
+          "max": 3,
+          "step": 0.05
+        }
+      },
+      "shape": {
+        "splatterScale": {
+          "min": 0.1,
+          "max": 6,
+          "step": 0.05
+        },
+        "speckleScale": {
+          "min": 0.1,
+          "max": 30,
+          "step": 0.1
+        },
+        "streakScale": {
+          "min": 0.02,
+          "max": 2,
+          "step": 0.01
+        },
+        "satelliteWeight": {
+          "min": 0,
+          "max": 1,
+          "step": 0.01
+        },
+        "edgeDarken": {
+          "min": 0,
+          "max": 1,
+          "step": 0.01
+        }
+      },
+      "surface": {
+        "roughTarget": {
+          "min": 0.02,
+          "max": 1,
+          "step": 0.01
+        },
+        "roughVariation": {
+          "min": 0,
+          "max": 0.6,
+          "step": 0.01
+        },
+        "heightAdd": {
+          "min": -0.2,
+          "max": 0.3,
+          "step": 0.005
+        },
+        "normalStrength": {
+          "min": 0,
+          "max": 2,
+          "step": 0.02
+        },
+        "aoWeight": {
+          "min": 0,
+          "max": 1,
+          "step": 0.01
+        }
+      },
+      "placement": {
+        "floorWeight": {
+          "min": 0,
+          "max": 2,
+          "step": 0.01
+        },
+        "wallWeight": {
+          "min": 0,
+          "max": 2,
+          "step": 0.01
+        },
+        "wallBottomFade": {
+          "min": 0.01,
+          "max": 1,
+          "step": 0.01
+        }
+      },
+      "final": {
+        "boost": {
+          "min": 0,
+          "max": 5,
+          "step": 0.05
+        },
+        "contrast": {
+          "min": 0,
+          "max": 4,
+          "step": 0.05
+        },
+        "power": {
+          "min": 0.1,
+          "max": 4,
+          "step": 0.05
+        }
+      }
+    },
+    "dust": {
+      "colorStrength": {
+        "min": 0,
+        "max": 2,
+        "step": 0.01
+      },
+      "noise": {
+        "scale": {
+          "min": 0.05,
+          "max": 10,
+          "step": 0.05
+        },
+        "threshold": {
+          "min": 0,
+          "max": 1,
+          "step": 0.01
+        },
+        "feather": {
+          "min": 0.001,
+          "max": 0.5,
+          "step": 0.01
+        },
+        "detailScale": {
+          "min": 0.1,
+          "max": 30,
+          "step": 0.1
+        }
+      },
+      "material": {
+        "heightLow": {
+          "min": 0,
+          "max": 1,
+          "step": 0.01
+        },
+        "heightHigh": {
+          "min": 0,
+          "max": 1,
+          "step": 0.01
+        },
+        "aoLow": {
+          "min": 0,
+          "max": 1,
+          "step": 0.01
+        },
+        "aoHigh": {
+          "min": 0,
+          "max": 1,
+          "step": 0.01
+        }
+      },
+      "surface": {
+        "roughAdd": {
+          "min": -1,
+          "max": 1,
+          "step": 0.01
+        },
+        "heightAdd": {
+          "min": -0.2,
+          "max": 0.3,
+          "step": 0.005
+        },
+        "normalStrength": {
+          "min": 0,
+          "max": 2,
+          "step": 0.02
+        },
+        "aoWeight": {
+          "min": 0,
+          "max": 1,
+          "step": 0.01
+        }
+      },
+      "placement": {
+        "floorWeight": {
+          "min": 0,
+          "max": 2,
+          "step": 0.01
+        },
+        "wallWeight": {
+          "min": 0,
+          "max": 2,
+          "step": 0.01
+        },
+        "ceilingWeight": {
+          "min": 0,
+          "max": 2,
+          "step": 0.01
+        },
+        "boost": {
+          "min": 0,
+          "max": 5,
+          "step": 0.05
+        }
+      },
+      "final": {
+        "contrast": {
+          "min": 0,
+          "max": 4,
+          "step": 0.05
+        },
+        "power": {
+          "min": 0.1,
+          "max": 4,
+          "step": 0.05
+        },
+        "desaturate": {
+          "min": 0,
+          "max": 1,
+          "step": 0.01
+        }
+      }
+    },
     "damaged": {
-      "noise.scale": { "min": 0, "max": 10, "step": 0.05 },
-      "noise.threshold": { "min": 0, "max": 1, "step": 0.01 },
-      "noise.feather": { "min": 0, "max": 0.5, "step": 0.01 },
-      "noise.warpStrength": { "min": 0, "max": 3, "step": 0.05 },
-      "scales.large": { "min": 0.1, "max": 4, "step": 0.05 },
-      "scales.medium": { "min": 0.1, "max": 8, "step": 0.1 },
-      "scales.small": { "min": 0.1, "max": 15, "step": 0.1 },
-      "scales.crack": { "min": 0.1, "max": 12, "step": 0.1 },
-      "weights.large": { "min": 0, "max": 2, "step": 0.05 },
-      "weights.medium": { "min": 0, "max": 2, "step": 0.05 },
-      "weights.small": { "min": 0, "max": 2, "step": 0.05 },
-      "weights.crack": { "min": 0, "max": 2, "step": 0.05 },
-      "weights.scratch": { "min": 0, "max": 2, "step": 0.05 },
-      "crack.ridgeStrength": { "min": 0, "max": 3, "step": 0.05 },
-      "crack.scratchScale": { "min": 0, "max": 20, "step": 0.1 },
-      "crack.scratchWeight": { "min": 0, "max": 2, "step": 0.05 },
-      "crack.edgeSharpen": { "min": 0.2, "max": 5, "step": 0.1 },
-      "crack.detailScale": { "min": 0, "max": 30, "step": 0.5 },
-      "material.heightLow": { "min": 0, "max": 1, "step": 0.01 },
-      "material.heightHigh": { "min": 0, "max": 1, "step": 0.01 },
-      "material.aoLow": { "min": 0, "max": 1, "step": 0.01 },
-      "material.aoHigh": { "min": 0, "max": 1, "step": 0.01 },
-      "material.roughLow": { "min": 0, "max": 1, "step": 0.01 },
-      "material.roughHigh": { "min": 0, "max": 1, "step": 0.01 },
-      "material.base": { "min": 0, "max": 1, "step": 0.01 },
-      "material.combine": { "min": 0, "max": 1, "step": 0.01 },
-      "final.biomeBase": { "min": 0, "max": 1, "step": 0.01 },
-      "final.envBase": { "min": 0, "max": 1, "step": 0.01 },
-      "final.matBase": { "min": 0, "max": 1, "step": 0.01 },
-      "final.boost": { "min": 0, "max": 3, "step": 0.01 },
-      "final.noiseWeight": { "min": 0, "max": 2, "step": 0.05 },
-      "final.envWeight": { "min": 0, "max": 2, "step": 0.05 },
-      "final.matWeight": { "min": 0, "max": 2, "step": 0.05 },
-      "final.biomeWeight": { "min": 0, "max": 2, "step": 0.05 },
-      "final.combine": { "min": 0, "max": 1, "step": 0.01 },
-      "final.contrast": { "min": 0, "max": 4, "step": 0.05 },
-      "final.brightness": { "min": -1, "max": 1, "step": 0.01 },
-      "final.minThreshold": { "min": -1, "max": 1, "step": 0.01 },
-      "final.maxThreshold": { "min": 0, "max": 2, "step": 0.01 },
-      "final.power": { "min": 0.1, "max": 4, "step": 0.05 },
-      "surface.depth": { "min": -1, "max": 0.5, "step": 0.01 },
-      "surface.pitVar": { "min": 0, "max": 1, "step": 0.01 },
-      "surface.ridgeHeight": { "min": -0.5, "max": 0.5, "step": 0.01 },
-      "surface.normalStrength": { "min": 0, "max": 2, "step": 0.05 },
-      "surface.normalDetail": { "min": 0, "max": 2, "step": 0.05 },
-      "surface.roughAdd": { "min": -1, "max": 1, "step": 0.01 },
-      "surface.roughVar": { "min": 0, "max": 1, "step": 0.01 },
-      "surface.aoStrength": { "min": 0, "max": 1, "step": 0.01 },
-      "surface.depthBoost": { "min": 0, "max": 3, "step": 0.05 },
-      "surface.pomBoost": { "min": 0, "max": 4, "step": 0.05 }
+      "noise.scale": {
+        "min": 0,
+        "max": 10,
+        "step": 0.05
+      },
+      "noise.threshold": {
+        "min": 0,
+        "max": 1,
+        "step": 0.01
+      },
+      "noise.feather": {
+        "min": 0,
+        "max": 0.5,
+        "step": 0.01
+      },
+      "noise.warpStrength": {
+        "min": 0,
+        "max": 3,
+        "step": 0.05
+      },
+      "scales.large": {
+        "min": 0.1,
+        "max": 4,
+        "step": 0.05
+      },
+      "scales.medium": {
+        "min": 0.1,
+        "max": 8,
+        "step": 0.1
+      },
+      "scales.small": {
+        "min": 0.1,
+        "max": 15,
+        "step": 0.1
+      },
+      "scales.crack": {
+        "min": 0.1,
+        "max": 12,
+        "step": 0.1
+      },
+      "weights.large": {
+        "min": 0,
+        "max": 2,
+        "step": 0.05
+      },
+      "weights.medium": {
+        "min": 0,
+        "max": 2,
+        "step": 0.05
+      },
+      "weights.small": {
+        "min": 0,
+        "max": 2,
+        "step": 0.05
+      },
+      "weights.crack": {
+        "min": 0,
+        "max": 2,
+        "step": 0.05
+      },
+      "weights.scratch": {
+        "min": 0,
+        "max": 2,
+        "step": 0.05
+      },
+      "crack.ridgeStrength": {
+        "min": 0,
+        "max": 3,
+        "step": 0.05
+      },
+      "crack.scratchScale": {
+        "min": 0,
+        "max": 20,
+        "step": 0.1
+      },
+      "crack.scratchWeight": {
+        "min": 0,
+        "max": 2,
+        "step": 0.05
+      },
+      "crack.edgeSharpen": {
+        "min": 0.2,
+        "max": 5,
+        "step": 0.1
+      },
+      "crack.detailScale": {
+        "min": 0,
+        "max": 30,
+        "step": 0.5
+      },
+      "material.heightLow": {
+        "min": 0,
+        "max": 1,
+        "step": 0.01
+      },
+      "material.heightHigh": {
+        "min": 0,
+        "max": 1,
+        "step": 0.01
+      },
+      "material.aoLow": {
+        "min": 0,
+        "max": 1,
+        "step": 0.01
+      },
+      "material.aoHigh": {
+        "min": 0,
+        "max": 1,
+        "step": 0.01
+      },
+      "material.roughLow": {
+        "min": 0,
+        "max": 1,
+        "step": 0.01
+      },
+      "material.roughHigh": {
+        "min": 0,
+        "max": 1,
+        "step": 0.01
+      },
+      "material.base": {
+        "min": 0,
+        "max": 1,
+        "step": 0.01
+      },
+      "material.combine": {
+        "min": 0,
+        "max": 1,
+        "step": 0.01
+      },
+      "final.biomeBase": {
+        "min": 0,
+        "max": 1,
+        "step": 0.01
+      },
+      "final.envBase": {
+        "min": 0,
+        "max": 1,
+        "step": 0.01
+      },
+      "final.matBase": {
+        "min": 0,
+        "max": 1,
+        "step": 0.01
+      },
+      "final.boost": {
+        "min": 0,
+        "max": 3,
+        "step": 0.01
+      },
+      "final.noiseWeight": {
+        "min": 0,
+        "max": 2,
+        "step": 0.05
+      },
+      "final.envWeight": {
+        "min": 0,
+        "max": 2,
+        "step": 0.05
+      },
+      "final.matWeight": {
+        "min": 0,
+        "max": 2,
+        "step": 0.05
+      },
+      "final.biomeWeight": {
+        "min": 0,
+        "max": 2,
+        "step": 0.05
+      },
+      "final.combine": {
+        "min": 0,
+        "max": 1,
+        "step": 0.01
+      },
+      "final.contrast": {
+        "min": 0,
+        "max": 4,
+        "step": 0.05
+      },
+      "final.brightness": {
+        "min": -1,
+        "max": 1,
+        "step": 0.01
+      },
+      "final.minThreshold": {
+        "min": -1,
+        "max": 1,
+        "step": 0.01
+      },
+      "final.maxThreshold": {
+        "min": 0,
+        "max": 2,
+        "step": 0.01
+      },
+      "final.power": {
+        "min": 0.1,
+        "max": 4,
+        "step": 0.05
+      },
+      "surface.depth": {
+        "min": -1,
+        "max": 0.5,
+        "step": 0.01
+      },
+      "surface.pitVar": {
+        "min": 0,
+        "max": 1,
+        "step": 0.01
+      },
+      "surface.ridgeHeight": {
+        "min": -0.5,
+        "max": 0.5,
+        "step": 0.01
+      },
+      "surface.normalStrength": {
+        "min": 0,
+        "max": 2,
+        "step": 0.05
+      },
+      "surface.normalDetail": {
+        "min": 0,
+        "max": 2,
+        "step": 0.05
+      },
+      "surface.roughAdd": {
+        "min": -1,
+        "max": 1,
+        "step": 0.01
+      },
+      "surface.roughVar": {
+        "min": 0,
+        "max": 1,
+        "step": 0.01
+      },
+      "surface.aoStrength": {
+        "min": 0,
+        "max": 1,
+        "step": 0.01
+      },
+      "surface.depthBoost": {
+        "min": 0,
+        "max": 3,
+        "step": 0.05
+      },
+      "surface.pomBoost": {
+        "min": 0,
+        "max": 4,
+        "step": 0.05
+      }
     },
     "generator": {
-      "noiseScale": { "min": 0, "max": 1, "step": 0.01 },
-      "puddleScaleLarge": { "min": 0, "max": 1, "step": 0.01 },
-      "damagedThreshold": { "min": 0, "max": 1, "step": 0.01 },
-      "damagedFeather": { "min": 0, "max": 0.5, "step": 0.01 },
-      "damagedBoost": { "min": 0, "max": 3, "step": 0.05 },
-      "damagedScaleLarge": { "min": 0, "max": 1, "step": 0.01 },
-      "damagedScaleCrack": { "min": 0, "max": 1, "step": 0.01 }
+      "noiseScale": {
+        "min": 0,
+        "max": 1,
+        "step": 0.01
+      },
+      "puddleScaleLarge": {
+        "min": 0,
+        "max": 1,
+        "step": 0.01
+      },
+      "damagedThreshold": {
+        "min": 0,
+        "max": 1,
+        "step": 0.01
+      },
+      "damagedFeather": {
+        "min": 0,
+        "max": 0.5,
+        "step": 0.01
+      },
+      "damagedBoost": {
+        "min": 0,
+        "max": 3,
+        "step": 0.05
+      },
+      "damagedScaleLarge": {
+        "min": 0,
+        "max": 1,
+        "step": 0.01
+      },
+      "damagedScaleCrack": {
+        "min": 0,
+        "max": 1,
+        "step": 0.01
+      },
+      "blood": {
+        "scale": {
+          "min": 0.01,
+          "max": 1,
+          "step": 0.01
+        },
+        "threshold": {
+          "min": 0,
+          "max": 1,
+          "step": 0.01
+        },
+        "feather": {
+          "min": 0.001,
+          "max": 0.5,
+          "step": 0.01
+        },
+        "boost": {
+          "min": 0,
+          "max": 4,
+          "step": 0.05
+        },
+        "wallWeight": {
+          "min": 0,
+          "max": 1,
+          "step": 0.01
+        }
+      },
+      "dust": {
+        "scale": {
+          "min": 0.01,
+          "max": 1,
+          "step": 0.01
+        },
+        "threshold": {
+          "min": 0,
+          "max": 1,
+          "step": 0.01
+        },
+        "feather": {
+          "min": 0.001,
+          "max": 0.5,
+          "step": 0.01
+        },
+        "boost": {
+          "min": 0,
+          "max": 4,
+          "step": 0.05
+        },
+        "wallWeight": {
+          "min": 0,
+          "max": 1,
+          "step": 0.01
+        }
+      }
     }
   }
 }

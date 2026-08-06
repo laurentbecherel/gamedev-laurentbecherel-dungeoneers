@@ -39,7 +39,7 @@ fn vs_main(@builtin(vertex_index) vid: u32) -> VSOut {
 
 // Uniform structs – must be defined before bindings
 const structsAndBindings = `
-// --- Modifiers Block (34 vec4) ---
+// --- Modifiers Block (47 vec4) ---
 ${wgslModifiers}
 
 struct FrameUniforms {
@@ -1551,7 +1551,7 @@ function makeDebugFS(mode) {
     } else if (${mode} == 2) {
       // Moss env – world + isFloor
       dbgCol = debugMossEnvMask(dbgWPos, dbgIsFloor);
-    } else if (${mode} == 3 || ${mode} == 4 || ${mode} == 6) {
+    } else if (${mode} == 3 || ${mode} == 4 || ${mode} == 6 || ${mode} == 10) {
       // Modes needing material: fetch actual height/AO/rough from arrays (parity with 632b7f2)
       var dbgMatHeight: f32 = 0.5;
       var dbgAo: f32 = 0.85;
@@ -1592,6 +1592,8 @@ function makeDebugFS(mode) {
         dbgCol = debugMossCombinedMask(dbgWPos, dbgMatHeight, dbgAo, dbgRough, dbgIsFloor);
       } else if (${mode} == 6) {
         dbgCol = debugDamagedMask(dbgWPos, dbgMatHeight, dbgAo, dbgRough, dbgIsFloor);
+      } else if (${mode} == 10) {
+        dbgCol = debugDustMaskCol(dbgWPos, dbgIsFloor, dbgMatHeight, dbgAo);
       }
     } else if (${mode} == 5) {
       // Puddle mask – floor only logic preserved, uses computePuddleMaskTweakable via debugFinalPuddleMask
@@ -1617,6 +1619,8 @@ function makeDebugFS(mode) {
       } else if (isWallPixel && kind == FEATURE_GRILLE && grilleFaceVisible) {
         dbgCol = vec3<f32>(1.0, 0.45, 0.02);
       }
+    } else if (${mode} == 9) {
+      dbgCol = debugBloodMaskCol(dbgWPos, dbgIsFloor);
     } else {
       dbgCol = finalColor;
     }
@@ -1634,6 +1638,8 @@ export const fsDebugPuddleWgsl = makeDebugFS(5);
 export const fsDebugDamagedWgsl = makeDebugFS(6);
 export const fsDebugDamagedNoiseWgsl = makeDebugFS(7);
 export const fsDebugStructuralWgsl = makeDebugFS(8);
+export const fsDebugBloodWgsl = makeDebugFS(9);
+export const fsDebugDustWgsl = makeDebugFS(10);
 export const fsDebugMossWgsl = fsDebugMossCombinedWgsl;
 
 // Compatibility exports matching old shaders.js names (non-WGSL suffix)
@@ -1659,3 +1665,5 @@ export const fsDebugCombined = fsRaymarchWgsl;
 export const fsDebugMossRaw = fsRaymarchWgsl;
 export const fsDebugDamaged = fsDebugDamagedWgsl;
 export const fsDebugDamagedNoise = fsDebugDamagedNoiseWgsl;
+export const fsDebugBlood = fsDebugBloodWgsl;
+export const fsDebugDust = fsDebugDustWgsl;

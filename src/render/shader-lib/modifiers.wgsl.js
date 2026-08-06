@@ -1,8 +1,8 @@
-// WGSL port of modifiers.glsl.js – UBO 34 vec4 + exact moss/damaged/puddle from 632b7f2
+// WGSL material modifiers – 47 vec4 UBO with dedicated blood and dust blocks.
 // Preserves all public function names. Uses linearSampler for smooth modifier maps (matches old texture() LINEAR).
 
 export const wgslModifiers = `
-// UBO v26 - 34 vec4 = 544 bytes
+// UBO v27 - 47 vec4 = 752 bytes
 struct ModifiersBlock {
   modMossAlbedoRough: vec4<f32>,
   modMossParams: vec4<f32>,
@@ -38,6 +38,19 @@ struct ModifiersBlock {
   modDamagedSurface2: vec4<f32>,
   modDamagedGlobal: vec4<f32>,
   modDamagedGlobal2: vec4<f32>,
+  modBloodAlbedo: vec4<f32>,
+  modBloodDarkRough: vec4<f32>,
+  modBloodNoise: vec4<f32>,
+  modBloodShape: vec4<f32>,
+  modBloodSurface: vec4<f32>,
+  modBloodPlacement: vec4<f32>,
+  modBloodFinal: vec4<f32>,
+  modDustAlbedo: vec4<f32>,
+  modDustNoise: vec4<f32>,
+  modDustMaterial: vec4<f32>,
+  modDustSurface: vec4<f32>,
+  modDustPlacement: vec4<f32>,
+  modDustFinal: vec4<f32>,
 };
 
 fn hash21_puddle(p: vec2<f32>) -> f32 {
@@ -524,6 +537,88 @@ fn mossSurfaceDetail(worldPos: vec3<f32>) -> f32 {
   return clamp(clump * 0.68 + fiber * 0.32, 0.0, 1.0);
 }
 
+// ----- Blood -----
+// Blood uses the story-weighted modifierMap2.g field for coarse placement and
+// a continuous 3D splatter signal for shapes that cross floor/wall seams.
+fn bloodFinalMask(worldPos: vec3<f32>, surfaceN: vec3<f32>, bloodCell: f32) -> f32 {
+  if (bloodCell < 0.001 || modifiersBlock.modBloodFinal.x < 0.5) { return 0.0; }
+  let scale: f32 = max(modifiersBlock.modBloodNoise.x, 0.01);
+  let threshold: f32 = modifiersBlock.modBloodNoise.y;
+  let feather: f32 = max(modifiersBlock.modBloodNoise.z, 0.001);
+  let warpStrength: f32 = modifiersBlock.modBloodNoise.w;
+  let splatterScale: f32 = max(modifiersBlock.modBloodShape.x, 0.01);
+  let speckleScale: f32 = max(modifiersBlock.modBloodShape.y, 0.01);
+  let streakScale: f32 = max(modifiersBlock.modBloodShape.z, 0.02);
+  let satelliteWeight: f32 = modifiersBlock.modBloodShape.w;
+
+  let warpP: vec3<f32> = worldPos * scale * 0.32;
+  let warp: vec3<f32> = vec3<f32>(
+    valueNoise3D(warpP + vec3<f32>(7.1, 2.3, 11.7)),
+    valueNoise3D(warpP + vec3<f32>(17.4, 5.2, 3.8)),
+    valueNoise3D(warpP + vec3<f32>(4.6, 19.3, 8.1))
+  ) - vec3<f32>(0.5);
+  let wallFacing: f32 = 1.0 - clamp(abs(surfaceN.z), 0.0, 1.0);
+  let bloodP: vec3<f32> = (worldPos + warp * warpStrength) * scale * splatterScale;
+  let floorCloud: f32 = fbm3D_3(bloodP);
+  let streakP: vec3<f32> = vec3<f32>(bloodP.xy, bloodP.z * streakScale);
+  let wallCloud: f32 = fbm3D_3(streakP + vec3<f32>(13.0, 5.0, 2.0));
+  let cloud: f32 = mix(floorCloud, wallCloud, wallFacing);
+  let broad: f32 = smoothstep(threshold - feather, threshold + feather, cloud);
+  let speckle: f32 = hash31(floor(worldPos * speckleScale + vec3<f32>(29.3, 7.7, 41.1)));
+  let satellites: f32 = smoothstep(0.78, 0.94, speckle) * (1.0 - broad) * satelliteWeight;
+  let splatter: f32 = clamp(broad + satellites, 0.0, 1.0);
+
+  let upFacing: f32 = clamp(surfaceN.z, 0.0, 1.0);
+  let floorPlacement: f32 = upFacing * modifiersBlock.modBloodPlacement.x;
+  let wallFadeHeight: f32 = max(0.01, modifiersBlock.modBloodPlacement.z * frame.wallWorldHeight);
+  let wallBottom: f32 = 1.0 - smoothstep(wallFadeHeight, frame.wallWorldHeight, worldPos.z);
+  let wallPlacement: f32 = wallFacing * modifiersBlock.modBloodPlacement.y * (0.32 + 0.68 * wallBottom);
+  let placement: f32 = clamp(floorPlacement + wallPlacement, 0.0, 1.0);
+
+  var mask: f32 = bloodCell * splatter * placement * modifiersBlock.modBloodFinal.y;
+  mask = clamp((mask - 0.5) * modifiersBlock.modBloodFinal.z + 0.5, 0.0, 1.0);
+  return pow(mask, max(modifiersBlock.modBloodFinal.w, 0.05));
+}
+
+// ----- Dust -----
+// Dust favors upward surfaces and low/occluded material regions. Its soft
+// noise is intentionally independent from the crisper moss/blood signals.
+fn dustFinalMask(worldPos: vec3<f32>, surfaceN: vec3<f32>, matHeight: f32, ao: f32, dustCell: f32) -> f32 {
+  if (dustCell < 0.001 || modifiersBlock.modDustFinal.x < 0.5) { return 0.0; }
+  let scale: f32 = max(modifiersBlock.modDustNoise.x, 0.01);
+  let threshold: f32 = modifiersBlock.modDustNoise.y;
+  let feather: f32 = max(modifiersBlock.modDustNoise.z, 0.001);
+  let detailScale: f32 = max(modifiersBlock.modDustNoise.w, 0.01);
+  let broad: f32 = fbm3D_2(worldPos * scale + vec3<f32>(3.7, 21.1, 8.3));
+  let fine: f32 = valueNoise3D(worldPos * detailScale + vec3<f32>(15.2, 4.8, 31.0));
+  let noiseMask: f32 = smoothstep(threshold - feather, threshold + feather, broad) * (0.82 + 0.18 * fine);
+
+  let heightCue: f32 = 1.0 - smoothstep(modifiersBlock.modDustMaterial.x, modifiersBlock.modDustMaterial.y, matHeight);
+  let aoCue: f32 = 1.0 - smoothstep(modifiersBlock.modDustMaterial.z, modifiersBlock.modDustMaterial.w, ao);
+  let materialCue: f32 = clamp(0.35 + max(heightCue, aoCue * 0.75) * 0.65, 0.0, 1.0);
+  let upFacing: f32 = clamp(surfaceN.z, 0.0, 1.0);
+  let downFacing: f32 = clamp(-surfaceN.z, 0.0, 1.0);
+  let wallFacing: f32 = 1.0 - clamp(abs(surfaceN.z), 0.0, 1.0);
+  let placement: f32 = upFacing * modifiersBlock.modDustPlacement.x
+    + wallFacing * modifiersBlock.modDustPlacement.y
+    + downFacing * modifiersBlock.modDustPlacement.z;
+  var mask: f32 = dustCell * noiseMask * materialCue * placement * modifiersBlock.modDustPlacement.w;
+  mask = clamp((mask - 0.5) * modifiersBlock.modDustFinal.y + 0.5, 0.0, 1.0);
+  return pow(mask, max(modifiersBlock.modDustFinal.z, 0.05));
+}
+
+fn debugBloodMaskCol(worldPos: vec3<f32>, isFloor: f32) -> vec3<f32> {
+  let uv: vec2<f32> = worldPos.xy / frame.mapSize;
+  let surfaceN: vec3<f32> = select(vec3<f32>(1.0, 0.0, 0.0), select(vec3<f32>(0.0, 0.0, -1.0), vec3<f32>(0.0, 0.0, 1.0), worldPos.z < frame.wallWorldHeight * 0.5), isFloor > 0.5);
+  return vec3<f32>(0.85, 0.04, 0.025) * bloodFinalMask(worldPos, surfaceN, loadModifierMap2(uv).g) * 1.35;
+}
+
+fn debugDustMaskCol(worldPos: vec3<f32>, isFloor: f32, matHeight: f32, ao: f32) -> vec3<f32> {
+  let uv: vec2<f32> = worldPos.xy / frame.mapSize;
+  let surfaceN: vec3<f32> = select(vec3<f32>(1.0, 0.0, 0.0), select(vec3<f32>(0.0, 0.0, -1.0), vec3<f32>(0.0, 0.0, 1.0), worldPos.z < frame.wallWorldHeight * 0.5), isFloor > 0.5);
+  return vec3<f32>(0.78, 0.68, 0.48) * dustFinalMask(worldPos, surfaceN, matHeight, ao, loadModifierMap2(uv).b) * 1.25;
+}
+
 // Main applyModifiers – exact from old GLSL translated to WGSL
 fn applyModifiers(albedo: ptr<function, vec3<f32>>, N: ptr<function, vec3<f32>>, rough: ptr<function, f32>, metal: ptr<function, f32>, ao: ptr<function, f32>, worldPos: vec3<f32>, matHeight: ptr<function, f32>, isFloorSurface: f32) {
   let modsEnabled: f32 = f32(frame.modifiersEnabled);
@@ -600,6 +695,60 @@ fn applyModifiers(albedo: ptr<function, vec3<f32>>, N: ptr<function, vec3<f32>>,
   let mossReliefN: vec3<f32> = normalize(mossBaseN - mossSlope * mossNormalStr * 0.55);
   *N = normalize(mix(mossBaseN, mossReliefN, mossStrength));
   *matHeight = *matHeight + mossStrength * mossHeightAdd * (0.55 + 0.55 * mossDetail);
+
+  // Dust – pale, dry accumulation with softened normals and varied roughness.
+  let dustCell: f32 = mod2.b * modsEnabled * inBounds;
+  let dustMask: f32 = dustFinalMask(worldPos, normalize(*N), *matHeight, *ao, dustCell);
+  if (dustMask > 0.0001) {
+    let dustGain: f32 = max(modifiersBlock.modDustAlbedo.w, 0.0);
+    let dustVisible: f32 = clamp(dustMask * dustGain, 0.0, 1.0);
+    let dustFine: f32 = valueNoise3D(worldPos * max(modifiersBlock.modDustNoise.w, 0.01) + vec3<f32>(6.2, 18.7, 2.4));
+    let dustBase: vec3<f32> = modifiersBlock.modDustAlbedo.xyz;
+    let dustGray: f32 = dot(dustBase, vec3<f32>(0.299, 0.587, 0.114));
+    let dustTint: vec3<f32> = mix(dustBase, vec3<f32>(dustGray), modifiersBlock.modDustFinal.w) * (0.86 + 0.22 * dustFine);
+    *albedo = mix(*albedo, dustTint, dustVisible);
+    let dustPbr: f32 = clamp(dustMask * max(1.0, dustGain), 0.0, 1.0);
+    *rough = clamp(*rough + modifiersBlock.modDustSurface.x * dustPbr * (0.72 + 0.28 * dustFine), 0.0, 0.98);
+    *metal = mix(*metal, 0.0, dustPbr * 0.92);
+    *ao = *ao * (1.0 - dustPbr * modifiersBlock.modDustSurface.w);
+    *matHeight = *matHeight + dustPbr * modifiersBlock.modDustSurface.y * (0.70 + 0.30 * dustFine);
+    let dustBaseN: vec3<f32> = normalize(*N);
+    let dustAxis: vec3<f32> = select(vec3<f32>(0.0, 0.0, 1.0), vec3<f32>(1.0, 0.0, 0.0), abs(dustBaseN.z) > 0.92);
+    let dustTangent: vec3<f32> = normalize(cross(dustAxis, dustBaseN));
+    let dustBitangent: vec3<f32> = normalize(cross(dustBaseN, dustTangent));
+    let dustFine2: f32 = hash31(floor(worldPos * max(modifiersBlock.modDustNoise.w, 0.01) + vec3<f32>(23.8, 3.4, 11.9)));
+    let dustSlope: vec3<f32> = dustTangent * (dustFine - 0.5) + dustBitangent * (dustFine2 - 0.5);
+    let dustReliefN: vec3<f32> = normalize(dustBaseN - dustSlope * modifiersBlock.modDustSurface.z * 0.22);
+    *N = normalize(mix(dustBaseN, dustReliefN, dustPbr));
+  }
+
+  // Blood – irregular dark-red splatters with a dried edge, shallow relief,
+  // and a roughness range that can cover fresh through dried appearances.
+  let bloodCell: f32 = mod2.g * modsEnabled * inBounds;
+  let bloodMask: f32 = bloodFinalMask(worldPos, normalize(*N), bloodCell);
+  if (bloodMask > 0.0001) {
+    let bloodGain: f32 = max(modifiersBlock.modBloodAlbedo.w, 0.0);
+    let bloodVisible: f32 = clamp(bloodMask * bloodGain, 0.0, 1.0);
+    let bloodDetail: f32 = hash31(floor(worldPos * max(modifiersBlock.modBloodShape.y, 0.01) + vec3<f32>(3.1, 27.4, 12.6)));
+    let bloodEdge: f32 = (1.0 - smoothstep(0.12, 0.58, bloodMask)) * modifiersBlock.modBloodPlacement.w;
+    var bloodColor: vec3<f32> = mix(modifiersBlock.modBloodAlbedo.xyz, modifiersBlock.modBloodDarkRough.xyz, bloodEdge);
+    bloodColor = bloodColor * (0.82 + 0.28 * bloodDetail);
+    *albedo = mix(*albedo, bloodColor, bloodVisible);
+    let bloodPbr: f32 = clamp(bloodMask * max(1.0, bloodGain), 0.0, 1.0);
+    let bloodRoughTarget: f32 = clamp(modifiersBlock.modBloodDarkRough.w + (bloodDetail - 0.5) * modifiersBlock.modBloodSurface.z, 0.08, 0.96);
+    *rough = mix(*rough, bloodRoughTarget, bloodPbr);
+    *metal = mix(*metal, 0.0, bloodPbr);
+    *ao = *ao * (1.0 - bloodPbr * modifiersBlock.modBloodSurface.w);
+    *matHeight = *matHeight + bloodPbr * modifiersBlock.modBloodSurface.x * (0.65 + 0.35 * bloodDetail);
+    let bloodBaseN: vec3<f32> = normalize(*N);
+    let bloodAxis: vec3<f32> = select(vec3<f32>(0.0, 0.0, 1.0), vec3<f32>(1.0, 0.0, 0.0), abs(bloodBaseN.z) > 0.92);
+    let bloodTangent: vec3<f32> = normalize(cross(bloodAxis, bloodBaseN));
+    let bloodBitangent: vec3<f32> = normalize(cross(bloodBaseN, bloodTangent));
+    let bloodDetail2: f32 = hash31(floor(worldPos * max(modifiersBlock.modBloodShape.y, 0.01) + vec3<f32>(19.4, 5.9, 33.2)));
+    let bloodSlope: vec3<f32> = bloodTangent * (bloodDetail - 0.5) + bloodBitangent * (bloodDetail2 - 0.5);
+    let bloodReliefN: vec3<f32> = normalize(bloodBaseN - bloodSlope * modifiersBlock.modBloodSurface.y * 0.35);
+    *N = normalize(mix(bloodBaseN, bloodReliefN, bloodPbr));
+  }
 
   // Puddle – full ripple + metal + ao path from old GLSL
   let isFloor: f32 = step(0.5, isFloorSurface);

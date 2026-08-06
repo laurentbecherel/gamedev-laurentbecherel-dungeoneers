@@ -33,7 +33,9 @@ import {
   fsDebugPuddleWgsl,
   fsDebugDamagedWgsl,
   fsDebugDamagedNoiseWgsl,
-  fsDebugStructuralWgsl
+  fsDebugStructuralWgsl,
+  fsDebugBloodWgsl,
+  fsDebugDustWgsl
 } from './shaders-wgsl.js';
 
 import { generateMaterialArrayData } from '../world/materials.js';
@@ -60,6 +62,8 @@ export function isWebGL2Supported() {
 
 function alignUp(v, a) { return Math.ceil(v / a) * a; }
 const FEATURE_UNIFORM_BYTES = 176;
+const MODIFIERS_VEC4_COUNT = 47;
+const MODIFIERS_UNIFORM_BYTES = MODIFIERS_VEC4_COUNT * 16;
 
 function normalizeTextureFilter(value) {
   return String(value ?? 'nearest').toLowerCase() === 'linear' ? 'linear' : 'nearest';
@@ -450,7 +454,8 @@ function packLightingUniforms(buffer, lights) {
   dv.setInt32(768, lights.length|0, true);
 }
 
-// Modifiers UBO packing – 34 vec4 = 544 bytes = 136 floats – exact copy of WebGL2 _updateModifiersUBO logic (632b7f2)
+// Modifiers UBO packing – legacy moss/puddle/damage slots plus dedicated,
+// live-editable blood and dust blocks.
 function packModifiersBlock(buffer, cfg, dungeon) {
   const buf = new Float32Array(buffer);
   buf.fill(0);
@@ -471,6 +476,18 @@ function packModifiersBlock(buffer, cfg, dungeon) {
     const damagedMat = damaged.material || {};
     const damagedFinal = damaged.final || {};
     const damagedSurf = damaged.surface || {};
+    const blood = mods.blood || {};
+    const bloodNoise = blood.noise || {};
+    const bloodShape = blood.shape || {};
+    const bloodSurface = blood.surface || {};
+    const bloodPlacement = blood.placement || {};
+    const bloodFinal = blood.final || {};
+    const dust = mods.dust || {};
+    const dustNoise = dust.noise || {};
+    const dustMaterial = dust.material || {};
+    const dustSurface = dust.surface || {};
+    const dustPlacement = dust.placement || {};
+    const dustFinal = dust.final || {};
 
     function normalizeAlbedo(arr, fallback) {
       const a = arr || fallback;
@@ -552,6 +569,21 @@ function packModifiersBlock(buffer, cfg, dungeon) {
     setVec4Full(128, damagedFinal.contrast ?? 1.35, damagedFinal.brightness ?? 0.0, damagedFinal.minThreshold ?? 0.0, damagedFinal.maxThreshold ?? 1.0);
     // 33: damagedGlobal2
     setVec4Full(132, damagedFinal.power ?? 1.1, damagedSurf.depthBoost ?? 1.0, damagedSurf.pomBoost ?? 1.4, damagedCrack.detailScale ?? damagedSurf.chipDetailScale ?? 12.0);
+    // 34-40: blood – dedicated slots; do not alias puddle's legacy fields.
+    setVec4(136, normalizeAlbedo(blood.albedo, [0.36,0.035,0.028]), blood.colorStrength ?? 2.2);
+    setVec4(140, normalizeAlbedo(blood.darkAlbedo, [0.10,0.008,0.006]), bloodSurface.roughTarget ?? blood.roughTarget ?? 0.46);
+    setVec4Full(144, bloodNoise.scale ?? blood.noiseScale ?? 2.6, bloodNoise.threshold ?? blood.threshold ?? 0.48, bloodNoise.feather ?? blood.feather ?? 0.14, bloodNoise.warp ?? 0.65);
+    setVec4Full(148, bloodShape.splatterScale ?? 1.0, bloodShape.speckleScale ?? 7.5, bloodShape.streakScale ?? 0.24, bloodShape.satelliteWeight ?? 0.28);
+    setVec4Full(152, bloodSurface.heightAdd ?? blood.heightAdd ?? 0.035, bloodSurface.normalStrength ?? blood.normalStrength ?? 0.28, bloodSurface.roughVariation ?? 0.16, bloodSurface.aoWeight ?? blood.aoWeight ?? 0.12);
+    setVec4Full(156, bloodPlacement.floorWeight ?? 1.0, bloodPlacement.wallWeight ?? 0.48, bloodPlacement.wallBottomFade ?? 0.70, bloodShape.edgeDarken ?? 0.35);
+    setVec4Full(160, blood.enabled === true ? 1.0 : 0.0, bloodFinal.boost ?? 1.45, bloodFinal.contrast ?? 1.25, bloodFinal.power ?? 1.0);
+    // 41-46: dust – soft accumulation driven by material lows and orientation.
+    setVec4(164, normalizeAlbedo(dust.albedo, [0.56,0.50,0.39]), dust.colorStrength ?? 0.62);
+    setVec4Full(168, dustNoise.scale ?? dust.noiseScale ?? 1.25, dustNoise.threshold ?? dust.threshold ?? 0.34, dustNoise.feather ?? dust.feather ?? 0.26, dustNoise.detailScale ?? 9.0);
+    setVec4Full(172, dustMaterial.heightLow ?? 0.12, dustMaterial.heightHigh ?? 0.62, dustMaterial.aoLow ?? 0.50, dustMaterial.aoHigh ?? 0.92);
+    setVec4Full(176, dustSurface.roughAdd ?? dust.roughAdd ?? 0.22, dustSurface.heightAdd ?? dust.heightAdd ?? 0.055, dustSurface.normalStrength ?? dust.normalStrength ?? 0.16, dustSurface.aoWeight ?? dust.aoWeight ?? 0.10);
+    setVec4Full(180, dustPlacement.floorWeight ?? 1.0, dustPlacement.wallWeight ?? 0.16, dustPlacement.ceilingWeight ?? 0.0, dustPlacement.boost ?? 1.35);
+    setVec4Full(184, dust.enabled === true ? 1.0 : 0.0, dustFinal.contrast ?? 1.05, dustFinal.power ?? 0.90, dustFinal.desaturate ?? 0.28);
   } catch (e) {
     console.warn('[packModifiersBlock] failed, using partial', e);
   }
@@ -629,6 +661,7 @@ export class GPURenderer {
     this.matMapTex = null;
     this.modifierTex = null;
     this.modifierTex2 = null;
+    this._modifierGeneratorSignature = null;
     this.featureMaterialLayers = { grille: 1, lining: 1 };
     this.noiseTex = null;
     this.mapUITex = null;
@@ -910,6 +943,7 @@ export class GPURenderer {
 
     // Palette & LUT
     this._cfgCache = config;
+    this._modifierGeneratorSignature = JSON.stringify((config.materialModifiers || config['material-modifiers'] || {}).generator || {});
     this._applyPaletteFromConfig(config);
     const pal = genPalette(this.paletteStyle, {
       brownRamp: this.paletteCfgFull?.brownRamp,
@@ -969,7 +1003,7 @@ export class GPURenderer {
     // Uniform buffers
     this.buffers.frameUniform = device.createBuffer({ size: FRAME_UNIFORM_SIZE, usage: GPUBufferUsage.UNIFORM|GPUBufferUsage.COPY_DST, label:'frameUniforms' });
     this.buffers.lightingUniform = device.createBuffer({ size: 800, usage: GPUBufferUsage.UNIFORM|GPUBufferUsage.COPY_DST, label:'lightingUniforms' });
-    this.buffers.modifiersUniform = device.createBuffer({ size: 544, usage: GPUBufferUsage.UNIFORM|GPUBufferUsage.COPY_DST, label:'modifiers' });
+    this.buffers.modifiersUniform = device.createBuffer({ size: MODIFIERS_UNIFORM_BYTES, usage: GPUBufferUsage.UNIFORM|GPUBufferUsage.COPY_DST, label:'modifiers' });
     this.buffers.featureUniform = device.createBuffer({ size: FEATURE_UNIFORM_BYTES, usage: GPUBufferUsage.UNIFORM|GPUBufferUsage.COPY_DST, label:'featureUniforms' });
     const featureCells = dungeon.featureCells instanceof Uint32Array ? dungeon.featureCells : new Uint32Array(Math.max(1, dungeon.w*dungeon.h));
     this.buffers.featureCells = device.createBuffer({ size: Math.max(4, featureCells.byteLength), usage: GPUBufferUsage.STORAGE|GPUBufferUsage.COPY_DST, label:'featureCells' });
@@ -980,7 +1014,7 @@ export class GPURenderer {
 
     // write initial modifiers UBO
     {
-      const tmp = new ArrayBuffer(544);
+      const tmp = new ArrayBuffer(MODIFIERS_UNIFORM_BYTES);
       packModifiersBlock(tmp, this._cfgCache, dungeon);
       device.queue.writeBuffer(this.buffers.modifiersUniform, 0, tmp);
     }
@@ -1118,11 +1152,13 @@ export class GPURenderer {
       fsDebugPuddleWgsl,
       fsDebugDamagedWgsl,
       fsDebugDamagedNoiseWgsl,
-      fsDebugStructuralWgsl
+      fsDebugStructuralWgsl,
+      fsDebugBloodWgsl,
+      fsDebugDustWgsl
     ];
     this.pipelines.debugPBR = [];
     this.pipelines.debugPBR[0] = this.pipelines.raymarch; // 0 alias
-    for (let i = 1; i < 9; i++) this.pipelines.debugPBR[i] = null;
+    for (let i = 1; i < 11; i++) this.pipelines.debugPBR[i] = null;
     console.log('[WebGPU] PBR debug pipelines lazy – init fast path (5 pipelines only)');
 
     // SSR pipeline
@@ -1556,7 +1592,7 @@ export class GPURenderer {
   setCornerEnabled(v) { this.cornerEnabled = v ? 1 : 0; }
   setModifiersEnabled(v){ this.modifiersEnabled = v ? 1 : 0; }
   setSSREnabled(v){ this.ssrEnabled = v ? 1 : 0; }
-  setPBRDebugMode(v) { this.pbrDebugMode = Math.max(0, Math.min(8, v | 0)); }
+  setPBRDebugMode(v) { this.pbrDebugMode = Math.max(0, Math.min(10, v | 0)); }
   toggleGridDebug(){ this.gridDebug = this.gridDebug ? 0 : 1; return this.gridDebug; }
   toggleLighting(){ this.lightingEnabled = this.lightingEnabled ? 0 : 1; return this.lightingEnabled; }
   togglePBR(){ this.pbrEnabled = this.pbrEnabled ? 0 : 1; return this.pbrEnabled; }
@@ -1566,7 +1602,7 @@ export class GPURenderer {
   toggleCorner(){ this.cornerEnabled = this.cornerEnabled ? 0 : 1; return this.cornerEnabled; }
   toggleModifiers(){ this.modifiersEnabled = this.modifiersEnabled ? 0 : 1; return this.modifiersEnabled; }
   toggleSSR(){ this.ssrEnabled = this.ssrEnabled ? 0 : 1; return this.ssrEnabled; }
-  // Fix: old WebGL2 had %4 but HUD lists 9 modes (0 OFF + 8 debug). Restore 9 for O to reach all modes.
+  // SSR debug remains an independent 9-state cycle.
   cycleSSRDebug(){ this.ssrDebugMode = (this.ssrDebugMode + 1) % 9; return this.ssrDebugMode; }
   setFeatureDebug(v){
     this.pbrDebugMode = v ? 8 : 0;
@@ -1577,7 +1613,7 @@ export class GPURenderer {
   _ensureDebugPipeline(mode) {
     if (!this.device) return null;
     mode = mode | 0;
-    if (mode <= 0 || mode >= 9) return this.pipelines.raymarch;
+    if (mode <= 0 || mode >= 11) return this.pipelines.raymarch;
     if (this.pipelines.debugPBR && this.pipelines.debugPBR[mode]) return this.pipelines.debugPBR[mode];
     const src = this._debugPBRSourceCache && this._debugPBRSourceCache[mode];
     if (!src) return this.pipelines.raymarch;
@@ -1610,7 +1646,7 @@ export class GPURenderer {
   }
 
   cyclePBRDebug() {
-    const next = (this.pbrDebugMode + 1) % 9;
+    const next = (this.pbrDebugMode + 1) % 11;
     this.pbrDebugMode = next;
     // Lazy compile on first use – restores old WebGL2 behavior to keep init fast
     try { if (next !== 0) this._ensureDebugPipeline(next); } catch {}
@@ -1770,16 +1806,46 @@ export class GPURenderer {
   }
   updatePOM(p){ if(!p) return; if(!this._cfgCache) this._cfgCache={}; this._cfgCache.pom=p; }
   updateLighting(l){ if(!l) return; if(!this._cfgCache) this._cfgCache={}; this._cfgCache.lighting=l; try{ this.lightManager?.setConfig(l); }catch{} }
+  _uploadModifierMaps(dungeon) {
+    if (!this.device || !dungeon || !this.modifierTex || !this.modifierTex2) return;
+    const modMap = generateModifierMap(dungeon, this._cfgCache || {});
+    const bpr = alignUp(modMap.w * 4, 256);
+    const upload = (texture, source) => {
+      const padded = new Uint8Array(bpr * modMap.h);
+      for (let y = 0; y < modMap.h; y++) {
+        padded.set(source.subarray(y * modMap.w * 4, (y + 1) * modMap.w * 4), y * bpr);
+      }
+      this.device.queue.writeTexture(
+        { texture }, padded,
+        { bytesPerRow: bpr, rowsPerImage: modMap.h },
+        { width: modMap.w, height: modMap.h }
+      );
+    };
+    upload(this.modifierTex, modMap.data);
+    upload(this.modifierTex2, modMap.data2 || modMap.data);
+    this._modifierMapInfo = modMap;
+    dungeon.modifierMap = modMap;
+    dungeon.modifierData = modMap.data;
+    dungeon.modifierData2 = modMap.data2;
+  }
   updateMaterialModifiers(mm){
     if(!mm) return;
     if(!this._cfgCache) this._cfgCache={};
+    const nextGeneratorSignature = JSON.stringify(mm.generator || {});
+    const generatorChanged = this._modifierGeneratorSignature !== nextGeneratorSignature;
     this._cfgCache.materialModifiers=mm;
+    this._modifierGeneratorSignature = nextGeneratorSignature;
     this.modifiersEnabled = (mm.enabled===true)?1:0;
     try {
       if (this.device && this.buffers.modifiersUniform) {
-        const tmp = new ArrayBuffer(544);
+        const tmp = new ArrayBuffer(MODIFIERS_UNIFORM_BYTES);
         packModifiersBlock(tmp, this._cfgCache, this._lastDungeon);
         this.device.queue.writeBuffer(this.buffers.modifiersUniform, 0, tmp);
+        // Surface/albedo edits stay a cheap UBO write. Re-bake the two small
+        // per-cell maps only when story/generator placement actually changes.
+        if (generatorChanged) {
+          this._uploadModifierMaps(this._lastDungeon);
+        }
       }
     } catch (e) { console.warn('[updateMaterialModifiers] UBO write failed', e); }
   }

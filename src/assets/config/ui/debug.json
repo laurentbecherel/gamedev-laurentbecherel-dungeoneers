@@ -6,7 +6,7 @@
     "3": "toggle PBR (diffuse-only vs full GGX)",
     "4": "toggle POM",
     "5": "toggle Fog",
-    "6": "cycle PBR debug: OFF, Albedo, Normal raw, World Normal, Height, Rough, Metal, AO, Emissive",
+    "6": "cycle modifier debug: OFF, moss noise/env/material/combined, puddle, damaged combined/noise, structural features, blood, dust",
     "7": "toggle Chamfer (baseboard + vertical edge bevels)",
     "8": "toggle Corner geometry (true intruding rounded corners)",
     "R": "regen dungeon",

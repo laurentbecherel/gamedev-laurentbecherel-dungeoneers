@@ -243,7 +243,7 @@ test('Task4: AZERTY ZQSD works via code mapping, Digit1-8 via code', async ({ pa
   }
   for (let i = 1; i <= 8; i++) {
     if (i === 6) {
-      for (let k = 0; k < 9; k++) { await page.keyboard.press('Digit6'); await page.waitForTimeout(60); }
+      for (let k = 0; k < 10; k++) { await page.keyboard.press('Digit6'); await page.waitForTimeout(60); }
     } else {
       await page.keyboard.press('Digit'+i);
       await page.waitForTimeout(80);

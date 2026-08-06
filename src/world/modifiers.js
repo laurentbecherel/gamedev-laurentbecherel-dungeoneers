@@ -6,20 +6,22 @@ export const MOD_CHANNELS = {
   MOSS: 0,
   WATER: 1,
   PUDDLE: 2,
-  DUST: 3
+  // Internal environment field used by moss. Dust moved to texture 2 so the
+  // two signals no longer alias each other.
+  WALL_PROXIMITY: 3
 };
 
 export const MOD2_CHANNELS = {
   DAMAGED: 0,
   BLOOD: 1,
-  UNUSED_A: 2,
+  DUST: 2,
   UNUSED_B: 3
 };
 
 export const MODIFIER_NAMES = ['moss', 'damaged', 'water', 'puddle', 'blood', 'dust'];
 
 export const MOD_PACKING = {
-  version: 2,
+  version: 3,
   textures: 2,
   tex1: {
     name: 'u_modifierMap',
@@ -28,7 +30,7 @@ export const MOD_PACKING = {
       R: { name: 'moss', logical: ['moss'], channel: 0 },
       G: { name: 'water', logical: ['water'], channel: 1 },
       B: { name: 'puddle', logical: ['puddle'], channel: 2, floorOnly: true },
-      A: { name: 'dust', logical: ['dust'], channel: 3 }
+      A: { name: 'wallProximity', logical: [], channel: 3, internal: true }
     }
   },
   tex2: {
@@ -37,7 +39,7 @@ export const MOD_PACKING = {
     channels: {
       R: { name: 'damaged', logical: ['damaged'], channel: 0 },
       G: { name: 'blood', logical: ['blood'], channel: 1 },
-      B: { name: 'unused', logical: [], channel: 2 },
+      B: { name: 'dust', logical: ['dust'], channel: 2 },
       A: { name: 'unused', logical: [], channel: 3 }
     }
   }
@@ -66,16 +68,16 @@ function fbm(x,y,seed,octaves=3){
 }
 
 export const DEFAULT_ROLE_WEIGHTS = {
-  entrance:{ moss:0.28, dust:0.0, water:0.0, puddle:0.75, blood:0.0, damaged:0.0 },
-  exit:{ moss:0.15, dust:0.0, water:0.0, puddle:0.75, blood:0.0, damaged:0.0 },
-  guardian:{ moss:0.07, dust:0.0, water:0.0, puddle:0.65, blood:0.0, damaged:0.0 },
-  treasure:{ moss:0.12, dust:0.0, water:0.0, puddle:0.70, blood:0.0, damaged:0.0 },
-  secret:{ moss:0.35, dust:0.0, water:0.0, puddle:0.70, blood:0.0, damaged:0.0 },
-  shrine:{ moss:0.42, dust:0.0, water:0.0, puddle:0.75, blood:0.0, damaged:0.0 },
-  hub:{ moss:0.16, dust:0.0, water:0.0, puddle:0.70, blood:0.0, damaged:0.0 },
-  armory:{ moss:0.08, dust:0.0, water:0.0, puddle:0.65, blood:0.0, damaged:0.0 },
-  hall:{ moss:0.18, dust:0.0, water:0.0, puddle:0.70, blood:0.0, damaged:0.0 },
-  corridor:{ moss:0.13, dust:0.0, water:0.0, puddle:0.60, blood:0.0, damaged:0.0 },
+  entrance:{ moss:0.28, dust:0.08, water:0.0, puddle:0.75, blood:0.05, damaged:0.0 },
+  exit:{ moss:0.15, dust:0.12, water:0.0, puddle:0.75, blood:0.20, damaged:0.0 },
+  guardian:{ moss:0.07, dust:0.04, water:0.0, puddle:0.65, blood:0.75, damaged:0.0 },
+  treasure:{ moss:0.12, dust:0.55, water:0.0, puddle:0.70, blood:0.08, damaged:0.0 },
+  secret:{ moss:0.35, dust:0.78, water:0.0, puddle:0.70, blood:0.04, damaged:0.0 },
+  shrine:{ moss:0.42, dust:0.35, water:0.0, puddle:0.75, blood:0.18, damaged:0.0 },
+  hub:{ moss:0.16, dust:0.10, water:0.0, puddle:0.70, blood:0.32, damaged:0.0 },
+  armory:{ moss:0.08, dust:0.32, water:0.0, puddle:0.65, blood:0.42, damaged:0.0 },
+  hall:{ moss:0.18, dust:0.20, water:0.0, puddle:0.70, blood:0.16, damaged:0.0 },
+  corridor:{ moss:0.13, dust:0.14, water:0.0, puddle:0.60, blood:0.08, damaged:0.0 },
 };
 
 export function generateModifierMap(dungeon, config) {
@@ -101,6 +103,18 @@ export function generateModifierMap(dungeon, config) {
   const damagedScaleMed = genCfg.damagedScaleMed ?? 0.22;
   const damagedScaleSmall = genCfg.damagedScaleSmall ?? 0.55;
   const damagedScaleCrack = genCfg.damagedScaleCrack ?? 0.16;
+  const bloodGen = genCfg.blood || {};
+  const bloodScale = bloodGen.scale ?? 0.19;
+  const bloodThreshold = bloodGen.threshold ?? 0.50;
+  const bloodFeather = bloodGen.feather ?? 0.16;
+  const bloodBoost = bloodGen.boost ?? 1.65;
+  const bloodWallWeight = bloodGen.wallWeight ?? 0.42;
+  const dustGen = genCfg.dust || {};
+  const dustScale = dustGen.scale ?? 0.10;
+  const dustThreshold = dustGen.threshold ?? 0.34;
+  const dustFeather = dustGen.feather ?? 0.24;
+  const dustBoost = dustGen.boost ?? 1.35;
+  const dustWallWeight = dustGen.wallWeight ?? 0.18;
   const roleWeights = genCfg.roleWeights || DEFAULT_ROLE_WEIGHTS;
 
   const roomGrid = new Int16Array(size).fill(-1);
@@ -186,7 +200,7 @@ export function generateModifierMap(dungeon, config) {
     const isFloor = dungeon.grid ? dungeon.grid[i]===0 : true;
     const ri = roomGrid[i];
     const role = (ri>=0 ? dungeon.rooms[ri]?.role : null) || (isFloor ? 'corridor' : 'hall');
-    const rw = roleWeights[role] || roleWeights['corridor'];
+    const rw = roleWeights[role] || roleWeights['corridor'] || DEFAULT_ROLE_WEIGHTS[role] || DEFAULT_ROLE_WEIGHTS.corridor;
 
     const xc = x + 0.5;
     const yc = y + 0.5;
@@ -226,6 +240,36 @@ export function generateModifierMap(dungeon, config) {
       const wallFactor = isFloor ? (isNearWall(x,y) ? 1.18 : 0.82) : 1.0;
       mossI = roleMoss * (0.45 + 0.55*biomeNoise) * (0.40 + 0.60*largeNoiseM) * wallFactor * (0.50 + 0.50*globalN);
       mossI = Math.max(0, Math.min(1, mossI));
+    }
+
+    // Blood is placed by room story, then shaped into irregular cell clusters
+    // in the shader. Keep a broad CPU field so splatters can cross tile seams.
+    const roleBlood = rw.blood ?? 0.0;
+    let bloodI = 0;
+    if (roleBlood > 0.001) {
+      const bloodLarge = fbm((xc + warpX * 0.45) * bloodScale, (yc + warpY * 0.45) * bloodScale, seed+711, 4);
+      const bloodDetail = fbm(xc * bloodScale * 3.7 + 17.0, yc * bloodScale * 3.7 + 9.0, seed+712, 2);
+      let bloodShape = (bloodLarge - (bloodThreshold - bloodFeather)) / Math.max(0.0001, bloodFeather * 2.0);
+      bloodShape = smooth(Math.max(0, Math.min(1, bloodShape)));
+      bloodShape *= 0.62 + 0.38 * bloodDetail;
+      const surfaceWeight = isFloor ? 1.0 : bloodWallWeight;
+      bloodI = roleBlood * bloodShape * surfaceWeight * bloodBoost;
+      bloodI = Math.max(0, Math.min(1, bloodI));
+    }
+
+    // Dust uses a much broader, softer field than blood. Material height/AO
+    // and upward-facing placement are resolved per pixel in the shader.
+    const roleDust = rw.dust ?? 0.0;
+    let dustI = 0;
+    if (roleDust > 0.001) {
+      const dustLarge = fbm((xc + warpX * 0.2) * dustScale, (yc + warpY * 0.2) * dustScale, seed+731, 4);
+      const dustFine = fbm(xc * dustScale * 4.2 + 5.0, yc * dustScale * 4.2 + 21.0, seed+732, 2);
+      let dustShape = (dustLarge - (dustThreshold - dustFeather)) / Math.max(0.0001, dustFeather * 2.0);
+      dustShape = smooth(Math.max(0, Math.min(1, dustShape)));
+      dustShape *= 0.78 + 0.22 * dustFine;
+      const surfaceWeight = isFloor ? 1.0 : dustWallWeight;
+      dustI = roleDust * dustShape * surfaceWeight * dustBoost;
+      dustI = Math.max(0, Math.min(1, dustI));
     }
 
     // Damaged – chaotic scarring: multi-scale warped FBM + ridged cracks + cross scratches
@@ -279,9 +323,10 @@ export function generateModifierMap(dungeon, config) {
     data[i*4 + MOD_CHANNELS.MOSS] = Math.round(mossI*255);
     data[i*4 + MOD_CHANNELS.WATER] = 0;
     data[i*4 + MOD_CHANNELS.PUDDLE] = Math.round(puddleI*255);
-    data[i*4 + MOD_CHANNELS.DUST] = Math.round(envI*255);
+    data[i*4 + MOD_CHANNELS.WALL_PROXIMITY] = Math.round(envI*255);
     data2[i*4 + MOD2_CHANNELS.DAMAGED] = Math.round(damagedI*255);
-    data2[i*4 + MOD2_CHANNELS.BLOOD] = 0;
+    data2[i*4 + MOD2_CHANNELS.BLOOD] = Math.round(bloodI*255);
+    data2[i*4 + MOD2_CHANNELS.DUST] = Math.round(dustI*255);
   }
   return { data, data2, w, h, enabled:true, packing: MOD_PACKING };
 }
@@ -291,8 +336,9 @@ export function decodeModifierPixel(rgba, rgba2) {
     moss: rgba[0]/255,
     water: rgba[1]/255,
     puddle: rgba[2]/255,
-    dust: rgba[3]/255,
+    wallProximity: rgba[3]/255,
     damaged: (rgba2 ? rgba2[0]/255 : 0),
-    blood: (rgba2 ? rgba2[1]/255 : 0)
+    blood: (rgba2 ? rgba2[1]/255 : 0),
+    dust: (rgba2 ? rgba2[2]/255 : 0)
   };
 }

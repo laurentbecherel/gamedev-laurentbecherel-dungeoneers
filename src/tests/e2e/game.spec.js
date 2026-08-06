@@ -174,7 +174,7 @@ test('Toggle keys 1-8 switch debug modes without console errors', async ({ page 
     { key: '3', name: 'PBR ON/OFF diffuse only' },
     { key: '4', name: 'POM ON/OFF' },
     { key: '5', name: 'fog ON/OFF' },
-    { key: '6', name: 'PBR debug cycle OFF/Albedo/Normal raw/World Normal/Height/Rough/Metal/AO/Emissive' },
+    { key: '6', name: 'modifier debug cycle including moss, puddle, blood, and dust' },
     { key: '7', name: 'chamfer ON/OFF baseboard + vertical edges' },
     { key: '8', name: 'corner geometry ON/OFF rounded intruding r=0.15 outer+inner' },
   ];
@@ -186,8 +186,8 @@ test('Toggle keys 1-8 switch debug modes without console errors', async ({ page 
   // Toggle back to defaults
   for (const t of toggles) {
     if (t.key === '6') {
-      // cycle back: 9 presses returns to OFF
-      for (let i = 0; i < 9; i++) { await page.keyboard.press('6'); await page.waitForTimeout(80); }
+      // We entered mode 1 above; ten more presses wrap the 11-state cycle to OFF.
+      for (let i = 0; i < 10; i++) { await page.keyboard.press('6'); await page.waitForTimeout(80); }
     } else {
       await page.keyboard.press(t.key);
       await page.waitForTimeout(100);
@@ -197,14 +197,14 @@ test('Toggle keys 1-8 switch debug modes without console errors', async ({ page 
   expect(errors.length).toBe(0);
 });
 
-test('PBR debug cycle key 6 shows 9 modes via HUD', async ({ page }) => {
+test('PBR debug cycle key 6 exposes modifier modes via HUD', async ({ page }) => {
   await page.goto('/game.html');
   await page.waitForTimeout(1800);
   await expect(page.locator('#game-canvas')).toBeVisible({ timeout: 5000 });
 
   const hudTexts = [];
   // Listen HUD changes via polling after each press – use code Digit6 for AZERTY
-  for (let i = 0; i < 10; i++) {
+  for (let i = 0; i < 11; i++) {
     await page.keyboard.press('Digit6');
     await page.waitForTimeout(250);
     const txt = await page.evaluate(() => {
