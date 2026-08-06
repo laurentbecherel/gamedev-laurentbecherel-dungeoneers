@@ -1,7 +1,7 @@
 {
   "version": 1,
   "resolution": "640x360",
-  "fov": 1,
+  "fov": 1.4,
   "textureFilter": "nearest",
   "eye": {
     "height": 0.5,
