@@ -210,6 +210,15 @@ test("quantization and UI shaders exist as WGSL", () => {
   assert(fsUIWgsl && vsUIWgsl, "UI shaders exist WGSL");
 });
 
+test("UI uniform layout fits the renderer's 16-byte buffer", async () => {
+  const renderer = await fs.readFile(rendererPath, "utf8");
+  assert.match(renderer, /uiUniform\s*=\s*device\.createBuffer\(\{\s*size:\s*16/);
+  for (const shader of [vsUIWgsl, fsUIWgsl]) {
+    assert.match(shader, /struct UIUniforms \{ opacity: f32, _pad0: f32, _pad1: f32, _pad2: f32,/);
+    assert.doesNotMatch(shader, /opacity:\s*f32,\s*_pad:\s*vec3<f32>/);
+  }
+});
+
 test("structural debug shader isolates channels and grilles", () => {
   assert(fsDebugStructuralWgsl.includes("FEATURE_CHANNEL"));
   assert(fsDebugStructuralWgsl.includes("FEATURE_GRILLE"));

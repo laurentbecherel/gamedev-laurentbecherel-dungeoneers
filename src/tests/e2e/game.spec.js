@@ -124,6 +124,11 @@ test('R key regenerates dungeon without errors', async ({ page }) => {
 });
 
 test('M toggles fullscreen parchment map overlay with correct opacity', async ({ page }) => {
+  const gpuValidationErrors = [];
+  page.on('console', message => {
+    const text = message.text();
+    if (/uiUniform|bound with size|Invalid CommandBuffer/.test(text)) gpuValidationErrors.push(text);
+  });
   await page.goto('/game.html');
   await page.waitForTimeout(1200);
 
@@ -160,6 +165,7 @@ test('M toggles fullscreen parchment map overlay with correct opacity', async ({
   await page.keyboard.press('m');
   await page.waitForTimeout(400);
   await expect(page.locator('#game-canvas')).toBeVisible();
+  expect(gpuValidationErrors).toEqual([]);
 });
 
 test('Toggle keys 1-8 switch debug modes without console errors', async ({ page }) => {

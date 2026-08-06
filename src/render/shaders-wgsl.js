@@ -1242,7 +1242,9 @@ fn vs_main(@builtin(vertex_index) vid: u32) -> @builtin(position) vec4<f32> {
 
 export const vsUIWgsl = `
 struct VSOut { @builtin(position) pos: vec4<f32>, @location(0) uv: vec2<f32>, };
-struct UIUniforms { opacity: f32, _pad: vec3<f32>, };
+// Four scalars keep the host-shareable struct at 16 bytes. A vec3 after the
+// opacity would start at offset 16 due to its alignment and make this 32 bytes.
+struct UIUniforms { opacity: f32, _pad0: f32, _pad1: f32, _pad2: f32, };
 @group(0) @binding(0) var<uniform> uiData: UIUniforms;
 @vertex
 fn vs_main(@location(0) pos: vec2<f32>, @location(1) uv: vec2<f32>) -> VSOut {
@@ -1260,7 +1262,7 @@ fn vs_main_fullscreen(@builtin(vertex_index) vid: u32) -> VSOut {
 `;
 
 export const fsUIWgsl = `
-struct UIUniforms { opacity: f32, _pad: vec3<f32>, };
+struct UIUniforms { opacity: f32, _pad0: f32, _pad1: f32, _pad2: f32, };
 @group(0) @binding(0) var<uniform> uiData: UIUniforms;
 @group(1) @binding(0) var mapUITex: texture_2d<f32>;
 @group(2) @binding(0) var nearestSampler: sampler;
