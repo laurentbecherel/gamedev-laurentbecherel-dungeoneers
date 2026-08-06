@@ -24,6 +24,7 @@ import {
   fsUIWgsl,
   vsSpriteWgsl,
   fsSpriteWgsl,
+  fsSpriteDistortionWgsl,
   MAX_LIGHTS,
   fsDebugModifiersWgsl
 } from './shaders-wgsl.js';
@@ -33,7 +34,10 @@ import { getAsset } from '../config/config.js';
 import { genPalette, buildRGBToPal } from './palette.js';
 import { LightManager } from '../systems/lights.js';
 import { SpriteGpuRenderer } from './sprite-gpu.js';
-import '../assets/sprites/registry.js';
+import { registerFixtureDefinitions } from '../assets/sprites/registry.js';
+import { getSprite } from './sprite-atlas.js';
+import { expandFixtureLayers } from '../systems/fixtures.js';
+import { FixtureParticleSystem } from '../systems/fixture-particles.js';
 import { generateNoiseTextureData } from '../world/noise.js';
 import { generateModifierMap } from '../world/modifiers.js';
 
@@ -679,6 +683,7 @@ export class GPURenderer {
     this.gNormalDepthTex = null;
     this.ssrTex = null;
     this.compositeTex = null;
+    this.distortionTex = null;
     this.blueNoiseTex = null;
     this.mapTex = null;
     this.matMapTex = null;
@@ -708,6 +713,8 @@ export class GPURenderer {
     this.lightManager = null;
     this.spriteRenderer = null;
     this._sprites = [];
+    this.fixtureParticles = null;
+    this._lastParticleTime = null;
     this._lightsCache = [];
     // depth
     this._depthBuffer = null;
@@ -1006,6 +1013,7 @@ export class GPURenderer {
     this.gNormalDepthTex = device.createTexture({ size:{ width:cw,height:ch }, format:'rgba16float', usage: GPUTextureUsage.RENDER_ATTACHMENT|GPUTextureUsage.TEXTURE_BINDING, label:'gNormalDepth16F' });
     this.ssrTex = device.createTexture({ size:{ width:cw,height:ch }, format:'rgba8unorm', usage: GPUTextureUsage.RENDER_ATTACHMENT|GPUTextureUsage.TEXTURE_BINDING, label:'ssrTex' });
     this.compositeTex = device.createTexture({ size:{ width:cw,height:ch }, format:'rgba8unorm', usage: GPUTextureUsage.RENDER_ATTACHMENT|GPUTextureUsage.TEXTURE_BINDING, label:'compositeTex' });
+    this.distortionTex = device.createTexture({ size:{ width:cw,height:ch }, format:'rgba16float', usage: GPUTextureUsage.RENDER_ATTACHMENT|GPUTextureUsage.TEXTURE_BINDING, label:'distortionTex' });
 
     // Blue noise 64x64
     this.blueNoiseTex = device.createTexture({ size:{ width:64,height:64 }, format:'rgba8unorm', usage: GPUTextureUsage.TEXTURE_BINDING|GPUTextureUsage.COPY_DST, label:'blueNoise' });
@@ -1110,6 +1118,7 @@ export class GPURenderer {
         { binding:0, visibility: GPUShaderStage.FRAGMENT, texture:{ sampleType:'float' } },
         { binding:1, visibility: GPUShaderStage.FRAGMENT, texture:{ sampleType:'float' } },
         { binding:2, visibility: GPUShaderStage.FRAGMENT, texture:{ sampleType:'float' } },
+        { binding:3, visibility: GPUShaderStage.FRAGMENT, texture:{ sampleType:'float' } },
       ],
       label: 'bgl_quant'
     });
@@ -1368,6 +1377,7 @@ export class GPURenderer {
         { binding:0, resource: sceneView },
         { binding:1, resource: this.paletteTex.createView() },
         { binding:2, resource: this.lutTex.createView() },
+        { binding:3, resource: this.distortionTex.createView() },
       ],
       label:'bg_quant'
     });
@@ -1378,6 +1388,7 @@ export class GPURenderer {
         { binding:0, resource: this.compositeTex.createView() },
         { binding:1, resource: this.paletteTex.createView() },
         { binding:2, resource: this.lutTex.createView() },
+        { binding:3, resource: this.distortionTex.createView() },
       ],
       label:'bg_quant_comp'
     });
@@ -1396,6 +1407,7 @@ export class GPURenderer {
     });
 
     // Lights & sprites init
+    registerFixtureDefinitions(config.fixtures || {});
     try {
       this.lightManager = new LightManager(config.lighting || config.sprites || {});
       this.lightManager.setFromMap(dungeon);
@@ -1409,15 +1421,20 @@ export class GPURenderer {
 
     try {
       this.spriteRenderer = new SpriteGpuRenderer(device); // expects device not gl
+      this.spriteRenderer.setSceneMapTexture(this.mapTex);
       // Sprite renderer init expects externalShaders? Our webgpu version will have its own init
       await this.spriteRenderer.init({
         vsSpriteSrc: vsSpriteWgsl,
         fsSpritePBRSrc: fsSpriteWgsl,
+        fsSpriteDistortionSrc: fsSpriteDistortionWgsl,
         MAX_LIGHTS: this.maxLights,
         textureFilter: this.textureFilter,
       });
-      const ids = [...new Set(this._sprites.map(s => s.spriteId || s.type || 'torch_wall'))].filter(Boolean);
-      await this.spriteRenderer.ensureSprites(device, ids);
+      const ids = new Set(this._sprites.map(s => s.spriteId || s.type || 'torch_wall').filter(Boolean));
+      for (const id of [...ids]) for (const layer of getSprite(id)?.layers || []) if (layer.spriteId) ids.add(layer.spriteId);
+      for (const type of ['smoke','spark']) if (config.particles?.[type]?.spriteId) ids.add(config.particles[type].spriteId);
+      await this.spriteRenderer.ensureSprites(device, [...ids]);
+      this.fixtureParticles = new FixtureParticleSystem(this._sprites, config.fixtures || {}, config.particles || {}, config.particles?.maxParticles ?? 256);
     } catch (e) {
       console.warn('[Renderer] SpriteRenderer init failed', e);
     }
@@ -1738,6 +1755,8 @@ export class GPURenderer {
     try {
       if (this.lightManager) this.lightManager.setFromMap(dungeon);
       this._sprites = dungeon.sprites || dungeon.items || [];
+      this.fixtureParticles = new FixtureParticleSystem(this._sprites, this._cfgCache?.fixtures || {}, this._cfgCache?.particles || {}, this._cfgCache?.particles?.maxParticles ?? 256);
+      this._lastParticleTime = null;
       this._lastDungeon = dungeon;
       const featureCells = dungeon.featureCells instanceof Uint32Array ? dungeon.featureCells : new Uint32Array(mapW*mapH);
       if (this.buffers.featureCells && featureCells.byteLength <= this.buffers.featureCells.size) {
@@ -1982,6 +2001,11 @@ export class GPURenderer {
     if (!this.device) return;
     const device = this.device;
     const cfg = player._cfg || this._cfgCache || {};
+    if (this.fixtureParticles) {
+      const dt = this._lastParticleTime == null ? 0 : Math.min(0.05, Math.max(0, timeSec - this._lastParticleTime));
+      this._lastParticleTime = timeSec;
+      this.fixtureParticles.update(dt, timeSec);
+    }
 
     // Resolve config values similar to original
     const getDeep = (obj, paths, fallback) => {
@@ -2093,7 +2117,10 @@ export class GPURenderer {
       } catch {}
       lightsForRender.push({
         pos: L.pos, color: L.color, intensity, radius: L.radius, type: L.type||'point',
-        typeId: (L.typeId!==undefined)?L.typeId : ({point:0,spot:1,flicker:2,pulse:3,emissive:4,ambient:5,steady:6}[L.type]||0),
+        // Flicker and pulse are resolved once on CPU above. Uploading them as
+        // animated shader types made world and sprite light disagree and
+        // applied a second unrelated sine wave. Spot retains its cone branch.
+        typeId: L.type === 'spot' ? 1 : 0,
         dir: L.dir||[0,0,-1], coneInner:L.coneInner||0.85, coneOuter:L.coneOuter||0.65, pulseSpeed:L.pulseSpeed||0, pulseAmount:L.pulseAmount||0,
         noShadow: !!L.noShadow, flickerSpeed:L.flickerSpeed||0, flickerAmount:L.flickerAmount||0, phase:L.phase||0,
       });
@@ -2201,8 +2228,8 @@ export class GPURenderer {
       cornerAoMul: getDeep(cfg, ['corners.shading.aoMul','corners.aoMul'], cornersCfg.shading?.aoMul ?? 0.96),
       shadowBiasN: getDeep(cfg, ['shadows.bias.traceNormalOffset','shadows.traceNormalOffset'], shadowsCfg.bias?.traceNormalOffset ?? 0.10),
       shadowBiasDir: getDeep(cfg, ['shadows.bias.dirOffset','shadows.dirOffset'], shadowsCfg.bias?.dirOffset ?? 0.06),
-      shadowSunFactor: getDeep(cfg, ['shadows.sun.shadowFactor','shadows.sunShadowFactor'], shadowsCfg.sun?.shadowFactor ?? 0.25),
-      shadowPointFactor: getDeep(cfg, ['shadows.point.shadowFactor','shadows.pointShadowFactor'], shadowsCfg.point?.shadowFactor ?? 0.15),
+      shadowSunFactor: shadowsCfg.enabled === false ? 1 : getDeep(cfg, ['shadows.sun.shadowFactor','shadows.sunShadowFactor'], shadowsCfg.sun?.shadowFactor ?? 0.25),
+      shadowPointFactor: shadowsCfg.enabled === false ? 1 : getDeep(cfg, ['shadows.point.shadowFactor','shadows.pointShadowFactor'], shadowsCfg.point?.shadowFactor ?? 0.15),
       shadowSunMax: getDeep(cfg, ['shadows.sun.maxDist','shadows.sunMaxDist'], shadowsCfg.sun?.maxDist ?? 20),
       shadowPointEps: getDeep(cfg, ['shadows.point.distEpsilon','shadows.pointEps'], shadowsCfg.point?.distEpsilon ?? 0.1),
       shadowNormalThresh: getDeep(cfg, ['shadows.traceNormal.threshold','shadows.bias.normalThresh','shadows.normalThresh'], shadowsCfg.traceNormal?.threshold ?? shadowsCfg.bias?.normalThresh ?? 0.02),
@@ -2312,6 +2339,12 @@ export class GPURenderer {
     gPass.draw(3,1,0,0);
     gPass.end();
 
+    // Distortion is rebuilt every frame. Zero means an exact, branch-free
+    // scene sample in the final palette pass.
+    const distortionView = this.distortionTex.createView();
+    const distortionClear = encoder.beginRenderPass({ colorAttachments: [{ view: distortionView, clearValue:{r:0,g:0,b:0,a:0}, loadOp:'clear', storeOp:'store' }] });
+    distortionClear.end();
+
     // Sprite pass – render to sceneTex with loadOp load, blend (restored from WebGL2) – with occlusion culling
     if (this.spriteRenderer && this._sprites.length >0 && this.spriteRenderer.ready) {
       try {
@@ -2325,13 +2358,22 @@ export class GPURenderer {
           eyeZ: rawPos.z ?? player.height ?? 0.5,
           horizon: frameUniformValues.horizon,
         };
-        const spritesForRender = [];
+        const spritesForRender = [], distortionSprites = [];
         for (const orig of this._sprites) {
           const dx = orig.x - camX, dy = orig.y - camY;
           const d2 = dx*dx + dy*dy;
           if (d2 >= 22*22) continue;
           if (this._isSpriteOccluded(dungeon, camX, camY, orig, depthBuffer, renderAngle)) continue;
           spritesForRender.push(orig);
+          const meta = getSprite(orig.spriteId || orig.type);
+          for (const layer of expandFixtureLayers(orig, meta)) {
+            if (layer.renderLayer === 'distortion') distortionSprites.push(layer);
+            else spritesForRender.push(layer);
+          }
+        }
+        for (const particle of this.fixtureParticles?.getRenderSprites() || []) {
+          const dx=particle.x-camX,dy=particle.y-camY;
+          if(dx*dx+dy*dy<22*22 && !this._isSpriteOccluded(dungeon,camX,camY,particle,depthBuffer,renderAngle)) spritesForRender.push(particle);
         }
         if (spritesForRender.length === 0) {
           // no sprites visible this frame
@@ -2346,8 +2388,12 @@ export class GPURenderer {
             ambient: frameUniformValues.ambientLevel,
             fogBase: frameUniformValues.fogBase,
             fogSq: frameUniformValues.fogSquared,
+            mapSize: [dungeon.w,dungeon.h],
+            shadowPointFactor: shadowsCfg.enabled === false ? 1 : (shadowsCfg.point?.shadowFactor ?? 0.15),
+            shadowBias: shadowsCfg.bias?.dirOffset ?? 0.06,
           }, encoder, sceneView);
           }
+          this.spriteRenderer.renderDistortion(distortionSprites, cam, timeSec, encoder, distortionView);
       } catch(e){ console.warn('[WebGPU] sprite pass error', e); }
     }
 

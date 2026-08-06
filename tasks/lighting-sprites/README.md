@@ -23,6 +23,9 @@ Builds on Task 3's renderer-gpu, Task 4's player controller, Task 5's minimap re
 
 ## Implementation (what was built)
 
+The 2026 composed-fixture rework and its staged distortion/shadow-cache plan
+are documented in [ARCHITECTURE-2026.md](./ARCHITECTURE-2026.md).
+
 **Generation — `world/sprites.js` + `world/items.js` + `world/dungeon/generator.js`:**
 - Deterministic seeded RNG only, no Math.random() in generator path. Same seed + same config JSON → bit-identical positions, colors, intensity, radius, flicker phases, type choices.
 - Candidate selection: walkable floor near walls (wall sconces) or interior room cells (braziers), skip near spawn, classify with zone/role from room.

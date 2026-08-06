@@ -1,6 +1,7 @@
 import { getAssetList, getAsset, saveAsset } from "./config/config.js";
 import { getLiveConfigManager } from "./config/live-config.js";
 import { buildArchitecturePreview } from "./editor-architecture-preview.js";
+import { buildLightingPreview } from "./editor-lighting-preview.js";
 
 const $ = id => document.getElementById(id);
 let current = null, currentData = null, lastSavedData = null, mode = "visual";
@@ -323,12 +324,19 @@ function isPaletteConfig() {
 function isArchitectureConfig() {
   return current && current.name === 'architectures' && current.category === 'materials';
 }
+function isLightingLabConfig() {
+  return current && current.category?.includes('lighting') && ['fixtures','sprites','particles','light-types'].includes(current.name);
+}
 
 function renderVisual() {
   const c = $("tab-content"); if (!c) return; c.innerHTML = ""; if (!currentData) return;
   if (isArchitectureConfig()) {
     const mount = document.createElement('div'); mount.className = 'architecture-preview-mount'; c.appendChild(mount);
     buildArchitecturePreview(currentData).then(preview => { if (mount.isConnected) mount.replaceChildren(preview); });
+  }
+  if (isLightingLabConfig()) {
+    const mount = document.createElement('div'); mount.className = 'lighting-preview-mount'; c.appendChild(mount);
+    buildLightingPreview(currentData, current.name).then(preview => { if (mount.isConnected) mount.replaceChildren(preview); });
   }
   if (isPaletteConfig()) {
     const custom = buildPaletteEditor();

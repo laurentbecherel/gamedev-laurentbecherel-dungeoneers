@@ -4,7 +4,7 @@
 // uses Math.random for visual variation; generator not affected.
 
 export class Particle {
-  constructor(x, y, z, vx, vy, vz, size, color, alpha, life) {
+  constructor(x, y, z, vx, vy, vz, size, color, alpha, life, type = 'flame', acceleration = [0,0,0]) {
     this.x = x; this.y = y; this.z = z;
     this.vx = vx; this.vy = vy; this.vz = vz;
     this.size = size;
@@ -14,25 +14,29 @@ export class Particle {
     this.baseAlpha = alpha;
     this.life = life;
     this.age = 0;
+    this.type = type;
+    this.ax = acceleration[0] || 0; this.ay = acceleration[1] || 0; this.az = acceleration[2] || 0;
   }
   update(dt) {
     this.age += dt;
     this.x += this.vx * dt;
     this.y += this.vy * dt;
     this.z += this.vz * dt;
+    this.vx += this.ax * dt; this.vy += this.ay * dt; this.vz += this.az * dt;
     // drag
     this.vx *= 0.98;
     this.vy *= 0.98;
     this.vz *= 0.985;
     const t = this.age / this.life;
-    if (t > 0.5) this.alpha = this.baseAlpha * (1 - (t - 0.5) * 2);
-    this.size = this.baseSize * (1 - t * 0.3);
+    const fadeStart = this.type === 'spark' ? 0.8 : 0.5;
+    if (t > fadeStart) this.alpha = this.baseAlpha * (1 - (t - fadeStart) / (1 - fadeStart));
+    this.size = this.baseSize * (this.type === 'smoke' ? (1 + t * 0.75) : (1 - t * 0.3));
     return this.age < this.life && this.alpha > 0.01;
   }
 }
 
 export class ParticleEmitter {
-  constructor({ pos = [0, 0, 0], rate = 10, color = [1, 0.6, 0.2], size = 0.08, life = 1.0, velocity = [0, 0, 0.3], spread = 0.1, type = 'flame', id = null } = {}) {
+  constructor({ pos = [0, 0, 0], rate = 10, color = [1, 0.6, 0.2], size = 0.08, life = 1.0, velocity = [0, 0, 0.3], spread = 0.1, type = 'flame', id = null, rng = Math.random, spriteId = null, acceleration = null, alpha = null } = {}) {
     this.pos = pos.slice();
     this.rate = rate; // particles per second
     this.color = color.slice();
@@ -43,7 +47,11 @@ export class ParticleEmitter {
     this.type = type;
     this.accum = 0;
     this.particles = [];
-    this.id = id || `em_${Math.random().toString(36).slice(2, 8)}`;
+    this.rng = rng;
+    this.id = id || `em_${this.rng().toString(36).slice(2, 8)}`;
+    this.spriteId = spriteId;
+    this.acceleration = acceleration || (type === 'spark' ? [0,0,-0.75] : [0,0,0]);
+    this.configuredAlpha = Number.isFinite(alpha) ? alpha : null;
     this.enabled = true;
   }
 
@@ -64,14 +72,15 @@ export class ParticleEmitter {
   emit(basePos, time) {
     const [bx, by, bz] = basePos;
     const spread = this.spread;
-    let vx = (Math.random() - 0.5) * spread + this.velocity[0];
-    let vy = (Math.random() - 0.5) * spread + this.velocity[1];
-    let vz = this.velocity[2] + (Math.random() - 0.5) * spread * 0.5 + Math.random() * 0.2;
+    const random = this.rng;
+    let vx = (random() - 0.5) * spread + this.velocity[0];
+    let vy = (random() - 0.5) * spread + this.velocity[1];
+    let vz = this.velocity[2] + (random() - 0.5) * spread * 0.5 + random() * 0.2;
 
     let color = this.color.slice();
-    let size = this.size * (0.7 + Math.random() * 0.6);
-    let alpha = 0.7 + Math.random() * 0.3;
-    let life = this.life * (0.6 + Math.random() * 0.8);
+    let size = this.size * (0.7 + random() * 0.6);
+    let alpha = this.configuredAlpha ?? (0.7 + random() * 0.3);
+    let life = this.life * (0.6 + random() * 0.8);
 
     if (this.type === 'flame') {
       // Organic flame wobble — inharmonic sines + slow drift + occasional gust
@@ -88,30 +97,32 @@ export class ParticleEmitter {
       vy += wobY + gustShaped * 0.6;
       vz += (Math.sin(tw * 2.3) * 0.015 + Math.sin(tw * 5.4) * 0.008);
       const tempPhase = Math.sin(tw * 0.9) * 0.15 + Math.sin(tw * 1.6) * 0.08;
-      if (Math.random() < 0.32 + tempPhase * 0.1) { color = [1, 0.9, 0.6]; size *= 1.2; }
-      else if (Math.random() < 0.64) { color = [1, 0.6, 0.15]; }
+      if (random() < 0.32 + tempPhase * 0.1) { color = [1, 0.9, 0.6]; size *= 1.2; }
+      else if (random() < 0.64) { color = [1, 0.6, 0.15]; }
       else { color = [1, 0.35, 0.05]; size *= 0.9; }
     } else if (this.type === 'smoke') {
       vz *= 0.6;
       vx *= 0.5;
       vy *= 0.5;
       color = [0.25, 0.22, 0.2];
-      alpha = 0.12 + Math.random() * 0.1;
-      size *= 1.8;
-      life *= 2.5;
+      alpha = (this.configuredAlpha ?? 0.26) * (0.8 + random() * 0.4);
+      size *= 1.05;
+      life *= 1.05;
     } else if (this.type === 'spark') {
       // Occasional spark shooting up, small, orange-yellow
-      vz = this.velocity[2] + Math.random() * 0.6;
-      color = [1, 0.8 + Math.random() * 0.2, 0.2 + Math.random() * 0.3];
+      vz = this.velocity[2] + random() * 0.6;
+      color = [1, 0.8 + random() * 0.2, 0.2 + random() * 0.3];
       size *= 0.5;
       alpha = 0.9;
     }
 
-    const px = bx + (Math.random() - 0.5) * 0.08;
-    const py = by + (Math.random() - 0.5) * 0.08;
-    const pz = bz + (Math.random() - 0.5) * 0.05;
+    const px = bx + (random() - 0.5) * 0.08;
+    const py = by + (random() - 0.5) * 0.08;
+    const pz = bz + (random() - 0.5) * 0.05;
 
-    this.particles.push(new Particle(px, py, pz, vx, vy, vz, size, color, alpha, life));
+    const particle = new Particle(px, py, pz, vx, vy, vz, size, color, alpha, life, this.type, this.acceleration);
+    particle.spriteId = this.spriteId;
+    this.particles.push(particle);
   }
 
   getParticles() { return this.particles; }

@@ -1,5 +1,6 @@
 // SpriteGpuRenderer – pure WebGPU PBR billboard – no WebGL2 fallback (user requested pure WebGPU)
 import { getSprite, getSpriteTextures, loadSpriteGL } from './sprite-atlas.js';
+import { resolveSpriteFrame } from '../systems/fixtures.js';
 
 export const MAX_LIGHTS_SPRITE = 8;
 
@@ -18,6 +19,7 @@ export class SpriteGpuRenderer {
     this.instanceBuffer = null;
     this.ready = false;
     this.maxLights = MAX_LIGHTS_SPRITE;
+    this.sceneMapView = null;
   }
 
   async init(externalShaders = null) {
@@ -26,17 +28,20 @@ export class SpriteGpuRenderer {
 
     let vsSrc = externalShaders?.vsSpriteSrc;
     let fsSrc = externalShaders?.fsSpritePBRSrc;
+    let fsDistortionSrc = externalShaders?.fsSpriteDistortionSrc;
 
-    if (!vsSrc || !fsSrc) {
+    if (!vsSrc || !fsSrc || !fsDistortionSrc) {
       const mod = await import('./shaders-wgsl.js');
       vsSrc = vsSrc || mod.vsSpriteWgsl || mod.vsSpriteSrc;
       fsSrc = fsSrc || mod.fsSpriteWgsl || mod.fsSpritePBRSrc;
+      fsDistortionSrc = fsDistortionSrc || mod.fsSpriteDistortionWgsl;
       this.maxLights = externalShaders?.MAX_LIGHTS || mod.MAX_LIGHTS || 8;
     }
 
     // Separate modules for VS and FS to avoid duplicate struct definitions (previous bug caused redefinition of CameraUniforms)
     const vsModule = device.createShaderModule({ code: vsSrc, label: 'spriteVS' });
     const fsModule = device.createShaderModule({ code: fsSrc, label: 'spriteFS' });
+    const fsDistortionModule = device.createShaderModule({ code: fsDistortionSrc, label: 'spriteDistortionFS' });
 
     this.uniformBuffer = device.createBuffer({ size: 256, usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST, label: 'spriteCamera' });
     this.lightDataBuffer = device.createBuffer({ size: 640, usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST, label: 'spriteLights' });
@@ -57,6 +62,9 @@ export class SpriteGpuRenderer {
         { binding: 0, visibility: GPUShaderStage.FRAGMENT, texture: { sampleType: 'float' } },
         { binding: 1, visibility: GPUShaderStage.FRAGMENT, texture: { sampleType: 'float' } },
         { binding: 2, visibility: GPUShaderStage.FRAGMENT, texture: { sampleType: 'float' } },
+        { binding: 3, visibility: GPUShaderStage.FRAGMENT, texture: { sampleType: 'float' } },
+        { binding: 4, visibility: GPUShaderStage.FRAGMENT, texture: { sampleType: 'float' } },
+        { binding: 5, visibility: GPUShaderStage.FRAGMENT, texture: { sampleType: 'float' } },
       ],
       label: 'sprite_bgl1'
     });
@@ -73,7 +81,9 @@ export class SpriteGpuRenderer {
     const quadData = new Float32Array([-1, 0, 1, 0, -1, 1, 1, 0, 1, 1, -1, 1]);
     this.quadBuffer = device.createBuffer({ size: quadData.byteLength, usage: GPUBufferUsage.VERTEX | GPUBufferUsage.COPY_DST, label: 'quadBuf' });
     device.queue.writeBuffer(this.quadBuffer, 0, quadData.buffer, quadData.byteOffset, quadData.byteLength);
-    this.instanceBuffer = device.createBuffer({ size: 12 * 4 * 128, usage: GPUBufferUsage.VERTEX | GPUBufferUsage.COPY_DST, label: 'instanceBuf' });
+    this.instanceCapacity = 512;
+    this.instanceBuffer = device.createBuffer({ size: 13 * 4 * this.instanceCapacity, usage: GPUBufferUsage.VERTEX | GPUBufferUsage.COPY_DST, label: 'instanceBuf' });
+    this.distortionInstanceBuffer = device.createBuffer({ size: 13 * 4 * this.instanceCapacity, usage: GPUBufferUsage.VERTEX | GPUBufferUsage.COPY_DST, label: 'distortionInstanceBuf' });
 
     this.pipeline = device.createRenderPipeline({
       layout: pipelineLayout,
@@ -83,13 +93,14 @@ export class SpriteGpuRenderer {
         buffers: [
           { arrayStride: 8, stepMode: 'vertex', attributes: [{ shaderLocation: 0, offset: 0, format: 'float32x2' }] },
           {
-            arrayStride: 12 * 4, stepMode: 'instance', attributes: [
+            arrayStride: 13 * 4, stepMode: 'instance', attributes: [
               { shaderLocation: 1, offset: 0, format: 'float32x3' },
               { shaderLocation: 2, offset: 12, format: 'float32x2' },
               { shaderLocation: 3, offset: 20, format: 'float32x4' },
               { shaderLocation: 4, offset: 36, format: 'float32' },
               { shaderLocation: 5, offset: 40, format: 'float32' },
               { shaderLocation: 6, offset: 44, format: 'float32' },
+              { shaderLocation: 7, offset: 48, format: 'float32' },
             ]
           }
         ]
@@ -97,6 +108,32 @@ export class SpriteGpuRenderer {
       fragment: { module: fsModule, entryPoint: 'fs_main', targets: [{ format: 'rgba8unorm', blend: { color: { srcFactor: 'src-alpha', dstFactor: 'one-minus-src-alpha', operation: 'add' }, alpha: { srcFactor: 'one', dstFactor: 'one-minus-src-alpha', operation: 'add' } } }] },
       primitive: { topology: 'triangle-list' },
       label: 'sprite_pipeline'
+    });
+    this.distortionPipeline = device.createRenderPipeline({
+      layout: pipelineLayout,
+      vertex: {
+        module: vsModule,
+        entryPoint: 'vs_main',
+        buffers: [
+          { arrayStride: 8, stepMode: 'vertex', attributes: [{ shaderLocation: 0, offset: 0, format: 'float32x2' }] },
+          { arrayStride: 13 * 4, stepMode: 'instance', attributes: [
+            { shaderLocation: 1, offset: 0, format: 'float32x3' }, { shaderLocation: 2, offset: 12, format: 'float32x2' },
+            { shaderLocation: 3, offset: 20, format: 'float32x4' }, { shaderLocation: 4, offset: 36, format: 'float32' },
+            { shaderLocation: 5, offset: 40, format: 'float32' }, { shaderLocation: 6, offset: 44, format: 'float32' },
+            { shaderLocation: 7, offset: 48, format: 'float32' },
+          ] }
+        ]
+      },
+      fragment: {
+        module: fsDistortionModule,
+        entryPoint: 'fs_main',
+        targets: [{ format: 'rgba16float', blend: {
+          color: { srcFactor: 'one', dstFactor: 'one', operation: 'add' },
+          alpha: { srcFactor: 'one', dstFactor: 'one', operation: 'add' },
+        } }]
+      },
+      primitive: { topology: 'triangle-list' },
+      label: 'sprite_distortion_pipeline'
     });
 
     this.cameraBindGroup = device.createBindGroup({
@@ -125,6 +162,8 @@ export class SpriteGpuRenderer {
       label: `sprite_sampler_bg_${this.textureFilter}`
     });
   }
+
+  setSceneMapTexture(texture) { this.sceneMapView = texture?.createView?.() || null; }
 
   async ensureSprites(device, spriteIds) {
     for (const id of spriteIds) { try { await loadSpriteGL(device, id); } catch {} }
@@ -163,6 +202,10 @@ export class SpriteGpuRenderer {
       f32(76, opts.ambient ?? 0.36);
       f32(80, opts.fogBase ?? 0.06);
       f32(84, opts.fogSq ?? 0.005);
+      f32(88, opts.shadowPointFactor ?? 0.15);
+      f32(92, opts.shadowBias ?? 0.06);
+      f32(96, opts.mapSize?.[0] ?? 1);
+      f32(100, opts.mapSize?.[1] ?? 1);
       device.queue.writeBuffer(this.uniformBuffer, 0, buf);
     }
     {
@@ -197,11 +240,11 @@ export class SpriteGpuRenderer {
         if (!texEntry || !texEntry.albedo) continue;
         const bg = device.createBindGroup({
           layout: this.bindGroupLayout1,
-          entries: [{ binding: 0, resource: texEntry.albedoView }, { binding: 1, resource: texEntry.normalView }, { binding: 2, resource: texEntry.ormView }],
+          entries: [{ binding: 0, resource: texEntry.albedoView }, { binding: 1, resource: texEntry.normalView }, { binding: 2, resource: texEntry.ormView }, { binding: 3, resource: texEntry.emissiveView }, { binding: 4, resource: this.sceneMapView }, { binding: 5, resource: texEntry.distortionView }],
           label: 'sprite_tex_bg'
         });
         const meta = texEntry.meta;
-        const frameId = (s.frame | 0) % (meta?.count || 1);
+        const frameId = resolveSpriteFrame(s, meta, camera, time);
         const cols = meta?.cols || 1;
         const col = frameId % cols; const row = Math.floor(frameId / cols);
         const atlasW = cols * (meta?.cellW || 64); const atlasH = (meta?.rows || 1) * (meta?.cellH || 64);
@@ -212,14 +255,16 @@ export class SpriteGpuRenderer {
         const worldW = s.worldWidth ?? worldH * (meta?.worldWidthFactor || 0.43);
         const normalStrength = s.material?.normalStrength ?? meta?.material?.normalStrength ?? 2.2;
         const rimStrength = s.material?.rimStrength ?? meta?.material?.rimStrength ?? 1.2;
-        const inst = new Float32Array([s.x, s.y, s.z || 0, worldW, worldH, u0, v0, u1, v1, s.alpha ?? 1, normalStrength, rimStrength]);
+        const emissiveStrength = s.material?.emissiveStrength ?? meta?.material?.emissiveStrength ?? 0;
+        const inst = new Float32Array([s.x, s.y, s.z || 0, worldW, worldH, u0, v0, u1, v1, s.alpha ?? 1, normalStrength, rimStrength, emissiveStrength]);
+        if (instances.length >= this.instanceCapacity) break;
         instances.push(inst);
         bgs.push(bg);
       }
       if (instances.length > 0) {
         // Batch write instances into buffer with offsets
         for (let i = 0; i < instances.length; i++) {
-          device.queue.writeBuffer(this.instanceBuffer, i * 12 * 4, instances[i].buffer, instances[i].byteOffset, instances[i].byteLength);
+          device.queue.writeBuffer(this.instanceBuffer, i * 13 * 4, instances[i].buffer, instances[i].byteOffset, instances[i].byteLength);
         }
       }
       const pass = externalEncoder.beginRenderPass({ colorAttachments: [{ view: targetView, loadOp: 'load', storeOp: 'store' }] });
@@ -228,12 +273,38 @@ export class SpriteGpuRenderer {
       pass.setBindGroup(2, this.samplerBindGroup);
       pass.setVertexBuffer(0, this.quadBuffer);
       for (let i = 0; i < instances.length; i++) {
-        pass.setVertexBuffer(1, this.instanceBuffer, i * 12 * 4, 12 * 4);
+        pass.setVertexBuffer(1, this.instanceBuffer, i * 13 * 4, 13 * 4);
         pass.setBindGroup(1, bgs[i]);
         pass.draw(6, 1, 0, 0);
       }
       pass.end();
     }
+  }
+
+  renderDistortion(sprites, camera, time, encoder, targetView) {
+    if (!this.ready || !this.distortionPipeline || !encoder || !targetView) return;
+    const instances=[]; const bgs=[];
+    for (const s of sprites || []) {
+      const texEntry=getSpriteTextures(this.device,s.spriteId||s.type);
+      if(!texEntry?.distortionView) continue;
+      const meta=texEntry.meta,frameId=resolveSpriteFrame(s,meta,camera,time),cols=meta?.cols||1;
+      const col=frameId%cols,row=Math.floor(frameId/cols),atlasW=cols*(meta?.cellW||32),atlasH=(meta?.rows||1)*(meta?.cellH||32);
+      const sx=col*(meta?.cellW||32)+(meta?.cropX||0),sy=row*(meta?.cellH||32)+(meta?.cropY||0);
+      const u0=sx/atlasW,v0=sy/atlasH,u1=(sx+(meta?.cropW||meta?.cellW||32))/atlasW,v1=(sy+(meta?.cropH||meta?.cellH||32))/atlasH;
+      const worldH=s.worldHeight??(meta?.worldHeight||.3)*(s.scale||1),worldW=s.worldWidth??worldH*(meta?.worldWidthFactor||.8);
+      const strength=s.material?.distortionStrength??meta?.material?.distortionStrength??0;
+      if(strength<=0)continue;
+      instances.push(new Float32Array([s.x,s.y,s.z||0,worldW,worldH,u0,v0,u1,v1,s.alpha??1,0,0,strength]));
+      bgs.push(this.device.createBindGroup({layout:this.bindGroupLayout1,entries:[
+        {binding:0,resource:texEntry.albedoView},{binding:1,resource:texEntry.normalView},{binding:2,resource:texEntry.ormView},
+        {binding:3,resource:texEntry.emissiveView},{binding:4,resource:this.sceneMapView},{binding:5,resource:texEntry.distortionView},
+      ],label:'sprite_distortion_tex_bg'}));
+      if(instances.length>=this.instanceCapacity)break;
+    }
+    for(let i=0;i<instances.length;i++)this.device.queue.writeBuffer(this.distortionInstanceBuffer,i*13*4,instances[i].buffer,instances[i].byteOffset,instances[i].byteLength);
+    const pass=encoder.beginRenderPass({colorAttachments:[{view:targetView,loadOp:'load',storeOp:'store'}]});
+    if(instances.length){pass.setPipeline(this.distortionPipeline);pass.setBindGroup(0,this.cameraBindGroup);pass.setBindGroup(2,this.samplerBindGroup);pass.setVertexBuffer(0,this.quadBuffer);for(let i=0;i<instances.length;i++){pass.setVertexBuffer(1,this.distortionInstanceBuffer,i*13*4,13*4);pass.setBindGroup(1,bgs[i]);pass.draw(6,1,0,0);}}
+    pass.end();
   }
 
   setShaderSources(vsSrc, fsSrc, maxLights) {

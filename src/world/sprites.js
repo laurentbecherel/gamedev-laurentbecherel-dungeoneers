@@ -5,6 +5,9 @@
 
 import { hash2i } from "./dungeon/themes.js";
 import { LIGHT_TYPES } from "./light-types.js";
+import {
+  getFixtureDefinition, resolveFixtureBaseZ, resolveFixtureWallOffset, resolveSocketWorld,
+} from "../systems/fixtures.js";
 
 function makeFallbackRng(seed) {
   let s = seed >>> 0 || 1;
@@ -76,12 +79,8 @@ export function generateDungeonSprites(dungeon, config, rngOverride = null) {
   const corridorBias = genCfg.corridorBias ?? itemsCfg.corridorBias ?? 1.5;
   const torchOffsetScale = genCfg.torchOffset ?? itemsCfg.torchOffset ?? spritesCfg.generation?.torchOffset ?? 0.35;
 
-  // Z anchoring
   const genSpritesMeta = spritesCfg.sprites || [];
-  const wallZBase = spritesCfg.generation?.zBase_wall ?? itemsCfg.zBase ?? 0.72;
-  const wallZJitter = spritesCfg.generation?.zJitter_wall ?? itemsCfg.zJitter ?? 0.08;
-  const floorZBase = spritesCfg.generation?.zBase_floor ?? 0.15;
-  const floorZJitter = spritesCfg.generation?.zJitter_floor ?? 0.05;
+  const wallHeight = config.rendering?.geometry?.wallHeight ?? 1;
 
   const flameMin = spritesCfg.generation?.flameSizeMin ?? itemsCfg.flameSizeMin ?? 0.18;
   const flameRange = spritesCfg.generation?.flameSizeRange ?? itemsCfg.flameSizeRange ?? 0.06;
@@ -158,6 +157,7 @@ export function generateDungeonSprites(dungeon, config, rngOverride = null) {
   // ---- Sprite definition lookup ----
   const spriteDefsById = new Map();
   for (const def of genSpritesMeta) spriteDefsById.set(def.id, def);
+  const fixtureDefsById = new Map((config.fixtures?.fixtures || []).map(def => [def.id, def]));
 
   // Pools for picking (future-proof: zone/role)
   const zonePools = spritesCfg.pools?.zone || {};
@@ -215,22 +215,28 @@ export function generateDungeonSprites(dungeon, config, rngOverride = null) {
   function buildSpriteFromCand(cand, spriteIndex) {
     const spriteId = pickSpriteIdForCandidate(cand);
     const def = spriteDefsById.get(spriteId) || null;
+    const fixtureDef = fixtureDefsById.get(spriteId) || null;
+    const placementDef = fixtureDef || def;
 
     const isWall = def?.placement?.wallMounted ?? (spriteId === 'torch_wall');
-    const isFloor = def?.placement?.floorStanding ?? (spriteId === 'brazier_floor' || spriteId === 'crystal_small');
-
     const offset = isWall ? chooseWallOffset(cand.wallAdj, rng) : { dir: null, ox: 0, oy: 0 };
-    const offScale = def?.placement?.torchOffset ?? torchOffsetScale;
+    const offScale = resolveFixtureWallOffset(placementDef, def?.placement?.torchOffset ?? torchOffsetScale);
     const tx = cand.cx + offset.ox * offScale;
     const ty = cand.cy + offset.oy * offScale;
 
     if (tooClose(tx, ty)) return null;
 
-    // Anchored Z
-    const tileFloorH = 0;
-    const zBase = isWall ? wallZBase : (isFloor ? floorZBase : wallZBase * 0.6);
-    const zJit = isWall ? wallZJitter : floorZJitter;
-    const z = tileFloorH + zBase + (rng() - 0.5) * zJit;
+    // Contact-anchored Z: floor props stand on the floor, hanging props touch
+    // the ceiling and wall props use their authored mounting height.
+    const tileFloorH = dungeon.floorHeight?.[cand.idx] ?? 0;
+    const tileCeilH = dungeon.ceilHeight?.[cand.idx] ?? (tileFloorH + wallHeight);
+    const verticalJitter = placementDef?.placement?.verticalJitter ?? 0;
+    // Preserve the deterministic RNG stream even when contact anchors disable
+    // visible jitter. Removing this draw changes every later fixture type,
+    // color and candidate choice for the same dungeon seed.
+    const verticalJitterRoll = rng();
+    const z = resolveFixtureBaseZ(placementDef, tileFloorH, tileCeilH - tileFloorH)
+      + (verticalJitterRoll - 0.5) * verticalJitter;
 
     // Color from torchColors palette + jitter
     const colorPick = torchColors[Math.floor(rng() * torchColors.length)];
@@ -438,26 +444,30 @@ export function generateDungeonSprites(dungeon, config, rngOverride = null) {
   }
 
   // Build lights array from sprites
-  const lights = placedSprites.filter(s => s.emitsLight !== false).map(s => ({
-    id: s.id,
-    pos: [s.x, s.y, s.z],
-    color: s.color.slice(),
-    intensity: s.intensity,
-    radius: s.radius,
-    flickerSpeed: s.flickerSpeed,
-    flickerAmount: s.flickerAmount,
-    phase: s.phase,
-    type: s.lightType,
-    dir: s.dir.slice(),
-    coneInner: s.coneInner,
-    coneOuter: s.coneOuter,
-    pulseSpeed: s.pulseSpeed,
-    pulseAmount: s.pulseAmount,
-    noShadow: s.noShadow,
-    spriteId: s.spriteId,
-    zone: s.zone,
-    role: s.role,
-  }));
+  const lights = placedSprites.filter(s => s.emitsLight !== false).map(s => {
+    const fixtureDef = getFixtureDefinition(config.fixtures, s.spriteId);
+    const lightPos = fixtureDef?.sockets?.light ? resolveSocketWorld(s, fixtureDef, 'light') : [s.x, s.y, s.z];
+    return {
+      id: s.id,
+      pos: lightPos,
+      color: s.color.slice(),
+      intensity: s.intensity,
+      radius: s.radius,
+      flickerSpeed: s.flickerSpeed,
+      flickerAmount: s.flickerAmount,
+      phase: s.phase,
+      type: s.lightType,
+      dir: s.dir.slice(),
+      coneInner: s.coneInner,
+      coneOuter: s.coneOuter,
+      pulseSpeed: s.pulseSpeed,
+      pulseAmount: s.pulseAmount,
+      noShadow: s.noShadow,
+      spriteId: s.spriteId,
+      zone: s.zone,
+      role: s.role,
+    };
+  });
 
   return { sprites: placedSprites, lights };
 }

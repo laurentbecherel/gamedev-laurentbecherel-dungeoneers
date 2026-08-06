@@ -18,8 +18,8 @@
         "spot": {"coneInner": 0.85, "coneOuter": 0.65, "dir": [0,0,-1]},
         "flags": {"noShadow": false, "castShadows": true}
       },
-      "material": {"worldHeight": 0.58, "worldWidthFactor": 0.42, "normalStrength": 2.2, "rimStrength": 1.2, "alpha": 1},
-      "placement": {"wallMounted": true, "perimeterBias": true, "allowedZones": ["Entry","Antechamber","Depths","Sanctum","Exit"], "allowedRoles": {"hall":1,"corridor":1.5,"hub":1,"treasure":0.6,"guardian":0.4,"armory":0.8,"shrine":0.5,"secret":0.3}, "weight":1, "minDist":3.5, "torchOffset":0.35}
+      "material": {"worldHeight": 0.58, "worldWidthFactor": 0.58, "normalStrength": 1, "rimStrength": 0.35, "alpha": 1},
+      "placement": {"anchor":"wall", "baseZ":0.24, "wallInset":0.025, "verticalJitter":0, "wallMounted": true, "perimeterBias": true, "allowedZones": ["Entry","Antechamber","Depths","Sanctum","Exit"], "allowedRoles": {"hall":1,"corridor":1.5,"hub":1,"treasure":0.6,"guardian":0.4,"armory":0.8,"shrine":0.5,"secret":0.3}, "weight":1, "minDist":3.5}
     },
     {
       "id": "brazier_floor",
@@ -34,8 +34,8 @@
         "flicker": {"speedMin": 3.8, "speedMax": 7.5, "amountMin": 0.14, "amountMax": 0.32},
         "flags": {"noShadow": false, "castShadows": true}
       },
-      "material": {"worldHeight": 1.05, "worldWidthFactor": 0.55, "normalStrength": 1.8, "rimStrength": 1, "alpha":1},
-      "placement": {"floorStanding": true, "centerBias": true, "allowedZones": ["Depths","Sanctum","Exit","Antechamber"], "allowedRoles": {"treasure":1.4,"shrine":1.5,"guardian":1.2,"armory":0.8,"hub":0.6,"hall":0.3,"secret":0.4}, "weight":0.6, "minDist":4.5}
+      "material": {"worldHeight": 0.9, "worldWidthFactor": 0.78, "normalStrength": 1, "rimStrength": 0.45, "alpha":1},
+      "placement": {"anchor":"floor", "clearance":0.01, "verticalJitter":0, "floorStanding": true, "centerBias": true, "allowedZones": ["Depths","Sanctum","Exit","Antechamber"], "allowedRoles": {"treasure":1.4,"shrine":1.5,"guardian":1.2,"armory":0.8,"hub":0.6,"hall":0.3,"secret":0.4}, "weight":0.6, "minDist":4.5}
     },
     {
       "id": "lantern_hanging",
@@ -49,8 +49,8 @@
         "radius": {"min":7.5,"max":10},
         "flicker": {"speedMin":0.5,"speedMax":2,"amountMin":0.03,"amountMax":0.08}
       },
-      "material": {"worldHeight":0.65,"worldWidthFactor":0.38,"normalStrength":1.5,"rimStrength":0.8,"alpha":1},
-      "placement": {"hanging": true, "allowedZones": ["Entry","Antechamber"], "allowedRoles":{"entrance":1,"hall":0.5,"hub":0.7}, "weight":0.3, "minDist":5}
+      "material": {"worldHeight":0.65,"worldWidthFactor":0.52,"normalStrength":0.9,"rimStrength":0.3,"emissiveStrength":0.62,"alpha":1},
+      "placement": {"anchor":"ceiling", "clearance":0.015, "verticalJitter":0, "hanging": true, "allowedZones": ["Entry","Antechamber"], "allowedRoles":{"entrance":1,"hall":0.5,"hub":0.7}, "weight":0.3, "minDist":5}
     },
     {
       "id": "crystal_small",
@@ -65,8 +65,8 @@
         "pulse": {"speedMin":1.8,"speedMax":3,"amountMin":0.25,"amountMax":0.45},
         "flags": {"noShadow": true}
       },
-      "material": {"worldHeight":0.45,"worldWidthFactor":0.45,"normalStrength":1.2,"rimStrength":1.5,"emissiveStrength":0.6,"alpha":0.95},
-      "placement": {"floorStanding": true, "allowedZones":["Sanctum","Exit"], "allowedRoles":{"secret":1.5,"shrine":1.2,"treasure":0.6}, "weight":0.2, "minDist":4}
+      "material": {"worldHeight":0.46,"worldWidthFactor":0.82,"normalStrength":0.8,"rimStrength":0.42,"emissiveStrength":0.48,"alpha":0.95},
+      "placement": {"anchor":"floor", "clearance":0.01, "verticalJitter":0, "floorStanding": true, "allowedZones":["Sanctum","Exit"], "allowedRoles":{"secret":1.5,"shrine":1.2,"treasure":0.6}, "weight":0.2, "minDist":4}
     }
   ],
   "pools": {
@@ -90,5 +90,5 @@
       "secret": {"crystal_small":0.5,"torch_wall":0.3,"brazier_floor":0.2}
     }
   },
-  "generation": {"zBase_wall":0.72,"zJitter_wall":0.08,"zBase_floor":0.15,"zJitter_floor":0.05,"flameSizeMin":0.18,"flameSizeRange":0.06,"corridorTargetFactor":0.6,"corridorTargetMin":2}
+  "generation": {"flameSizeMin":0.18,"flameSizeRange":0.06,"corridorTargetFactor":0.6,"corridorTargetMin":2,"note":"Vertical and wall-plane contact now comes from each fixture placement anchor."}
 }

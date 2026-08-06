@@ -4,6 +4,7 @@
   "type": "module",
   "scripts": {
     "start": "node server/server.js",
+    "build:lighting-assets": "node tools/build-lighting-assets.mjs",
     "test": "npm run test:unit && npm run test:e2e",
     "test:e2e": "npx playwright test",
     "test:ui": "npx playwright test --ui",

@@ -1215,6 +1215,7 @@ struct QuantOut { @location(0) color: vec4<f32>, };
 @group(1) @binding(0) var sceneTex: texture_2d<f32>;
 @group(1) @binding(1) var paletteTex: texture_2d<f32>;
 @group(1) @binding(2) var lutTex: texture_2d<f32>;
+@group(1) @binding(3) var distortionTex: texture_2d<f32>;
 @group(2) @binding(0) var nearestSampler: sampler;
 @group(0) @binding(3) var<uniform> frame: FrameUniforms;
 
@@ -1224,7 +1225,13 @@ fn fs_main(@location(0) v_uv: vec2<f32>) -> QuantOut {
   var sc: vec4<f32> = textureSample(sceneTex, nearestSampler, uvFlip);
   // Restore WebGL2 parity: bypass palette quant when either PBR debug OR SSR debug active
   // Old quant shader checked pbrDebugMode !=0 ; old renderer also forced authentic=0 for SSR debug path.
-  if (frame.authentic == 0 || frame.pbrDebugMode != 0 || frame.ssrDebugMode != 0) {
+  if (frame.pbrDebugMode != 0 || frame.ssrDebugMode != 0) {
+    var out: QuantOut; out.color = sc; return out;
+  }
+  let distortion: vec4<f32> = textureSample(distortionTex, nearestSampler, uvFlip);
+  let distortedUV: vec2<f32> = clamp(uvFlip + distortion.rg, vec2<f32>(0.001), vec2<f32>(0.999));
+  sc = textureSample(sceneTex, nearestSampler, distortedUV);
+  if (frame.authentic == 0) {
     var out: QuantOut; out.color = sc; return out;
   }
   let lutCoord: vec2<i32> = vec2<i32>(i32(sc.r * 31.99) + i32(sc.g * 31.99) * 32, i32(sc.b * 31.99));
@@ -1289,7 +1296,9 @@ struct CameraUniforms {
   ambient: f32,
   fogBase: f32,
   fogSq: f32,
-  _pad: f32,
+  shadowPointFactor: f32,
+  shadowBias: f32,
+  mapSize: vec2<f32>,
 };
 @group(0) @binding(0) var<uniform> cam: CameraUniforms;
 @group(0) @binding(1) var<uniform> lightData: array<vec4<f32>, 40>;
@@ -1304,6 +1313,7 @@ struct VSOut {
   @location(6) normalStrength: f32,
   @location(7) rimStrength: f32,
   @location(8) dist: f32,
+  @location(9) emissiveStrength: f32,
 };
 @vertex
 fn vs_main(
@@ -1313,7 +1323,8 @@ fn vs_main(
   @location(3) a_uvRect: vec4<f32>,
   @location(4) a_alpha: f32,
   @location(5) a_normalStrength: f32,
-  @location(6) a_rimStrength: f32
+  @location(6) a_rimStrength: f32,
+  @location(7) a_emissiveStrength: f32
 ) -> VSOut {
   var out: VSOut;
   let dir: vec2<f32> = vec2<f32>(cos(cam.angle), sin(cam.angle));
@@ -1349,6 +1360,7 @@ fn vs_main(
   out.normalStrength = a_normalStrength;
   out.rimStrength = a_rimStrength;
   out.dist = transformY;
+  out.emissiveStrength = a_emissiveStrength;
   return out;
 }
 `;
@@ -1357,6 +1369,8 @@ export const fsSpriteWgsl = `
 @group(1) @binding(0) var albedoTex: texture_2d<f32>;
 @group(1) @binding(1) var normalTex: texture_2d<f32>;
 @group(1) @binding(2) var ormTex: texture_2d<f32>;
+@group(1) @binding(3) var emissiveTex: texture_2d<f32>;
+@group(1) @binding(4) var spriteMapTex: texture_2d<f32>;
 @group(2) @binding(0) var materialSampler: sampler;
 @group(2) @binding(1) var nearestSampler: sampler;
 struct CameraUniforms {
@@ -1374,7 +1388,9 @@ struct CameraUniforms {
   ambient: f32,
   fogBase: f32,
   fogSq: f32,
-  _pad: f32,
+  shadowPointFactor: f32,
+  shadowBias: f32,
+  mapSize: vec2<f32>,
 };
 @group(0) @binding(0) var<uniform> cam: CameraUniforms;
 @group(0) @binding(1) var<uniform> lightData: array<vec4<f32>, 40>;
@@ -1383,6 +1399,38 @@ fn attenuateSprite(dist: f32, radius: f32) -> f32 {
   if (dist > radius) { return 0.0; }
   let d: f32 = dist / radius;
   return pow(max(0.0, 1.0 - d), 2.0) / (1.0 + d * d * 0.2);
+}
+fn spriteShadowTrace(origin: vec2<f32>, direction: vec2<f32>, maxDist: f32) -> bool {
+  var mapPos: vec2<i32> = vec2<i32>(floor(origin));
+  let safeDir: vec2<f32> = vec2<f32>(
+    select(direction.x, 0.000001, abs(direction.x) < 0.000001),
+    select(direction.y, 0.000001, abs(direction.y) < 0.000001)
+  );
+  let delta: vec2<f32> = abs(vec2<f32>(1.0) / safeDir);
+  let stepDir: vec2<i32> = vec2<i32>(
+    select(-1, 1, safeDir.x >= 0.0),
+    select(-1, 1, safeDir.y >= 0.0)
+  );
+  var side: vec2<f32> = vec2<f32>(
+    select((origin.x - f32(mapPos.x)) * delta.x, (f32(mapPos.x) + 1.0 - origin.x) * delta.x, safeDir.x >= 0.0),
+    select((origin.y - f32(mapPos.y)) * delta.y, (f32(mapPos.y) + 1.0 - origin.y) * delta.y, safeDir.y >= 0.0)
+  );
+  for (var step: i32 = 0; step < 32; step++) {
+    var traveled: f32 = 0.0;
+    if (side.x < side.y) {
+      traveled = side.x;
+      side.x += delta.x;
+      mapPos.x += stepDir.x;
+    } else {
+      traveled = side.y;
+      side.y += delta.y;
+      mapPos.y += stepDir.y;
+    }
+    if (traveled >= maxDist) { return false; }
+    if (mapPos.x < 0 || mapPos.y < 0 || mapPos.x >= i32(cam.mapSize.x) || mapPos.y >= i32(cam.mapSize.y)) { return false; }
+    if (textureLoad(spriteMapTex, mapPos, 0).r * 255.0 > 0.5) { return true; }
+  }
+  return false;
 }
 @fragment
 fn fs_main(
@@ -1394,7 +1442,8 @@ fn fs_main(
   @location(5) v_alpha: f32,
   @location(6) v_normalStrength: f32,
   @location(7) v_rimStrength: f32,
-  @location(8) v_dist: f32
+  @location(8) v_dist: f32,
+  @location(9) v_emissiveStrength: f32
 ) -> @location(0) vec4<f32> {
   let albedoS: vec4<f32> = textureSample(albedoTex, materialSampler, v_uv);
   if (albedoS.a < 0.08) { discard; }
@@ -1408,6 +1457,7 @@ fn fs_main(
   let geomN: vec3<f32> = normalize(-v_cameraForward + vec3<f32>(0.0,0.0,0.4));
   let N: vec3<f32> = normalize(tangent * normalTS.x + bitangent * normalTS.y + geomN * normalTS.z);
   let orm: vec3<f32> = textureSample(ormTex, materialSampler, v_uv).rgb;
+  let emissiveS: vec3<f32> = textureSample(emissiveTex, materialSampler, v_uv).rgb;
   let ao: f32 = orm.r;
   var roughness: f32 = clamp(orm.g, 0.04, 1.0);
   let metal: f32 = clamp(orm.b, 0.0, 1.0);
@@ -1445,7 +1495,7 @@ fn fs_main(
     let coneOuter: f32 = lightData[base + 3].y;
     let pulseSpeed: f32 = lightData[base + 3].z;
     let pulseAmt: f32 = lightData[base + 3].w;
-    let flickerSpeed: f32 = lightData[base + 4].y; // we store flickerSpeed here; flickerAmount in z
+    let noShadow: f32 = lightData[base + 4].x;
     // 3D distance like old final
     let toL: vec3<f32> = lPos - v_worldPos;
     let dist: f32 = length(toL);
@@ -1470,10 +1520,18 @@ fn fs_main(
     }
     if (atten <= 0.01) { continue; }
     let L: vec3<f32> = toL / max(dist, 0.001);
+    var shadow: f32 = 1.0;
+    if (noShadow < 0.5 && length(L.xy) > 0.01) {
+      let shadowDir: vec2<f32> = normalize(L.xy);
+      let shadowOrigin: vec2<f32> = v_worldPos.xy + shadowDir * cam.shadowBias;
+      if (spriteShadowTrace(shadowOrigin, shadowDir, max(0.0, dist - 0.1))) {
+        shadow = cam.shadowPointFactor;
+      }
+    }
     let NdotL: f32 = max(dot(N, L), 0.0);
     if (NdotL > 0.0) {
       let attenN: f32 = atten * (0.35 + 0.65 * NdotL);
-      let contrib: f32 = attenN * lInt * NdotL * 1.15;
+      let contrib: f32 = attenN * lInt * NdotL * 1.15 * shadow;
       Lo += albedo * contrib * lColor;
     }
     if (NdotL > 0.08) {
@@ -1484,7 +1542,7 @@ fn fs_main(
         let metalBoost: f32 = 0.2 + metal * 1.6;
         let attenN: f32 = atten * (0.35 + 0.65 * NdotL);
         let spec: f32 = pow(NdotH, specPower) * (1.0 - roughness) * metalBoost * max(0.1, NdotL) * attenN;
-        Lo += spec * lColor;
+        Lo += spec * lColor * shadow;
       }
     }
     let VdotL: f32 = dot(V, L);
@@ -1495,20 +1553,37 @@ fn fs_main(
     let edgeNorm: f32 = length(normalTS.xy);
     let rimBase: f32 = max(edgeNorm * 1.8, max(0.0, 1.0 - normalTS.z) * 2.0);
     let rim: f32 = rimBase * fresnel * (behind * 0.9 + behindSide) * v_rimStrength * atten * (0.7 + metal * 0.8) * 0.35;
-    if (rim > 0.001) { Lo += vec3<f32>(rim, rim * 0.6, rim * 0.3) * lColor; }
+    if (rim > 0.001) { Lo += vec3<f32>(rim, rim * 0.6, rim * 0.3) * lColor * shadow; }
   }
+  Lo += emissiveS * v_emissiveStrength;
   let fog: f32 = 1.0 / (1.0 + v_dist * cam.fogBase + v_dist * v_dist * cam.fogSq);
   let fogClamped: f32 = clamp(fog, 0.05, 1.0);
   Lo = Lo * fogClamped;
-  var maxC: f32 = max(max(Lo.r, Lo.g), Lo.b);
-  if (maxC > 1.0) {
-    let over: f32 = clamp((maxC - 1.0) * 0.32, 0.0, 0.7);
-    let scaled: vec3<f32> = Lo / maxC;
-    let warmWhite: vec3<f32> = vec3<f32>(1.0, 0.94, 0.82);
-    Lo = mix(scaled, warmWhite, over);
-  }
+  // Preserve emissive hue. The former warm-white overexposure blend turned
+  // small flame cores into white blobs before palette quantization.
+  Lo = Lo / (vec3<f32>(1.0) + max(Lo - vec3<f32>(0.72), vec3<f32>(0.0)) * 0.42);
   Lo = clamp(Lo, vec3<f32>(0.0), vec3<f32>(1.0));
   return vec4<f32>(Lo, albedoS.a * v_alpha);
+}
+`;
+
+// Heat-haze accumulation. RG is a signed UV displacement in a floating-point
+// target; the final palette pass samples the completed scene through it.
+export const fsSpriteDistortionWgsl = `
+@group(1) @binding(5) var distortionMap: texture_2d<f32>;
+@group(2) @binding(0) var materialSampler: sampler;
+@fragment
+fn fs_main(
+  @location(0) v_uv: vec2<f32>,
+  @location(5) v_alpha: f32,
+  @location(9) v_distortionStrength: f32
+) -> @location(0) vec4<f32> {
+  let d: vec4<f32> = textureSample(distortionMap, materialSampler, v_uv);
+  let coverage: f32 = d.a * v_alpha;
+  if (coverage < 0.01) { discard; }
+  let signedDirection: vec2<f32> = d.rg * 2.0 - vec2<f32>(1.0);
+  let displacement: vec2<f32> = signedDirection * d.b * coverage * v_distortionStrength;
+  return vec4<f32>(displacement, d.b * coverage, coverage);
 }
 `;
 

@@ -1,0 +1,143 @@
+{
+  "version": 2,
+  "_readme": "All emitting props are composed fixtures. Game generation, rendering and Lighting Lab share these directional atlases, sockets, layers and material channels.",
+  "fixtures": [
+    {
+      "id": "torch_wall",
+      "displayName": "Iron Wall Torch",
+      "render": {
+        "mode": "directionalBillboard4",
+        "albedo": "./assets/sprites/torch/torch_wall_albedo.png",
+        "normal": "./assets/sprites/torch/torch_wall_normal.png",
+        "orm": "./assets/sprites/torch/torch_wall_orm.png",
+        "emissive": "./assets/sprites/torch/torch_wall_emissive.png",
+        "atlas": { "cols": 4, "rows": 1, "count": 4, "cellW": 64, "cellH": 64 },
+        "views": { "back": 0, "right": 1, "front": 2, "left": 3 },
+        "worldHeight": 0.58, "worldWidthFactor": 0.58, "pivot": [0.5, 0.84]
+      },
+      "orientation": { "source": "wallDir", "facesAwayFromWall": true, "sectorHysteresisDeg": 5 },
+      "placement": { "anchor": "wall", "baseZ": 0.24, "wallInset": 0.025, "verticalJitter": 0 },
+      "sockets": {
+        "light": { "local": [0.14, 0, 0.46] }, "flame": { "local": [0.08, 0, 0.43] },
+        "heat": { "local": [0.08, 0, 0.48] }, "smoke": { "local": [0.08, 0, 0.57] }, "sparks": { "local": [0.08, 0, 0.48] }
+      },
+      "layers": [
+        { "id": "flame", "spriteId": "fx_flame_small", "socket": "flame", "scale": 0.9, "phaseFromInstance": true },
+        { "id": "heat", "spriteId": "fx_heat_haze", "socket": "heat", "scale": 1, "phaseFromInstance": true, "renderLayer": "distortion" }
+      ],
+      "material": { "normalStrength": 1, "rimStrength": 0.35, "emissiveStrength": 0 },
+      "lightProfile": "flicker_torch"
+    },
+    {
+      "id": "brazier_floor",
+      "displayName": "Standing Iron Brazier",
+      "render": {
+        "mode": "directionalBillboard4",
+        "albedo": "./assets/sprites/brazier/brazier_floor_albedo.png",
+        "normal": "./assets/sprites/brazier/brazier_floor_normal.png",
+        "orm": "./assets/sprites/brazier/brazier_floor_orm.png",
+        "emissive": "./assets/sprites/brazier/brazier_floor_emissive.png",
+        "atlas": { "cols": 4, "rows": 1, "count": 4, "cellW": 64, "cellH": 64 },
+        "views": { "back": 0, "right": 1, "front": 2, "left": 3 },
+        "worldHeight": 0.9, "worldWidthFactor": 0.78, "pivot": [0.5, 0.92]
+      },
+      "orientation": { "source": "yaw" },
+      "placement": { "anchor": "floor", "clearance": 0.01, "verticalJitter": 0 },
+      "sockets": {
+        "light": { "local": [0, 0, 0.7] }, "flame": { "local": [0, 0, 0.65] },
+        "heat": { "local": [0, 0, 0.7] }, "smoke": { "local": [0, 0, 0.82] }, "sparks": { "local": [0, 0, 0.72] }
+      },
+      "layers": [
+        { "id": "flame", "spriteId": "fx_flame_small", "socket": "flame", "scale": 1.5, "phaseFromInstance": true },
+        { "id": "heat", "spriteId": "fx_heat_haze", "socket": "heat", "scale": 1.45, "phaseFromInstance": true, "renderLayer": "distortion" }
+      ],
+      "material": { "normalStrength": 1, "rimStrength": 0.45, "emissiveStrength": 0 },
+      "lightProfile": "brazier"
+    },
+    {
+      "id": "lantern_hanging",
+      "displayName": "Hanging Cage Lantern",
+      "render": {
+        "mode": "directionalBillboard4",
+        "albedo": "./assets/sprites/lantern/lantern_hanging_albedo.png",
+        "normal": "./assets/sprites/lantern/lantern_hanging_normal.png",
+        "orm": "./assets/sprites/lantern/lantern_hanging_orm.png",
+        "emissive": "./assets/sprites/lantern/lantern_hanging_emissive.png",
+        "atlas": { "cols": 4, "rows": 1, "count": 4, "cellW": 64, "cellH": 64 },
+        "views": { "back": 0, "right": 1, "front": 2, "left": 3 },
+        "worldHeight": 0.65, "worldWidthFactor": 0.52, "pivot": [0.5, 0.08]
+      },
+      "orientation": { "source": "yaw" },
+      "placement": { "anchor": "ceiling", "clearance": 0.015, "verticalJitter": 0 },
+      "sockets": { "light": { "local": [0, 0, 0.34] } },
+      "layers": [],
+      "material": { "normalStrength": 0.9, "rimStrength": 0.3, "emissiveStrength": 0.62 },
+      "lightProfile": "steady_lantern"
+    },
+    {
+      "id": "crystal_small",
+      "displayName": "Glowing Crystal Cluster",
+      "render": {
+        "mode": "directionalBillboard4",
+        "albedo": "./assets/sprites/crystal/crystal_small_albedo.png",
+        "normal": "./assets/sprites/crystal/crystal_small_normal.png",
+        "orm": "./assets/sprites/crystal/crystal_small_orm.png",
+        "emissive": "./assets/sprites/crystal/crystal_small_emissive.png",
+        "atlas": { "cols": 4, "rows": 1, "count": 4, "cellW": 64, "cellH": 64 },
+        "views": { "back": 0, "right": 1, "front": 2, "left": 3 },
+        "worldHeight": 0.46, "worldWidthFactor": 0.82, "pivot": [0.5, 0.94]
+      },
+      "orientation": { "source": "yaw" },
+      "placement": { "anchor": "floor", "clearance": 0.01, "verticalJitter": 0 },
+      "sockets": { "light": { "local": [0, 0, 0.28] }, "sparks": { "local": [0, 0, 0.36] } },
+      "layers": [],
+      "material": { "normalStrength": 0.8, "rimStrength": 0.42, "emissiveStrength": 0.48 },
+      "lightProfile": "pulse_crystal"
+    }
+  ],
+  "effects": [
+    {
+      "id": "fx_flame_small",
+      "render": {
+        "mode": "animatedBillboard", "albedo": "./assets/sprites/effects/flame_small_albedo.png",
+        "normal": "./assets/sprites/effects/flame_small_normal.png", "orm": "./assets/sprites/effects/flame_small_orm.png",
+        "emissive": "./assets/sprites/effects/flame_small_emissive.png",
+        "atlas": { "cols": 12, "rows": 1, "count": 12, "cellW": 48, "cellH": 48 },
+        "fps": 14, "worldHeight": 0.2, "worldWidthFactor": 0.62, "pivot": [0.5, 1]
+      },
+      "material": { "normalStrength": 0, "rimStrength": 0, "emissiveStrength": 0.72 }
+    },
+    {
+      "id": "fx_smoke_puff",
+      "render": {
+        "mode": "animatedBillboard", "albedo": "./assets/sprites/effects/smoke_puff_albedo.png",
+        "normal": "./assets/sprites/effects/smoke_puff_normal.png", "orm": "./assets/sprites/effects/smoke_puff_orm.png",
+        "emissive": "./assets/sprites/effects/smoke_puff_emissive.png",
+        "atlas": { "cols": 8, "rows": 1, "count": 8, "cellW": 32, "cellH": 32 },
+        "fps": 7, "worldHeight": 0.13, "worldWidthFactor": 1
+      },
+      "material": { "normalStrength": 0.15, "rimStrength": 0, "emissiveStrength": 0 }
+    },
+    {
+      "id": "fx_spark",
+      "render": {
+        "mode": "billboard", "albedo": "./assets/sprites/effects/spark_albedo.png",
+        "normal": "./assets/sprites/effects/spark_normal.png", "orm": "./assets/sprites/effects/spark_orm.png",
+        "emissive": "./assets/sprites/effects/spark_emissive.png",
+        "atlas": { "cols": 1, "rows": 1, "count": 1, "cellW": 8, "cellH": 8 },
+        "worldHeight": 0.04, "worldWidthFactor": 0.45
+      },
+      "material": { "normalStrength": 0, "rimStrength": 0, "emissiveStrength": 0.72 }
+    },
+    {
+      "id": "fx_heat_haze",
+      "render": {
+        "mode": "distortionBillboard", "distortion": "./assets/sprites/effects/heat_haze_distortion.png",
+        "atlas": { "cols": 8, "rows": 1, "count": 8, "cellW": 32, "cellH": 32 },
+        "fps": 9, "worldHeight": 0.3, "worldWidthFactor": 0.8
+      },
+      "material": { "distortionStrength": 0.006 }
+    }
+  ],
+  "ui": { "preview": { "defaultFixture": "torch_wall", "background": "wall", "pixelsPerUnit": 260 } }
+}

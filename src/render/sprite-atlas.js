@@ -1,5 +1,6 @@
 // Sprite atlas registry – pure WebGPU (no WebGL2) – migrated per user request
-// Procedural fallbacks via Canvas2D -> GPUTexture
+// Authored texture channels with procedural Canvas2D fallbacks for legacy or
+// missing assets.
 
 const registry = new Map();
 const gpuCaches = new WeakMap(); // device -> Map(id -> entry)
@@ -61,7 +62,7 @@ function proceduralTorchCanvas() {
   grad.addColorStop(0,'#22160a'); grad.addColorStop(0.35,'#4a2510'); grad.addColorStop(0.55,'#a65d20'); grad.addColorStop(0.75,'#ff8c21'); grad.addColorStop(1,'#ffe9a8');
   ctx.fillStyle=grad; ctx.fillRect(18,4,28,48);
   ctx.fillStyle='rgba(255,255,200,0.35)';
-  for(let i=0;i<16;i++){ const x=20+Math.random()*24; const y=6+Math.random()*28; ctx.fillRect(x,y,2,2); }
+  for(let i=0;i<16;i++){ const x=20+((i*17)%24); const y=6+((i*11)%28); ctx.fillRect(x,y,2,2); }
   return c;
 }
 function proceduralCanvasForType(type){
@@ -93,7 +94,9 @@ export async function loadSpriteGL(device, id) {
   const albedoTex=canvas?createGPUTextureFromCanvas(device, canvas, `albedo_${id}`):createGPUTextureFromColor(device,255,0,255,255,`placeholder_${id}`);
   const normalTex=createGPUTextureFromColor(device,128,128,255,255,`normal_${id}`);
   const ormTex=createGPUTextureFromColor(device,255,217,0,255,`orm_${id}`);
-  const entry={ albedo:albedoTex, normal:normalTex, orm:ormTex, height:normalTex, meta, loaded:false, albedoView:albedoTex.createView(), normalView:normalTex.createView(), ormView:ormTex.createView() };
+  const emissiveTex=createGPUTextureFromColor(device,0,0,0,255,`emissive_${id}`);
+  const distortionTex=createGPUTextureFromColor(device,128,128,0,0,`distortion_${id}`);
+  const entry={ albedo:albedoTex, normal:normalTex, orm:ormTex, emissive:emissiveTex, distortion:distortionTex, height:normalTex, meta, loaded:false, albedoView:albedoTex.createView(), normalView:normalTex.createView(), ormView:ormTex.createView(), emissiveView:emissiveTex.createView(), distortionView:distortionTex.createView() };
   cache.set(id, entry);
   const tryLoadPath = async (paths)=>{
     if(!paths) return null;
@@ -108,6 +111,10 @@ export async function loadSpriteGL(device, id) {
     if(normalBmp){ const tex=device.createTexture({ size:{width:normalBmp.width,height:normalBmp.height}, format:'rgba8unorm', usage:GPUTextureUsage.TEXTURE_BINDING|GPUTextureUsage.COPY_DST|GPUTextureUsage.RENDER_ATTACHMENT, label:`normal_${id}_real` }); device.queue.copyExternalImageToTexture({ source:normalBmp }, { texture:tex }, { width:normalBmp.width, height:normalBmp.height }); try{ entry.normal.destroy(); }catch{} entry.normal=tex; entry.normalView=tex.createView(); }
     const ormBmp=await tryLoadPath(meta.ormPath||meta.roughMetalPath);
     if(ormBmp){ const tex=device.createTexture({ size:{width:ormBmp.width,height:ormBmp.height}, format:'rgba8unorm', usage:GPUTextureUsage.TEXTURE_BINDING|GPUTextureUsage.COPY_DST|GPUTextureUsage.RENDER_ATTACHMENT, label:`orm_${id}_real` }); device.queue.copyExternalImageToTexture({ source:ormBmp }, { texture:tex }, { width:ormBmp.width, height:ormBmp.height }); try{ entry.orm.destroy(); }catch{} entry.orm=tex; entry.ormView=tex.createView(); }
+    const emissiveBmp=await tryLoadPath(meta.emissivePath);
+    if(emissiveBmp){ const tex=device.createTexture({ size:{width:emissiveBmp.width,height:emissiveBmp.height}, format:'rgba8unorm', usage:GPUTextureUsage.TEXTURE_BINDING|GPUTextureUsage.COPY_DST|GPUTextureUsage.RENDER_ATTACHMENT, label:`emissive_${id}_real` }); device.queue.copyExternalImageToTexture({ source:emissiveBmp }, { texture:tex }, { width:emissiveBmp.width, height:emissiveBmp.height }); try{ entry.emissive.destroy(); }catch{} entry.emissive=tex; entry.emissiveView=tex.createView(); }
+    const distortionBmp=await tryLoadPath(meta.distortionPath);
+    if(distortionBmp){ const tex=device.createTexture({ size:{width:distortionBmp.width,height:distortionBmp.height}, format:'rgba8unorm', usage:GPUTextureUsage.TEXTURE_BINDING|GPUTextureUsage.COPY_DST|GPUTextureUsage.RENDER_ATTACHMENT, label:`distortion_${id}_real` }); device.queue.copyExternalImageToTexture({ source:distortionBmp }, { texture:tex }, { width:distortionBmp.width, height:distortionBmp.height }); try{ entry.distortion.destroy(); }catch{} entry.distortion=tex; entry.distortionView=tex.createView(); }
     entry.loaded=true;
   } catch(e){ console.warn(`[sprite-atlas WebGPU] failed load ${id}`, e); }
   return entry;
@@ -125,6 +132,6 @@ export async function preloadSpritesGL(device, ids){
 export function clearSpriteCache(device){
   const m=gpuCaches.get(device);
   if(!m) return;
-  for(const entry of m.values()){ try{ entry.albedo?.destroy(); }catch{} try{ entry.normal?.destroy(); }catch{} try{ entry.orm?.destroy(); }catch{} }
+  for(const entry of m.values()){ try{ entry.albedo?.destroy(); }catch{} try{ entry.normal?.destroy(); }catch{} try{ entry.orm?.destroy(); }catch{} try{ entry.emissive?.destroy(); }catch{} try{ entry.distortion?.destroy(); }catch{} }
   m.clear();
 }

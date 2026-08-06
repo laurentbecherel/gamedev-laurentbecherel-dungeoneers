@@ -1,6 +1,7 @@
 {
   "_readme": "Particle emitter defaults for torches/braziers. Flame wobble should be organic, not static.",
   "version": 1,
+  "maxParticles": 256,
   "flame": {
     "rate": 18,
     "color": [
@@ -20,14 +21,14 @@
     "note": "organic wobble in particles.js via inharmonic sines + gust"
   },
   "smoke": {
-    "rate": 3,
+    "rate": 1.2,
     "color": [
       0.25,
       0.22,
       0.2
     ],
-    "size": 0.12,
-    "life": 1.8,
+    "size": 0.1,
+    "life": 1.45,
     "velocity": [
       0,
       0,
@@ -35,10 +36,11 @@
     ],
     "spread": 0.06,
     "type": "smoke",
-    "alpha": 0.15
+    "alpha": 0.24,
+    "spriteId": "fx_smoke_puff"
   },
   "spark": {
-    "rate": 0.6,
+    "rate": 2.2,
     "color": [
       1,
       0.8,
@@ -52,7 +54,8 @@
       0.5
     ],
     "spread": 0.18,
-    "type": "spark"
+    "type": "spark",
+    "spriteId": "fx_spark"
   },
   "presets": {
     "torch_wall": {
@@ -61,8 +64,8 @@
         "size": 0.06
       },
       "smoke": {
-        "rate": 2.5,
-        "size": 0.1
+        "rate": 0.9,
+        "size": 0.08
       }
     },
     "brazier_floor": {

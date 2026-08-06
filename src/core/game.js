@@ -140,6 +140,7 @@ export class Game {
     merged.sprites = this._pickCfg(renderCfgs, baseCfg, 'sprites', { version:1, maxLights:8, sprites:[] });
     merged.lightTypes = this._pickCfg(renderCfgs, baseCfg, 'light-types', { version:1, types:[] });
     merged.particles = this._pickCfg(renderCfgs, baseCfg, 'particles', { version:1 });
+    merged.fixtures = this._pickCfg(renderCfgs, baseCfg, 'fixtures', { version:1, fixtures:[], effects:[] });
     merged.materialsProc = renderCfgs["materials-proc"] || baseCfg.materialsProc || baseCfg["materials-proc"] || baseCfg.materialProc || { walls:{}, floors:{}, ceils:{} };
     merged.materialAssignments = renderCfgs["material-assignments"] || baseCfg.materialAssignments || baseCfg["material-assignments"] || { version:1, policy:{}, fallback:{wall:1,floor:1,ceil:1} };
     merged['material-assignments'] = merged.materialAssignments;

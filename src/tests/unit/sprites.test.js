@@ -15,7 +15,9 @@ async function loadConfig() {
   const lightingRaw = JSON.parse(await fs.readFile(path.join(__dirname, '../../assets/config/lighting/lighting.json'), 'utf8'));
   let spritesRaw = null;
   try { spritesRaw = JSON.parse(await fs.readFile(path.join(__dirname, '../../assets/config/lighting/sprites.json'), 'utf8')); } catch {}
-  return { generator: genCfgRaw, lighting: lightingRaw, sprites: spritesRaw, torchColors: genCfgRaw.torchColors || lightingRaw.torchColors };
+  const fixturesRaw = JSON.parse(await fs.readFile(path.join(__dirname, '../../assets/config/lighting/fixtures.json'), 'utf8'));
+  const renderingRaw = JSON.parse(await fs.readFile(path.join(__dirname, '../../assets/config/rendering/rendering.json'), 'utf8'));
+  return { generator: genCfgRaw, lighting: lightingRaw, sprites: spritesRaw, fixtures: fixturesRaw, rendering: renderingRaw, torchColors: genCfgRaw.torchColors || lightingRaw.torchColors };
 }
 
 test('hash2i deterministic same input same output, different inputs different', () => {
@@ -165,6 +167,49 @@ test('sprites anchoring to floorHeight prevents floating', async () => {
     assert.ok(s.z <= floorH + 1.6, `sprite z ${s.z} should be <= floorH+1.6, floorH=${floorH}`);
     if (s.floorH !== undefined) assert.equal(s.floorH, floorH);
   }
+});
+
+test('contact jitter settings do not shift fixture type or tile RNG', async () => {
+  const { generateDungeon } = await import('../../world/dungeon/index.js');
+  const { generateDungeonSprites } = await import('../../world/sprites.js');
+  const cfg = await loadConfig();
+  const dungeon = await generateDungeon(cfg, 777);
+  const zeroJitter = structuredClone(cfg);
+  const tinyJitter = structuredClone(cfg);
+  for (const def of zeroJitter.fixtures.fixtures) def.placement.verticalJitter = 0;
+  for (const def of tinyJitter.fixtures.fixtures) def.placement.verticalJitter = Number.EPSILON;
+  const signature = result => result.sprites.map(({ spriteId, tileX, tileY, wallDir }) => ({ spriteId, tileX, tileY, wallDir }));
+  assert.deepEqual(
+    signature(generateDungeonSprites(dungeon, zeroJitter)),
+    signature(generateDungeonSprites(dungeon, tinyJitter)),
+    'disabling visual Z jitter must not shift the seeded placement/type stream',
+  );
+});
+
+test('generated fixtures touch their authored wall, floor or ceiling anchors', async () => {
+  const { generateDungeon } = await import('../../world/dungeon/index.js');
+  const cfg = await loadConfig();
+  const fixtureById = new Map(cfg.fixtures.fixtures.map(def => [def.id, def]));
+  const found = new Set();
+  for (let seed = 1; seed <= 8; seed++) {
+    const d = await generateDungeon(cfg, seed);
+    for (const s of d.sprites) {
+      const def = fixtureById.get(s.spriteId);
+      if (!def) continue;
+      found.add(s.spriteId);
+      const i = s.tileY * d.w + s.tileX;
+      const floor = d.floorHeight[i], ceiling = d.ceilHeight[i];
+      const contact = s.z + def.render.worldHeight * (1 - def.render.pivot[1]);
+      if (def.placement.anchor === 'floor') assert.ok(Math.abs(contact - (floor + def.placement.clearance)) < 1e-6, `${s.spriteId} floor contact`);
+      if (def.placement.anchor === 'ceiling') assert.ok(Math.abs(contact - (ceiling - def.placement.clearance)) < 1e-6, `${s.spriteId} ceiling contact`);
+      if (def.placement.anchor === 'wall') {
+        assert.ok(Math.abs(s.z - (floor + def.placement.baseZ)) < 1e-6, `${s.spriteId} wall height`);
+        const offset = Math.abs(s.x - (s.tileX + 0.5)) + Math.abs(s.y - (s.tileY + 0.5));
+        assert.ok(Math.abs(offset - (0.5 - def.placement.wallInset)) < 1e-6, `${s.spriteId} wall plane`);
+      }
+    }
+  }
+  assert.deepEqual([...found].sort(), ['brazier_floor', 'crystal_small', 'lantern_hanging', 'torch_wall']);
 });
 
 test('sprites have unique phase so flicker not synced', async () => {
