@@ -346,7 +346,7 @@
         "max": 0.5,
         "step": 0.01
       },
-      "colorStrength": "0-1 moss tint strength over base albedo.",
+      "colorStrength": "Final moss-mask gain before the bounded albedo blend. Values above 1 amplify sparse masks without extrapolating color.",
       "roughAdd": "0-1 additional roughness from moss.",
       "env": {
         "floorBase": {

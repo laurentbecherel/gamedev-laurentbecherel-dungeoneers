@@ -137,6 +137,18 @@ test('P2: material-assignments.json exists and is data-driven', async () => {
   assert(treasure.wall.values.length === 2, 'treasure weighted');
 });
 
+test('moss modifier has independent albedo and surface detail', async () => {
+  const shader = await fs.readFile(path.join(process.cwd(), 'render', 'shader-lib', 'modifiers.wgsl.js'), 'utf8');
+  const config = JSON.parse(await fs.readFile(path.join(process.cwd(), 'assets', 'config', 'rendering', 'material-modifiers.json'), 'utf8'));
+  assert(shader.includes('fn mossSurfaceDetail'), 'moss has detail independent from its coverage noise');
+  assert(shader.includes('mossDark') && shader.includes('mossMid') && shader.includes('mossLight'), 'moss uses a low-resolution color ramp');
+  assert(shader.includes('mossRoughTarget'), 'moss roughness varies without uniformly saturating');
+  assert(shader.includes('mossTangent') && shader.includes('mossBitangent'), 'moss normal relief follows the host surface');
+  assert(!shader.includes('let mossUp:'), 'moss no longer flattens normals toward world-up');
+  assert(config.modifiers.moss.colorStrength > 1, 'moss visibility gain compensates for the sparse final mask');
+  assert(shader.includes('clamp(mossStrength * mossColorStrength, 0.0, 1.0)'), 'moss gain cannot extrapolate its albedo blend');
+});
+
 test('P1: materials-proc.json no longer has forcedCount', async () => {
   const p = path.join(process.cwd(), 'assets', 'config', 'rendering', 'materials-proc.json');
   const j = JSON.parse(await fs.readFile(p, 'utf8'));

@@ -510,6 +510,20 @@ fn pomOffsetArrayDamaged(heightTex: texture_2d_array<f32>, uv: vec2<f32>, layer:
 fn debugDamagedNoiseCol(w: vec3<f32>) -> vec3<f32> { return vec3<f32>(0.85, 0.22, 0.18) * damagedNoiseShape(w) * 1.8; }
 fn debugDamagedCombinedCol(w: vec3<f32>, mh: f32, ao: f32, ro: f32, isFloor: f32) -> vec3<f32> { return vec3<f32>(0.85, 0.25, 0.15) * damagedFinalMask(w, mh, ao, ro, isFloor) * 1.8; }
 
+// Coverage noise is intentionally broad so moss forms readable patches.  The
+// surface needs a separate, finer signal or fully covered pixels all receive
+// almost identical albedo and PBR values.
+fn mossSurfaceDetail(worldPos: vec3<f32>) -> f32 {
+  let seedOffset: f32 = modifiersBlock.modMossAlbedoRough.y * 0.011;
+  let detailScale: f32 = max(mossDefault(modifiersBlock.modMossAlbedoRough.z, 2.95) * 2.0, 6.0);
+  let p: vec3<f32> = worldPos * detailScale + vec3<f32>(17.3 + seedOffset, 9.1, 23.7);
+  // Quantized hash cells are deliberate: at the game's internal resolution
+  // they give stable pixel clusters for a fraction of interpolated 3D noise's cost.
+  let clump: f32 = hash31(floor(p));
+  let fiber: f32 = hash31(floor(p * 1.91 + vec3<f32>(4.7, 13.2, 6.4)));
+  return clamp(clump * 0.68 + fiber * 0.32, 0.0, 1.0);
+}
+
 // Main applyModifiers – exact from old GLSL translated to WGSL
 fn applyModifiers(albedo: ptr<function, vec3<f32>>, N: ptr<function, vec3<f32>>, rough: ptr<function, f32>, metal: ptr<function, f32>, ao: ptr<function, f32>, worldPos: vec3<f32>, matHeight: ptr<function, f32>, isFloorSurface: f32) {
   let modsEnabled: f32 = f32(frame.modifiersEnabled);
@@ -530,6 +544,9 @@ fn applyModifiers(albedo: ptr<function, vec3<f32>>, N: ptr<function, vec3<f32>>,
   let mossMask: f32 = mossFinalMask(worldPos, *matHeight, *ao, *rough, isFloorSurface);
   let mossHas: f32 = step(0.001, mossCell);
   let mossNoiseVal: f32 = mossNoiseRaw(worldPos);
+  let mossDetail: f32 = mossSurfaceDetail(worldPos);
+  let mossDetailScale: f32 = max(mossDefault(modifiersBlock.modMossAlbedoRough.z, 2.95) * 2.0, 6.0);
+  let mossSpeckle: f32 = hash31(floor(worldPos * mossDetailScale * 1.875 + vec3<f32>(31.7, 5.3, 19.1)));
 
   var mossAlbedoBase: vec3<f32> = modifiersBlock.modMossAlbedo.xyz;
   let mossAlbedoZero: f32 = step(length(modifiersBlock.modMossAlbedo), 0.0001);
@@ -547,16 +564,42 @@ fn applyModifiers(albedo: ptr<function, vec3<f32>>, N: ptr<function, vec3<f32>>,
   mossNormalStr = mix(mossNormalStr, 0.36, mossStrZero);
   mossAoStr = mix(mossAoStr, 0.16, mossStrZero);
 
-  let mossAlbedo: vec3<f32> = mossAlbedoBase * (0.85 + 0.28 * mossNoiseVal);
-  let mossStrength: f32 = mossMask * mossHas;
-  *albedo = mix(*albedo, mossAlbedo, mossStrength * mossColorStrength);
-  *rough = clamp(*rough + mossRoughAdd * mossStrength, 0.0, 1.0);
+  // A compact three-tone ramp survives the low internal resolution better
+  // than smooth macro-noise alone.  The warm highlight keeps the green from
+  // reading as a single flat debug colour.
+  let mossDark: vec3<f32> = mossAlbedoBase * vec3<f32>(0.66, 0.72, 0.63);
+  let mossMid: vec3<f32> = mossAlbedoBase * vec3<f32>(0.94, 1.00, 0.90);
+  let mossLight: vec3<f32> = mossAlbedoBase * vec3<f32>(1.17, 1.14, 0.91) + vec3<f32>(0.018, 0.014, 0.002);
+  let darkToMid: f32 = smoothstep(0.24, 0.58, mossDetail);
+  let midToLight: f32 = smoothstep(0.62, 0.86, mossSpeckle) * smoothstep(0.45, 0.78, mossDetail);
+  var mossAlbedo: vec3<f32> = mix(mossDark, mossMid, darkToMid);
+  mossAlbedo = mix(mossAlbedo, mossLight, midToLight);
+  mossAlbedo = mossAlbedo * (0.94 + 0.12 * mossNoiseVal);
+
+  let mossStrength: f32 = clamp(mossMask * mossHas, 0.0, 1.0);
+  // colorStrength is a visibility gain for the deliberately sparse final mask.
+  // Keep the resulting interpolation bounded so gains above 1 never extrapolate RGB.
+  let mossBlend: f32 = clamp(mossStrength * mossColorStrength, 0.0, 1.0);
+  *albedo = mix(*albedo, mossAlbedo, mossBlend);
+
+  // Moss is rough, but not uniformly max-rough.  Blend toward a varied target
+  // so already-rough masonry does not simply clamp every moss pixel to 1.0.
+  let mossRoughTarget: f32 = clamp(0.74 + mossRoughAdd * 0.35 + (mossDetail - 0.5) * 0.18 + (mossSpeckle - 0.5) * 0.08, 0.68, 0.96);
+  *rough = mix(*rough, mossRoughTarget, mossStrength * 0.88);
   *metal = mix(*metal, 0.0, mossStrength * 0.80);
-  *ao = *ao * (1.0 - mossStrength * mossAoStr);
-  let mossUp: vec3<f32> = vec3<f32>(0.0, 0.0, 1.0);
-  let wallBias: f32 = mix(0.85, 0.55, step(0.5, isFloorSurface));
-  *N = normalize(mix(*N, mossUp, mossStrength * mossNormalStr * wallBias));
-  *matHeight = *matHeight + mossStrength * mossHeightAdd;
+  *ao = *ao * (1.0 - mossStrength * mossAoStr * (0.65 + 0.35 * (1.0 - mossDetail)));
+
+  // Build the relief in the actual surface plane.  Blending toward world-up
+  // flattened floor normals and tilted wall normals; tangent-space detail is
+  // stable on floors, ceilings and every wall orientation.
+  let mossBaseN: vec3<f32> = normalize(*N);
+  let mossAxis: vec3<f32> = select(vec3<f32>(0.0, 0.0, 1.0), vec3<f32>(1.0, 0.0, 0.0), abs(mossBaseN.z) > 0.92);
+  let mossTangent: vec3<f32> = normalize(cross(mossAxis, mossBaseN));
+  let mossBitangent: vec3<f32> = normalize(cross(mossBaseN, mossTangent));
+  let mossSlope: vec3<f32> = mossTangent * (mossDetail - 0.5) + mossBitangent * (mossSpeckle - 0.5);
+  let mossReliefN: vec3<f32> = normalize(mossBaseN - mossSlope * mossNormalStr * 0.55);
+  *N = normalize(mix(mossBaseN, mossReliefN, mossStrength));
+  *matHeight = *matHeight + mossStrength * mossHeightAdd * (0.55 + 0.55 * mossDetail);
 
   // Puddle – full ripple + metal + ao path from old GLSL
   let isFloor: f32 = step(0.5, isFloorSurface);
