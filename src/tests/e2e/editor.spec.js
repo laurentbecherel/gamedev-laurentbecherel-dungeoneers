@@ -68,6 +68,10 @@ test("config/display shows rendering.json with fov and toggles", async ({ page }
 
 test("material modifiers exposes a live debug-view dropdown", async ({ page, context }) => {
   const gamePage = await context.newPage();
+  const gameErrors = [];
+  gamePage.on("console", message => {
+    if (message.type() === "error" && !isBenign(message.text())) gameErrors.push(message.text());
+  });
   await gamePage.goto("/game.html");
   await gamePage.waitForFunction(() => !!window._gameRenderer, null, { timeout: 10000 });
   await page.goto("/editor.html");
@@ -83,15 +87,26 @@ test("material modifiers exposes a live debug-view dropdown", async ({ page, con
   await expect(debugToggle).toHaveAttribute("aria-expanded", "true");
   const debugSelect = page.locator("select.field-select").first();
   await expect(debugSelect).toBeVisible({ timeout: 3000 });
+  const initialDebugView = await debugSelect.inputValue();
   await expect(debugSelect.locator('option[value="damagedNoise"]')).toHaveCount(1);
   await expect(debugSelect.locator('option[value="damagedPlacement"]')).toHaveCount(1);
   await expect(debugSelect.locator('option[value="damagedFactors"]')).toHaveCount(1);
   await expect(debugSelect.locator('option[value="damagedFinal"]')).toHaveCount(1);
+  await expect(debugSelect.locator('option[value="damagedHeight"]')).toHaveCount(1);
+  await expect(debugSelect.locator('option[value="damagedNormal"]')).toHaveCount(1);
   await debugSelect.selectOption("damagedFactors");
   await expect(debugSelect).toHaveValue("damagedFactors");
   await expect.poll(() => gamePage.evaluate(() => window._gameRenderer?.pbrDebugMode)).toBe(12);
-  await debugSelect.selectOption("off");
-  await expect.poll(() => gamePage.evaluate(() => window._gameRenderer?.pbrDebugMode)).toBe(0);
+  await debugSelect.selectOption("damagedHeight");
+  await expect.poll(() => gamePage.evaluate(() => window._gameRenderer?.pbrDebugMode)).toBe(13);
+  await debugSelect.selectOption("damagedNormal");
+  await expect.poll(() => gamePage.evaluate(() => window._gameRenderer?.pbrDebugMode)).toBe(14);
+  await gamePage.waitForTimeout(500);
+  expect(gameErrors, `no game shader errors: ${gameErrors.join("; ")}`).toEqual([]);
+  await debugSelect.selectOption(initialDebugView);
+  const initialDebugMode = { off:0, damagedNoise:7, damagedPlacement:11, damagedFactors:12, damagedFinal:6, damagedHeight:13, damagedNormal:14 }[initialDebugView] ?? 0;
+  await expect.poll(() => gamePage.evaluate(() => window._gameRenderer?.pbrDebugMode)).toBe(initialDebugMode);
+  await page.waitForTimeout(350);
   await modifiersToggle.click();
   await expect(modifiersToggle).toHaveAttribute("aria-expanded", "true");
   const mossToggle = page.locator(".object-section-toggle").filter({ hasText: "Moss" }).first();

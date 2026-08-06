@@ -52,7 +52,7 @@ export function isWebGL2Supported() {
 
 function alignUp(v, a) { return Math.ceil(v / a) * a; }
 const FEATURE_UNIFORM_BYTES = 176;
-const MODIFIERS_VEC4_COUNT = 48;
+const MODIFIERS_VEC4_COUNT = 49;
 const MODIFIERS_UNIFORM_BYTES = MODIFIERS_VEC4_COUNT * 16;
 
 const MODIFIER_DEBUG_MODES = Object.freeze({
@@ -69,10 +69,12 @@ const MODIFIER_DEBUG_MODES = Object.freeze({
   dustFinal: 10,
   damagedPlacement: 11,
   damagedFactors: 12,
+  damagedHeight: 13,
+  damagedNormal: 14,
 });
 
 function resolveModifierDebugMode(value) {
-  if (typeof value === 'number') return Math.max(0, Math.min(12, value | 0));
+  if (typeof value === 'number') return Math.max(0, Math.min(14, value | 0));
   return MODIFIER_DEBUG_MODES[value] ?? 0;
 }
 
@@ -573,8 +575,10 @@ function packModifiersBlock(buffer, cfg, dungeon) {
     setVec4Full(112, damagedFinal.biomeBase ?? 0.15, damagedFinal.envBase ?? 0.25, damagedFinal.matBase ?? 0.35, damagedFinal.boost ?? 1.35);
     // 29: damagedFinalWeights
     setVec4Full(116, damagedFinal.noiseWeight ?? 1.0, damagedFinal.envWeight ?? 0.35, damagedFinal.matWeight ?? 0.6, damagedFinal.biomeWeight ?? 0.5);
-    // 30: damagedSurface
-    setVec4Full(120, (damagedSurf.depth ?? -0.38) * (damagedSurf.depthBoost ?? 1.0), damagedSurf.pitVar ?? 0.32, damagedSurf.ridgeHeight ?? 0.18, damagedSurf.normalStrength ?? 0.95);
+    // 30: damagedSurface. Cavity depth is stored as a positive magnitude;
+    // the shader owns the subtraction so live tuning cannot invert the pit.
+    const cavityDepth = Math.abs(damagedSurf.cavityDepth ?? damagedSurf.depth ?? 0.22) * (damagedSurf.depthBoost ?? 1.0);
+    setVec4Full(120, cavityDepth, damagedSurf.pitVar ?? 0.24, damagedSurf.ridgeHeight ?? 0.05, damagedSurf.normalStrength ?? 0.95);
     // 31: damagedSurface2
     setVec4Full(124, damagedSurf.normalDetail ?? 0.65, damagedSurf.roughAdd ?? 0.42, damagedSurf.roughVar ?? 0.28, damagedSurf.aoStrength ?? 0.38);
     // 32: damagedGlobal
@@ -601,6 +605,8 @@ function packModifiersBlock(buffer, cfg, dungeon) {
       const alb = normalizeAlbedo(damagedAppearance.albedo ?? damaged.albedo, [0.40,0.38,0.34]);
       setVec4Full(188, alb[0], alb[1], alb[2], damaged.enabled === false ? -1.0 : (damagedAppearance.colorStrength ?? damaged.colorStrength ?? 0.42));
     }
+    // 48: unified cavity composition and height-derived normal sampling.
+    setVec4Full(192, damagedSurf.hostReliefRemoval ?? 0.92, damagedSurf.normalSampleStep ?? 0.035, damagedSurf.substrateHeight ?? 0.18, damagedSurf.microHeight ?? 0.06);
   } catch (e) {
     console.warn('[packModifiersBlock] failed, using partial', e);
   }
@@ -1599,7 +1605,7 @@ export class GPURenderer {
   setModifiersEnabled(v){ this.modifiersEnabled = v ? 1 : 0; }
   setSSREnabled(v){ this.ssrEnabled = v ? 1 : 0; }
   setPBRDebugMode(v) {
-    this.pbrDebugMode = Math.max(0, Math.min(12, v | 0));
+    this.pbrDebugMode = Math.max(0, Math.min(14, v | 0));
     if (this.pbrDebugMode !== 0) this._ensureDebugPipeline(this.pbrDebugMode);
     return this.pbrDebugMode;
   }
@@ -1672,7 +1678,7 @@ export class GPURenderer {
   }
 
   cyclePBRDebug() {
-    const next = (this.pbrDebugMode + 1) % 13;
+    const next = (this.pbrDebugMode + 1) % 15;
     return this.setPBRDebugMode(next);
   }
   isReady() { return this.ready && (!!this.device || !!this._fallback2D); }

@@ -1,8 +1,8 @@
-// WGSL material modifiers – 48 vec4 UBO with dedicated damage, blood and dust blocks.
+// WGSL material modifiers – 49 vec4 UBO with dedicated damage, blood and dust blocks.
 // Preserves all public function names. Uses linearSampler for smooth modifier maps (matches old texture() LINEAR).
 
 export const wgslModifiers = `
-// UBO v28 - 48 vec4 = 768 bytes
+// UBO v29 - 49 vec4 = 784 bytes
 struct ModifiersBlock {
   modMossAlbedoRough: vec4<f32>,
   modMossParams: vec4<f32>,
@@ -52,6 +52,7 @@ struct ModifiersBlock {
   modDustPlacement: vec4<f32>,
   modDustFinal: vec4<f32>,
   modDamagedAppearance: vec4<f32>,
+  modDamagedSurface3: vec4<f32>,
 };
 
 fn hash21_puddle(p: vec2<f32>) -> f32 {
@@ -489,11 +490,10 @@ fn damagedMaterialMask(mh: f32, ao: f32, ro: f32) -> f32 {
   return mix(clamp(modifiersBlock.modDamagedMaterial2.z, 0.0, 1.0), 1.0, clamp(cue, 0.0, 1.0));
 }
 
-fn damagedFinalMask(w: vec3<f32>, mh: f32, ao: f32, ro: f32, isFloor: f32) -> f32 {
+fn damagedFinalMaskFromNoise(w: vec3<f32>, mh: f32, ao: f32, ro: f32, isFloor: f32, noise: f32) -> f32 {
   if (modifiersBlock.modDamagedAppearance.w < 0.0) { return 0.0; }
   let biome: f32 = damagedBiomeMask(w.xy);
   let has: f32 = step(0.001, biome);
-  let noise: f32 = damagedNoiseShape(w);
   let env: f32 = damagedEnvMask(w, isFloor);
   let mat: f32 = damagedMaterialMask(mh, ao, ro);
   let bBase: f32 = modifiersBlock.modDamagedFinal.x;
@@ -533,16 +533,70 @@ fn damagedFinalMask(w: vec3<f32>, mh: f32, ao: f32, ro: f32, isFloor: f32) -> f3
   return f;
 }
 
-fn damagedHeightOffset(w: vec3<f32>, s: f32) -> f32 {
+fn damagedFinalMask(w: vec3<f32>, mh: f32, ao: f32, ro: f32, isFloor: f32) -> f32 {
+  return damagedFinalMaskFromNoise(w, mh, ao, ro, isFloor, damagedNoiseShape(w));
+}
+
+fn damagedHeightOffsetFromRaw(w: vec3<f32>, s: f32, raw: f32) -> f32 {
   let has: f32 = step(0.001, s);
-  var depth: f32 = modifiersBlock.modDamagedSurface.x;
-  var pitVar: f32 = modifiersBlock.modDamagedSurface.y;
-  var ridgeH: f32 = modifiersBlock.modDamagedSurface.z;
-  let raw: f32 = damagedNoiseRaw(w);
+  let depth: f32 = max(modifiersBlock.modDamagedSurface.x, 0.0);
+  let pitVar: f32 = max(modifiersBlock.modDamagedSurface.y, 0.0);
+  let rimHeight: f32 = modifiersBlock.modDamagedSurface.z;
+  let microHeight: f32 = max(modifiersBlock.modDamagedSurface3.w, 0.0) * max(modifiersBlock.modDamagedSurface2.x, 0.0);
   let ridge: f32 = damagedRidgeRaw(w);
-  let scratch: f32 = damagedSurfaceDetail(w);
-  var pit: f32 = depth + (raw - 0.5) * pitVar * 1.2 - scratch * 0.08;
-  return (pit * 0.85 + ridge * ridgeH * 0.35) * s * has;
+  let detail: f32 = damagedSurfaceDetail(w);
+  // The smooth threshold mask is also the cavity profile. Its derivative
+  // becomes the sidewall normal; the bell-shaped edge supplies a chipped rim.
+  let edge: f32 = clamp(4.0 * s * (1.0 - s), 0.0, 1.0);
+  let variedDepth: f32 = depth * (0.72 + raw * 0.56) + (detail - 0.5) * pitVar * 0.28;
+  let cavity: f32 = -variedDepth * s;
+  let rim: f32 = rimHeight * edge * (0.68 + ridge * 0.32);
+  let substrate: f32 = (detail - 0.5) * microHeight * s + ridge * microHeight * 0.12 * s;
+  return (cavity + rim + substrate) * has;
+}
+
+fn damagedHeightOffset(w: vec3<f32>, s: f32) -> f32 {
+  return damagedHeightOffsetFromRaw(w, s, damagedNoiseRaw(w));
+}
+
+struct DamagedSurfaceSample {
+  mask: f32,
+  height: f32,
+};
+
+fn damagedSurfaceSample(w: vec3<f32>, mh: f32, ao: f32, ro: f32, isFloor: f32) -> DamagedSurfaceSample {
+  let raw: f32 = damagedNoiseRaw(w);
+  let threshold: f32 = modifiersBlock.modDamagedNoise.y;
+  let feather: f32 = max(modifiersBlock.modDamagedNoise.z, 0.0001);
+  let noise: f32 = smoothstep(threshold - feather, threshold + feather, raw);
+  let mask: f32 = damagedFinalMaskFromNoise(w, mh, ao, ro, isFloor, noise);
+  return DamagedSurfaceSample(mask, damagedHeightOffsetFromRaw(w, mask, raw));
+}
+
+fn damagedGeometricNormal(n: vec3<f32>, isFloor: f32) -> vec3<f32> {
+  if (isFloor > 0.5) {
+    return vec3<f32>(0.0, 0.0, select(-1.0, 1.0, n.z >= 0.0));
+  }
+  if (abs(n.x) >= abs(n.y)) {
+    return vec3<f32>(select(-1.0, 1.0, n.x >= 0.0), 0.0, 0.0);
+  }
+  return vec3<f32>(0.0, select(-1.0, 1.0, n.y >= 0.0), 0.0);
+}
+
+fn damagedReliefNormal(w: vec3<f32>, hostN: vec3<f32>, mh: f32, ao: f32, ro: f32, isFloor: f32, centerMask: f32, centerHeight: f32) -> vec3<f32> {
+  let geomN: vec3<f32> = damagedGeometricNormal(hostN, isFloor);
+  let reference: vec3<f32> = select(vec3<f32>(0.0, 0.0, 1.0), vec3<f32>(1.0, 0.0, 0.0), abs(geomN.z) > 0.5);
+  let tangent: vec3<f32> = normalize(cross(reference, geomN));
+  let bitangent: vec3<f32> = normalize(cross(geomN, tangent));
+  let sampleStep: f32 = max(modifiersBlock.modDamagedSurface3.y, 0.002);
+  let sampleT: DamagedSurfaceSample = damagedSurfaceSample(w + tangent * sampleStep, mh, ao, ro, isFloor);
+  let sampleB: DamagedSurfaceSample = damagedSurfaceSample(w + bitangent * sampleStep, mh, ao, ro, isFloor);
+  let dHdT: f32 = (sampleT.height - centerHeight) / sampleStep;
+  let dHdB: f32 = (sampleB.height - centerHeight) / sampleStep;
+  let hostRemoval: f32 = clamp(modifiersBlock.modDamagedSurface3.x, 0.0, 1.0) * centerMask;
+  let erodedBase: vec3<f32> = normalize(mix(normalize(hostN), geomN, hostRemoval));
+  let normalStrength: f32 = max(modifiersBlock.modDamagedSurface.w, 0.0);
+  return normalize(erodedBase - (tangent * dHdT + bitangent * dHdB) * normalStrength);
 }
 
 fn pomOffsetArrayDamaged(heightTex: texture_2d_array<f32>, uv: vec2<f32>, layer: i32, viewTS: vec3<f32>, strength: f32, steps: i32, worldPos: vec3<f32>, isFloor: f32) -> vec2<f32> {
@@ -554,10 +608,12 @@ fn pomOffsetArrayDamaged(heightTex: texture_2d_array<f32>, uv: vec2<f32>, layer:
   let cell: f32 = loadModifierMap2(modUV).r * f32(frame.modifiersEnabled) * inB;
   let has: f32 = step(0.001, cell);
   let damageEnabled: f32 = step(0.0, modifiersBlock.modDamagedAppearance.w);
-  let dMask: f32 = damagedNoiseShape(worldPos) * has * cell * damageEnabled;
-  let depth: f32 = modifiersBlock.modDamagedSurface.x;
+  let damageRaw: f32 = damagedNoiseRaw(worldPos);
+  let damageFeather: f32 = max(modifiersBlock.modDamagedNoise.z, 0.0001);
+  let damageNoise: f32 = smoothstep(modifiersBlock.modDamagedNoise.y - damageFeather, modifiersBlock.modDamagedNoise.y + damageFeather, damageRaw);
+  let dMask: f32 = damageNoise * has * cell * damageEnabled;
   let pomBoost: f32 = modifiersBlock.modDamagedGlobal2.z;
-  let dH: f32 = depth * dMask * pomBoost * has;
+  let dH: f32 = damagedHeightOffsetFromRaw(worldPos, dMask, damageRaw) * pomBoost * has;
   let extra: vec2<f32> = viewTS.xy * dH * 0.65 / max(abs(viewTS.z), 0.18) * has;
   var tot: vec2<f32> = base + extra * 0.55;
   let maxOff: f32 = select(0.10, frame.pomMaxOffset, frame.pomMaxOffset > 0.0);
@@ -873,36 +929,31 @@ fn applyModifiers(albedo: ptr<function, vec3<f32>>, N: ptr<function, vec3<f32>>,
 
   // Damaged – chipped albedo and full PBR relief in the host surface plane.
   let dCell: f32 = mod2.r * modsEnabled * inBounds;
-  let dMask: f32 = damagedFinalMask(worldPos, *matHeight, *ao, *rough, isFloorSurface);
+  let damageSample: DamagedSurfaceSample = damagedSurfaceSample(worldPos, *matHeight, *ao, *rough, isFloorSurface);
+  let dMask: f32 = damageSample.mask;
   if (dCell > 0.0001 && dMask > 0.0001) {
     let dStr: f32 = clamp(dMask, 0.0, 1.0);
-    let rawD: f32 = damagedNoiseRaw(worldPos);
     let ridge: f32 = damagedRidgeRaw(worldPos);
     let fine: f32 = damagedSurfaceDetail(worldPos);
-    let fine2: f32 = hash31(floor(worldPos * max(modifiersBlock.modDamagedGlobal2.w, 0.01) + vec3<f32>(27.4, 6.1, 18.9)));
-
-    let dDepth: f32 = modifiersBlock.modDamagedSurface.x;
-    let dPitVar: f32 = modifiersBlock.modDamagedSurface.y;
-    let dRidgeHeight: f32 = modifiersBlock.modDamagedSurface.z;
-    let hPit: f32 = dDepth + (rawD - 0.5) * dPitVar + (fine - 0.5) * dPitVar * 0.35;
-    *matHeight = *matHeight + (hPit + ridge * dRidgeHeight) * dStr;
+    let cavityOffset: f32 = damageSample.height;
+    let hostRemoval: f32 = clamp(modifiersBlock.modDamagedSurface3.x, 0.0, 1.0) * dStr;
+    let substrateHeight: f32 = modifiersBlock.modDamagedSurface3.z;
+    let hostHeight: f32 = *matHeight;
+    *matHeight = mix(hostHeight, substrateHeight, hostRemoval) + cavityOffset;
 
     // A restrained exposed-stone tint makes damage readable even where the
     // low-resolution lighting cannot show every normal/height change.
     let chipDark: vec3<f32> = modifiersBlock.modDamagedAppearance.xyz * vec3<f32>(0.68, 0.66, 0.62);
     let chipLight: vec3<f32> = modifiersBlock.modDamagedAppearance.xyz * vec3<f32>(1.12, 1.08, 1.01);
-    let chipColor: vec3<f32> = mix(chipDark, chipLight, smoothstep(0.28, 0.82, fine));
-    let dColorBlend: f32 = clamp(dStr * max(modifiersBlock.modDamagedAppearance.w, 0.0) * (0.76 + ridge * 0.24), 0.0, 1.0);
+    let edge: f32 = clamp(4.0 * dStr * (1.0 - dStr), 0.0, 1.0);
+    let chipColor: vec3<f32> = mix(chipDark, chipLight, smoothstep(0.28, 0.82, fine)) * (1.0 + edge * 0.12);
+    let dColorBlend: f32 = clamp(dStr * max(modifiersBlock.modDamagedAppearance.w, 0.0) * (0.88 + ridge * 0.12), 0.0, 1.0);
     *albedo = mix(*albedo, chipColor, dColorBlend);
 
+    // Erase the host brick normal in the cavity core, then derive the cavity
+    // sidewall and micro-relief normal from the exact same height function.
     let dBaseN: vec3<f32> = normalize(*N);
-    let dAxis: vec3<f32> = select(vec3<f32>(0.0, 0.0, 1.0), vec3<f32>(1.0, 0.0, 0.0), abs(dBaseN.z) > 0.92);
-    let dTangent: vec3<f32> = normalize(cross(dAxis, dBaseN));
-    let dBitangent: vec3<f32> = normalize(cross(dBaseN, dTangent));
-    let dNormalDetail: f32 = modifiersBlock.modDamagedSurface2.x;
-    let dSlope: vec3<f32> = dTangent * (fine - 0.5) + dBitangent * (fine2 - 0.5) + (dTangent + dBitangent) * (ridge - 0.5) * 0.22;
-    let dReliefN: vec3<f32> = normalize(dBaseN - dSlope * modifiersBlock.modDamagedSurface.w * dNormalDetail);
-    *N = normalize(mix(dBaseN, dReliefN, dStr));
+    *N = damagedReliefNormal(worldPos, dBaseN, hostHeight, *ao, *rough, isFloorSurface, dStr, cavityOffset);
 
     let dRoughTarget: f32 = clamp(*rough + modifiersBlock.modDamagedSurface2.y + (fine - 0.5) * modifiersBlock.modDamagedSurface2.z, 0.25, 0.98);
     *rough = mix(*rough, dRoughTarget, dStr);

@@ -15,7 +15,7 @@ export const MAX_LIGHTS = 8;
 export const MAX_CHARS = 8;
 export const FRAME_DATA_VEC4_COUNT = 32;
 export const LIGHT_DATA_VEC4_COUNT = 40;
-export const MODIFIERS_VEC4_COUNT = 48;
+export const MODIFIERS_VEC4_COUNT = 49;
 
 export const vsFullscreenWgsl = `
 struct VSOut {
@@ -39,7 +39,7 @@ fn vs_main(@builtin(vertex_index) vid: u32) -> VSOut {
 
 // Uniform structs – must be defined before bindings
 const structsAndBindings = `
-// --- Modifiers Block (48 vec4) ---
+// --- Modifiers Block (49 vec4) ---
 ${wgslModifiers}
 
 struct FrameUniforms {
@@ -1551,7 +1551,7 @@ function makeDebugFS(mode) {
     } else if (${mode} == 2) {
       // Moss env – world + isFloor
       dbgCol = debugMossEnvMask(dbgWPos, dbgIsFloor);
-    } else if (${mode} == 3 || ${mode} == 4 || ${mode} == 6 || ${mode} == 10 || ${mode} == 12) {
+    } else if (${mode} == 3 || ${mode} == 4 || ${mode} == 6 || ${mode} == 10 || ${mode} == 12 || ${mode} == 13 || ${mode} == 14) {
       // Modes needing material: fetch actual height/AO/rough from arrays (parity with 632b7f2)
       var dbgMatHeight: f32 = 0.5;
       var dbgAo: f32 = 0.85;
@@ -1596,6 +1596,18 @@ function makeDebugFS(mode) {
         dbgCol = debugDustMaskCol(dbgWPos, dbgIsFloor, dbgMatHeight, dbgAo);
       } else if (${mode} == 12) {
         dbgCol = debugDamagedFactorsMask(dbgWPos, dbgMatHeight, dbgAo, dbgRough, dbgIsFloor);
+      } else if (${mode} == 13) {
+        dbgCol = debugDamagedHeightMask(dbgWPos, dbgMatHeight, dbgAo, dbgRough, dbgIsFloor);
+      } else if (${mode} == 14) {
+        var dbgGeomN: vec3<f32>;
+        if (dbgIsFloor > 0.5) {
+          dbgGeomN = vec3<f32>(0.0, 0.0, select(-1.0, 1.0, vN > u_horizon));
+        } else if (side == 0) {
+          dbgGeomN = vec3<f32>(f32(-stepDir.x), 0.0, 0.0);
+        } else {
+          dbgGeomN = vec3<f32>(0.0, f32(-stepDir.y), 0.0);
+        }
+        dbgCol = debugDamagedNormalMask(dbgWPos, dbgGeomN, dbgMatHeight, dbgAo, dbgRough, dbgIsFloor);
       }
     } else if (${mode} == 5) {
       // Puddle mask – floor only logic preserved, uses computePuddleMaskTweakable via debugFinalPuddleMask

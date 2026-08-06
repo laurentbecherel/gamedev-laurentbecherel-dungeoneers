@@ -98,13 +98,16 @@ export function generateModifierMap(dungeon, config) {
   const puddleBoost = genCfg.debugPuddleBoost ?? 1.1;
   const damagedGen = genCfg.damaged || {};
   const damagedThreshold = damagedGen.threshold ?? genCfg.damagedThreshold ?? 0.52;
-  const damagedFeather = damagedGen.feather ?? genCfg.damagedFeather ?? 0.18;
+  const damagedFeather = Math.max(0.0001, damagedGen.feather ?? genCfg.damagedFeather ?? 0.18);
   const damagedBoost = damagedGen.boost ?? genCfg.damagedBoost ?? 1.45;
-  const damagedWallWeight = damagedGen.wallWeight ?? 0.88;
-  const damagedScaleLarge = damagedGen.scaleLarge ?? genCfg.damagedScaleLarge ?? 0.09;
-  const damagedScaleMed = damagedGen.scaleMedium ?? genCfg.damagedScaleMed ?? 0.22;
-  const damagedScaleSmall = damagedGen.scaleSmall ?? genCfg.damagedScaleSmall ?? 0.55;
-  const damagedScaleCrack = damagedGen.scaleCrack ?? genCfg.damagedScaleCrack ?? 0.16;
+  const damagedWallWeight = damagedGen.wallWeight ?? 0.90;
+  const damagedRoleInfluence = damagedGen.roleInfluence ?? 0.28;
+  const damagedRegionScale = damagedGen.regionScale ?? damagedGen.scaleLarge ?? genCfg.damagedScaleLarge ?? 0.055;
+  const damagedRegionOctaves = Math.max(1, Math.min(6, Math.round(damagedGen.octaves ?? 3)));
+  const damagedWarpScale = damagedGen.warpScale ?? 0.035;
+  const damagedWarpStrength = damagedGen.warpStrength ?? 3.2;
+  const damagedDetailScale = damagedGen.detailScale ?? damagedGen.scaleMedium ?? genCfg.damagedScaleMed ?? 0.16;
+  const damagedDetailStrength = damagedGen.detailStrength ?? 0.18;
   const bloodGen = genCfg.blood || {};
   const bloodScale = bloodGen.scale ?? 0.19;
   const bloodThreshold = bloodGen.threshold ?? 0.50;
@@ -291,53 +294,29 @@ export function generateModifierMap(dungeon, config) {
       dustI = Math.max(0, Math.min(1, dustI));
     }
 
-    // Damaged – chaotic scarring: multi-scale warped FBM + ridged cracks + cross scratches
+    // Damaged placement – sparse, broad story regions. Fine cracks/chips are
+    // resolved independently in 3D by the shader; this map only says where a
+    // whole portion of a room or wall is eligible to be damaged.
     const damageRole = nearestRoomRole(x, y, isFloor ? role : 'hall');
     const damageRw = roleWeights[damageRole] || roleWeights.corridor || DEFAULT_ROLE_WEIGHTS[damageRole] || DEFAULT_ROLE_WEIGHTS.corridor;
     const roleDamaged = damageRw.damaged ?? rw.damaged ?? 0.0;
     let damagedI = 0;
     if (roleDamaged > 0.001) {
-      // domain warp for chaos
-      const wx = fbm(xc * 0.11, yc * 0.11, seed+611, 2) * 1.4;
-      const wy = fbm(xc * 0.11 + 7.3, yc * 0.11 + 3.1, seed+612, 2) * 1.4;
-      // large chips / gouges
-      const largeD = fbm((xc+wx) * damagedScaleLarge, (yc+wy) * damagedScaleLarge, seed+614, 4);
-      // medium damage patches
-      const medD = fbm((xc+wx*0.6) * damagedScaleMed + 13.1, (yc+wy*0.6) * damagedScaleMed + 7.7, seed+615, 3);
-      // fine grit
-      const smallD = fbm(xc * damagedScaleSmall, yc * damagedScaleSmall, seed+616, 2);
-      // crack / ridge – ridged noise = sharp cracks
-      const crackRaw = fbm((xc+wx) * damagedScaleCrack, (yc+wy) * damagedScaleCrack, seed+617, 2);
-      let ridge = 1.0 - Math.abs(crackRaw * 2.0 - 1.0);
-      ridge = Math.pow(ridge, 2.0); // sharpen
-      // cross scratches (anisotropic)
-      const scratchA = fbm(xc * 0.75, yc * 0.25, seed+618, 2);
-      const scratchB = fbm(xc * 0.25, yc * 0.75, seed+619, 2);
-      let scratch = scratchA * scratchB; // cross
-      scratch = Math.pow(scratch, 0.7);
+      const warpX = (fbm(xc * damagedWarpScale, yc * damagedWarpScale, seed+611, 2) - 0.5) * damagedWarpStrength;
+      const warpY = (fbm(xc * damagedWarpScale + 7.3, yc * damagedWarpScale + 3.1, seed+612, 2) - 0.5) * damagedWarpStrength;
+      const regionLarge = fbm((xc + warpX) * damagedRegionScale, (yc + warpY) * damagedRegionScale, seed+614, damagedRegionOctaves);
+      const edgeDetail = fbm((xc + warpX * 0.35) * damagedDetailScale + 13.1, (yc + warpY * 0.35) * damagedDetailScale + 7.7, seed+615, 2);
+      const regionNoise = Math.max(0, Math.min(1, regionLarge + (edgeDetail - 0.5) * damagedDetailStrength));
 
-      // chaotic combined – weights mirror shader defaults but CPU side for cell biome gating
-      const damageWeightSum = 0.45 + 0.28 + 0.15 + 0.38 + 0.22;
-      let combinedD = (largeD * 0.45 + medD * 0.28 + smallD * 0.15 + ridge * 0.38 + scratch * 0.22) / damageWeightSum;
-      // per-cell hash jitter for extra chaos
-      combinedD += (hash2i(x, y, seed+621) - 0.5) * 0.07;
-      combinedD = Math.max(0, Math.min(1, combinedD));
-
-      const lowD = damagedThreshold - damagedFeather;
-      const highD = damagedThreshold + damagedFeather;
-      let tD = (combinedD - lowD) / Math.max(0.0001, highD - lowD);
-      tD = Math.max(0, Math.min(1, tD));
-      tD = smooth(tD);
-      // shape biased by small detail and ridge emphasis
-      const shapeD = tD * (0.55 + 0.45 * smallD) * (0.60 + 0.40 * (ridge * 1.2));
-
-      // damaged on both floors and walls, slightly boosted near walls (battle damage on walls)
-      const wallBoostD = isWallCell(x,y) ? damagedWallWeight : (isNearWall(x,y) ? 1.12 : 1.0);
-      const globalD = fbm(xc * globalNoiseScale * 1.1, yc * globalNoiseScale * 1.1, seed+622, 2);
-
-      damagedI = roleDamaged * shapeD * wallBoostD * (0.50 + 0.50 * globalD) * damagedBoost;
-      // allow floors too, don't zero them like puddle
-      damagedI = Math.max(0, Math.min(1, damagedI));
+      // Role values control coverage by moving the cutoff. Threshold and
+      // feather retain a continuous transition just like the other placement
+      // fields; they are deliberately not quantized to a binary cell mask.
+      const roleShift = (0.5 - roleDamaged) * damagedRoleInfluence;
+      const wallShift = isWallCell(x,y) ? (1.0 - damagedWallWeight) * 0.25 : 0.0;
+      const effectiveThreshold = Math.max(0.02, Math.min(0.98, damagedThreshold + roleShift + wallShift));
+      let regionMask = (regionNoise - (effectiveThreshold - damagedFeather)) / (damagedFeather * 2.0);
+      regionMask = smooth(Math.max(0, Math.min(1, regionMask)));
+      damagedI = Math.max(0, Math.min(1, regionMask * damagedBoost));
     }
 
     const envI = envField[i]; // smooth 0..1 wall proximity + corners, feathered via blur + LINEAR tex filtering

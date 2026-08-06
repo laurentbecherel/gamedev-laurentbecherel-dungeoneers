@@ -146,6 +146,49 @@ test('damage generator covers both room floors and wall shells', () => {
   assert(wallMax > 0, 'nearest room role propagates damage onto the wall shell');
 });
 
+test('damage placement threshold, feather and region scale shape the broad field', () => {
+  const w = 48, h = 36;
+  const dungeon = {
+    w, h,
+    grid: new Uint8Array(w*h),
+    floorHeight: new Float32Array(w*h),
+    seed: 4815,
+    rooms: [{ x:0, y:0, w, h, role:'guardian' }]
+  };
+  const generate = (damaged) => generateModifierMap(dungeon, { materialModifiers: {
+    enabled: true,
+    generator: {
+      damaged: {
+        boost: 1,
+        wallWeight: 1,
+        roleInfluence: 0,
+        regionScale: 0.055,
+        octaves: 3,
+        warpScale: 0.035,
+        warpStrength: 3.2,
+        detailScale: 0.16,
+        detailStrength: 0.18,
+        ...damaged
+      },
+      roleWeights: { guardian:{ moss:0, puddle:0, damaged:1, blood:0, dust:0 } }
+    }
+  } }).data2.filter((_, i) => i % 4 === MOD2_CHANNELS.DAMAGED);
+
+  const lowThreshold = generate({ threshold:0.35, feather:0.12 });
+  const highThreshold = generate({ threshold:0.70, feather:0.12 });
+  const sum = values => values.reduce((total, value) => total + value, 0);
+  assert(sum(lowThreshold) > sum(highThreshold), 'higher threshold selects less damaged area');
+
+  const soft = generate({ threshold:0.52, feather:0.22 });
+  const hard = generate({ threshold:0.52, feather:0.001 });
+  const intermediate = values => values.reduce((count, value) => count + Number(value > 0 && value < 255), 0);
+  assert(intermediate(soft) > intermediate(hard), 'feather controls the width of the continuous boundary');
+
+  const largeRegions = generate({ threshold:0.52, feather:0.12, regionScale:0.025 });
+  const smallRegions = generate({ threshold:0.52, feather:0.12, regionScale:0.18 });
+  assert(largeRegions.some((value, i) => value !== smallRegions[i]), 'region scale changes the live placement field');
+});
+
 test('P2: modifier map generation disabled returns all zeros but valid texture', () => {
   const fakeDungeon = { w:10, h:10, grid:new Uint8Array(100), floorHeight:new Float32Array(100), seed:1, rooms:[] };
   const cfgDisabled = { materialModifiers:{ enabled:false, generator:{} } };
@@ -221,7 +264,7 @@ test('blood and dust have dedicated shader blocks and live editor schemas', asyn
   assert(shader.includes('fn bloodFinalMask') && shader.includes('fn dustFinalMask'));
   assert(shader.includes('modBloodAlbedo') && shader.includes('modDustAlbedo'));
   assert(shader.includes('mod2.g') && shader.includes('mod2.b'), 'shader reads dedicated blood and dust channels');
-  assert(renderer.includes('MODIFIERS_VEC4_COUNT = 48'));
+  assert(renderer.includes('MODIFIERS_VEC4_COUNT = 49'));
   assert(renderer.includes('this._modifierGeneratorSignature !== nextGeneratorSignature'), 'live generator edits rebake story fields');
   assert(config.modifiers.blood.enabled && config.modifiers.dust.enabled);
   assert(config.ui.blood.noise.scale.max > config.modifiers.blood.noise.scale);
@@ -241,16 +284,32 @@ test('damage uses non-stretched 3D detail and live appearance controls', async (
   assert(noiseBlock.includes('fbm3D_3') && noiseBlock.includes('valueNoise3D'), 'damage coverage is volumetric');
   assert(!noiseBlock.includes('w.xy'), 'damage noise no longer projects through world XY');
   assert(applyBlock.includes('damagedSurfaceDetail(worldPos)') && !applyBlock.includes('valueNoise2D(worldPos.xy'), 'damage PBR detail is also 3D');
-  assert(applyBlock.includes('dTangent') && applyBlock.includes('dBitangent'), 'damage normals follow the host surface plane');
+  assert(shader.includes('fn damagedHeightOffset') && shader.includes('let cavity: f32 = -variedDepth * s'), 'positive cavity depth is consistently subtractive');
+  assert(shader.includes('fn damagedReliefNormal') && shader.includes('dHdT') && shader.includes('dHdB'), 'damage normals are finite differences of the cavity height');
+  assert(applyBlock.includes('mix(hostHeight, substrateHeight, hostRemoval)'), 'cavity cores remove the original brick height');
+  assert(applyBlock.includes('damagedReliefNormal(worldPos'), 'the applied normal uses the unified height field');
   assert(sceneShader.includes('debugDamagedPlacementMask') && sceneShader.includes('debugDamagedFactorsMask'), 'damage has placement and factor debug views');
+  assert(sceneShader.includes('debugDamagedHeightMask') && sceneShader.includes('debugDamagedNormalMask'), 'unified damage height and normal are directly debuggable');
+  assert(sceneShader.includes('biome < 0.12') && sceneShader.includes('displayGain'), 'low placement values use a readable false-colour scale');
   assert(shader.includes('modDamagedAppearance') && renderer.includes('damagedAppearance.colorStrength'));
   assert(config.generator.damaged.wallWeight > 0.5);
+  assert(config.generator.damaged.feather > 0);
+  assert(config.generator.damaged.regionScale > 0 && config.generator.damaged.warpStrength >= 0);
+  assert(config.ui.generator.damaged.regionScale.max > config.generator.damaged.regionScale);
+  assert(config.docs.generator.damaged.feather.includes('transition'));
   assert(config.generator.roleWeights.guardian.damaged > config.generator.roleWeights.secret.damaged);
   assert(config.modifiers.damaged.appearance.colorStrength > 0);
+  assert(config.modifiers.damaged.surface.cavityDepth > 0);
+  assert(config.modifiers.damaged.surface.hostReliefRemoval > 0.5);
+  assert(config.modifiers.damaged.surface.normalSampleStep > 0);
+  assert(!('depth' in config.modifiers.damaged.surface), 'depth sign ambiguity was removed from the live config');
   assert(config.ui.damaged.appearance.colorStrength.max > config.modifiers.damaged.appearance.colorStrength);
   assert(config.ui.generator.damaged.wallWeight.max >= config.generator.damaged.wallWeight);
   assert(config.ui.debug.view.options.includes(config.debug.view), 'configured debug view is a supported live option');
   assert(config.ui.debug.view.options.includes('damagedNoise') && config.ui.debug.view.options.includes('damagedFinal'));
+  assert(config.ui.debug.view.options.includes('damagedHeight') && config.ui.debug.view.options.includes('damagedNormal'));
+  assert(renderer.includes('MODIFIERS_VEC4_COUNT = 49'));
+  assert(shadersWgsl.includes('MODIFIERS_VEC4_COUNT = 49'));
   assert(shadersWgsl.includes("makeDebugFS('frame.pbrDebugMode')"), 'one runtime-selected debug shader serves every view');
   assert(renderer.includes('createRenderPipelineAsync'), 'first debug pipeline compilation is non-blocking when supported');
   assert(!renderer.includes('_debugPBRSourceCache'), 'renderer no longer compiles a shader per debug mode');
@@ -286,7 +345,7 @@ test('P1/P2: shaders.js is now modular - imports shader-lib (WebGPU)', async () 
     }
   } catch {}
   const hasUBO = combined.includes('ModifiersBlock');
-  assert(hasUBO, 'has ModifiersBlock UBO (48 vec4)');
+  assert(hasUBO, 'has ModifiersBlock UBO (49 vec4)');
   assert(combined.includes('modifierMap2') || combined.includes('u_modifierMap2'), 'has second modifier texture');
   assert(combined.includes('modMossAlbedoRough') || combined.includes('modMossAlbedo'), 'contains moss uniform');
   assert(combined.includes('shadeFloorCell') && combined.includes('shadeCeilCell') && combined.includes('shadeWallCell'), 'scene helpers exist');

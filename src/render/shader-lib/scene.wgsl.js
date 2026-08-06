@@ -98,11 +98,21 @@ fn debugDamagedNoiseMask(worldPos: vec3<f32>) -> vec3<f32> {
 
 fn debugDamagedPlacementMask(worldPos: vec3<f32>) -> vec3<f32> {
   let biome: f32 = damagedBiomeMask(worldPos.xy);
-  let visible: f32 = smoothstep(0.001, 0.75, biome);
-  let low: vec3<f32> = vec3<f32>(0.08, 0.16, 0.48);
-  let high: vec3<f32> = vec3<f32>(1.0, 0.32, 0.04);
-  let field: vec3<f32> = mix(low, high, biome) * visible * (0.55 + biome * 0.85);
-  return clamp(vec3<f32>(0.02, 0.02, 0.03) + field, vec3<f32>(0.0), vec3<f32>(1.0));
+  let presence: f32 = smoothstep(0.001, 0.02, biome);
+  // Placement normally lives in a much lower range than a final 0..1 mask
+  // (corridors often sit around .03-.12). Use a perceptual false-colour ramp
+  // so those useful values do not collapse into nearly-black blue.
+  var ramp: vec3<f32>;
+  if (biome < 0.12) {
+    ramp = mix(vec3<f32>(0.04, 0.22, 1.0), vec3<f32>(0.0, 0.92, 1.0), biome / 0.12);
+  } else if (biome < 0.35) {
+    ramp = mix(vec3<f32>(0.0, 0.92, 1.0), vec3<f32>(1.0, 0.88, 0.04), (biome - 0.12) / 0.23);
+  } else {
+    ramp = mix(vec3<f32>(1.0, 0.88, 0.04), vec3<f32>(1.0, 0.08, 0.015), smoothstep(0.35, 0.85, biome));
+  }
+  let displayGain: f32 = pow(clamp(biome, 0.0, 1.0), 0.32);
+  let field: vec3<f32> = ramp * (0.52 + displayGain * 0.48) * presence;
+  return clamp(vec3<f32>(0.012, 0.012, 0.018) + field, vec3<f32>(0.0), vec3<f32>(1.0));
 }
 
 fn debugDamagedFactorsMask(worldPos: vec3<f32>, matHeight: f32, ao: f32, rough: f32, isFloor: f32) -> vec3<f32> {
@@ -110,9 +120,28 @@ fn debugDamagedFactorsMask(worldPos: vec3<f32>, matHeight: f32, ao: f32, rough: 
   let placement: f32 = damagedBiomeMask(worldPos.xy);
   let material: f32 = damagedMaterialMask(matHeight, ao, rough);
   let environment: f32 = damagedEnvMask(worldPos, isFloor);
-  // R = procedural 3D noise, G = generated room/wall placement,
+  let placementDisplay: f32 = pow(clamp(placement, 0.0, 1.0), 0.40);
+  // R = procedural 3D noise, G = display-gamma generated room/wall placement,
   // B = material eligibility modulated by floor/wall environment.
-  return clamp(vec3<f32>(noise, placement, material * environment), vec3<f32>(0.0), vec3<f32>(1.0));
+  return clamp(vec3<f32>(noise, placementDisplay, material * environment), vec3<f32>(0.0), vec3<f32>(1.0));
+}
+
+fn debugDamagedHeightMask(worldPos: vec3<f32>, matHeight: f32, ao: f32, rough: f32, isFloor: f32) -> vec3<f32> {
+  let sample: DamagedSurfaceSample = damagedSurfaceSample(worldPos, matHeight, ao, rough, isFloor);
+  let mask: f32 = sample.mask;
+  let height: f32 = sample.height;
+  let cavity: f32 = clamp(-height * 4.0, 0.0, 1.0);
+  let raised: f32 = clamp(height * 8.0, 0.0, 1.0);
+  let edge: f32 = clamp(4.0 * mask * (1.0 - mask), 0.0, 1.0);
+  return clamp(vec3<f32>(raised + edge * 0.55, edge * 0.65, cavity), vec3<f32>(0.0), vec3<f32>(1.0));
+}
+
+fn debugDamagedNormalMask(worldPos: vec3<f32>, geomN: vec3<f32>, matHeight: f32, ao: f32, rough: f32, isFloor: f32) -> vec3<f32> {
+  let sample: DamagedSurfaceSample = damagedSurfaceSample(worldPos, matHeight, ao, rough, isFloor);
+  let mask: f32 = sample.mask;
+  let reliefN: vec3<f32> = damagedReliefNormal(worldPos, geomN, matHeight, ao, rough, isFloor, mask, sample.height);
+  let encoded: vec3<f32> = reliefN * 0.5 + vec3<f32>(0.5);
+  return mix(vec3<f32>(0.015, 0.015, 0.02), encoded, smoothstep(0.001, 0.08, mask));
 }
 
 struct HorizontalShadeResult {
