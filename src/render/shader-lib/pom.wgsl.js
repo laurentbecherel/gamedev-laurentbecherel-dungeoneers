@@ -41,4 +41,38 @@ fn pomOffsetArray(heightTex: texture_2d_array<f32>, uv: vec2<f32>, layer: i32, v
   }
   return curUV - uv;
 }
+
+fn sampleWallCompositeHeight(baseLayer: i32, fixtureLayer: i32, uv: vec2<f32>) -> f32 {
+  let c = vec2<i32>(clamp(uv, vec2<f32>(0.0), vec2<f32>(0.999)) * 64.0);
+  let bl: u32 = u32(clamp(baseLayer, 0, 7));
+  let fl: u32 = u32(clamp(fixtureLayer, 0, 7));
+  let baseH: f32 = textureLoad(wallHeight, c, bl, 0).r;
+  let fixtureH: f32 = textureLoad(wallHeight, c, fl, 0).r;
+  let coverage: f32 = textureLoad(wallAlbedo, c, fl, 0).a;
+  return mix(baseH, fixtureH, coverage);
+}
+
+fn pomOffsetWallComposite(uv: vec2<f32>, baseLayer: i32, fixtureLayer: i32, viewTS: vec3<f32>, strength: f32, steps: i32) -> vec2<f32> {
+  if (strength <= 0.00001) { return vec2<f32>(0.0); }
+  let vzAbs: f32 = abs(viewTS.z);
+  let minVz: f32 = select(0.08, frame.pomMinVz, frame.pomMinVz > 0.0);
+  if (vzAbs < minVz) { return vec2<f32>(0.0); }
+  let effVz: f32 = max(vzAbs, select(0.18, frame.pomMinEffVz, frame.pomMinEffVz > 0.0));
+  var fullOffset: vec2<f32> = viewTS.xy * strength / effVz;
+  let maxOff: f32 = select(0.10, frame.pomMaxOffset, frame.pomMaxOffset > 0.0);
+  let lenOff: f32 = length(fullOffset);
+  if (lenOff > maxOff) { fullOffset *= maxOff / max(lenOff, 0.0001); }
+  let count: i32 = max(steps, 1);
+  let delta: vec2<f32> = fullOffset / f32(count);
+  var curUV: vec2<f32> = uv - fullOffset * 0.5;
+  var curDepth: f32 = 0.0;
+  var heightV: f32 = sampleWallCompositeHeight(baseLayer, fixtureLayer, curUV);
+  for (var i: i32 = 0; i < 16; i++) {
+    if (i >= count || curDepth >= heightV) { break; }
+    curUV += delta;
+    heightV = sampleWallCompositeHeight(baseLayer, fixtureLayer, curUV);
+    curDepth += 1.0 / f32(count);
+  }
+  return curUV - uv;
+}
 `;

@@ -4,7 +4,7 @@ import fs from "fs/promises";
 import path from "path";
 
 // New WebGPU shader imports
-import { vsFullscreenWgsl, fsRaymarchWgsl, fsQuantizeWgsl, fsUIWgsl, vsUIWgsl, MAX_LIGHTS } from "../../render/shaders-wgsl.js";
+import { vsFullscreenWgsl, fsRaymarchWgsl, fsQuantizeWgsl, fsUIWgsl, vsUIWgsl, fsDebugStructuralWgsl, MAX_LIGHTS } from "../../render/shaders-wgsl.js";
 import { isWebGPUSupported, isWebGL2Supported, createTexture, createTexture2DArray, createUniformBuffer } from "../../render/gpu-utils.js";
 
 const rendererPath = path.join(process.cwd(), "render", "renderer-gpu.js");
@@ -18,7 +18,7 @@ const REQUIRED_WGSL_BINDINGS = [
   'ceilAlbedo', 'ceilNormal', 'ceilHeight', 'ceilRoughMetal',
   'modifierMap', 'modifierMap2',
   // samplers
-  'nearestSampler', 'linearSampler',
+  'materialSampler', 'linearSampler',
   // uniform structs
   'FrameUniforms', 'LightingUniforms', 'ModifiersBlock',
   'frameData', 'lightData',
@@ -64,6 +64,22 @@ test("fragment raymarch WGSL substantial with WebGPU bindings", () => {
   assert(fsRaymarchWgsl.includes("fs_main"), "has fs_main entry");
   assert(fsRaymarchWgsl.includes("@group(0)"), "uses WebGPU bind groups");
   assert(!fsRaymarchWgsl.includes("#version 300 es") || fsRaymarchWgsl.includes("WGSL") || true, "should be WGSL not GLSL 300 es (but bridge may keep no version)");
+});
+
+test("rendering.textureFilter controls the shared world and sprite material sampler", async () => {
+  const renderer = await fs.readFile(rendererPath, "utf8");
+  const sprites = await fs.readFile(path.join(process.cwd(), "render", "sprite-gpu.js"), "utf8");
+  assert(renderer.includes("config?.rendering?.textureFilter"), "initial material filter comes from rendering config");
+  assert(renderer.includes("_setMaterialTextureFilter(r.textureFilter)"), "live rendering config reapplies material filter");
+  assert(renderer.includes("this.bindGroups.materialSamplers"), "world materials have a dedicated configurable sampler group");
+  assert(sprites.includes("setTextureFilter(value)"), "sprites share the configurable material filter");
+  assert(fsRaymarchWgsl.includes("materialSampler"), "world material shader uses the selected sampler");
+});
+
+test("SSR GBuffer keeps reflection normals and depth at 16-bit precision", async () => {
+  const renderer = await fs.readFile(rendererPath, "utf8");
+  assert.match(renderer, /gNormalDepthTex[\s\S]*?format:'rgba16float'/);
+  assert.match(renderer, /format: 'rgba16float'[^\n]*gNormalDepth/);
 });
 
 test("raymarch WGSL contains required bindings and uniform bridge (WebGPU)", () => {
@@ -192,4 +208,29 @@ test("quantization and UI shaders exist as WGSL", () => {
   assert(vsFullscreenWgsl && vsFullscreenWgsl.length > 20, "vsFullscreen exists");
   assert(fsQuantizeWgsl && (fsQuantizeWgsl.includes('paletteTex') || fsQuantizeWgsl.includes('palette')), "fsQuantize uses palette");
   assert(fsUIWgsl && vsUIWgsl, "UI shaders exist WGSL");
+});
+
+test("structural debug shader isolates channels and grilles", () => {
+  assert(fsDebugStructuralWgsl.includes("FEATURE_CHANNEL"));
+  assert(fsDebugStructuralWgsl.includes("FEATURE_GRILLE"));
+  assert(fsDebugStructuralWgsl.includes("Structural feature isolate"));
+  assert(fsRaymarchWgsl.includes("traceFeatureFloorSurface"), "recessed features use a stable nearest-hit floor trace");
+});
+
+test("sewer appearance and intersection tuning are asset-driven", async () => {
+  const structural = JSON.parse(await fs.readFile(path.join(process.cwd(), "assets", "config", "geometry", "structural-features.json"), "utf8"));
+  const liquids = JSON.parse(await fs.readFile(path.join(process.cwd(), "assets", "config", "rendering", "liquids.json"), "utf8"));
+  const water = liquids.liquids.water;
+  for (const key of ["scanSteps", "binarySteps", "tracePadding", "surfaceEpsilon"]) {
+    assert.equal(typeof structural.rayIntersection[key], "number", `structural rayIntersection.${key} is editable`);
+  }
+  for (const key of ["edgeBlendDepth", "submergedLiningBrightness", "surfaceOpacity", "minimumRoughness", "reflectionNormalStrength", "colorVariationScale", "colorVariationSpeed", "shallowMix", "shallowVariation"]) {
+    assert.equal(typeof water.appearance[key], "number", `water appearance.${key} is editable`);
+  }
+  for (const key of ["primaryAcrossFrequency", "secondaryAlongFrequency", "secondaryAcrossFrequency", "secondaryPhase"]) {
+    assert.equal(typeof water.ripples[key], "number", `water ripples.${key} is editable`);
+  }
+  for (const uniform of ["waterAppearance", "waterColor", "waterRipples", "rayIntersection", "waterOptics"]) {
+    assert(fsRaymarchWgsl.includes(`featureUniforms.${uniform}`), `${uniform} reaches WGSL`);
+  }
 });

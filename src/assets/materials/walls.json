@@ -67,6 +67,40 @@
         "crackAmount": 0.9,
         "blockSize": 10
       }
+    },
+    {
+      "id": 3,
+      "name": "round_sewer_grille",
+      "type": "round_grille_fixture",
+      "base": [
+        76,
+        69,
+        57
+      ],
+      "roughness": 0.48,
+      "metal": 0.86,
+      "tag": "fixture",
+      "role": "Opaque recessed iron sewer grille",
+      "assignable": false,
+      "variationSeed": 1701,
+      "emissiveColor": [
+        0,
+        0,
+        0
+      ],
+      "emissiveStrength": 0,
+      "storyTags": [
+        "sewer",
+        "fixture"
+      ],
+      "proc": {
+        "diameter": 0.56,
+        "centerV": 0.826,
+        "rimWidth": 0.055,
+        "barHalfWidth": 0.022,
+        "braceHalfWidth": 0.025,
+        "normalStrength": 2.2
+      }
     }
   ]
 }

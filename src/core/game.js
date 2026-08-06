@@ -141,6 +141,9 @@ export class Game {
     merged['material-assignments'] = merged.materialAssignments;
     merged.materialModifiers = renderCfgs["material-modifiers"] || baseCfg.materialModifiers || baseCfg["material-modifiers"] || { version:1, enabled:false, modifiers:{} };
     merged['material-modifiers'] = merged.materialModifiers;
+    merged.structuralFeatures = renderCfgs['structural-features'] || baseCfg.structuralFeatures || baseCfg['structural-features'] || { enabled:false };
+    merged['structural-features'] = merged.structuralFeatures;
+    merged.liquids = renderCfgs.liquids || baseCfg.liquids || { enabled:true, liquids:{} };
     merged.playerCfg = this._pickCfg(renderCfgs, baseCfg, 'player', baseCfg.player || { moveSpeed:3, turnSpeed:2.2, radius:0.28, height:0.5 });
     merged.debug = this._pickCfg(renderCfgs, baseCfg, 'debug', {});
     merged.items = merged.generator?.items || merged.sprites?.generation || baseCfg.items || { maxTorches:24, minTorchDist:6, corridorBias:1.5, torchOffset:0.35 };
@@ -374,9 +377,19 @@ export class Game {
 
     // T3 regen
     if (effTier === 'T3') {
-      this._setRegenRequired(true);
       // still store config for after regen
       if (primaryLogical && this.cfg) this.cfg[primaryLogical] = data;
+      // Structural feature assets contain both placement rules (T3) and
+      // render/profile tuning (T1). Apply the latter immediately to the GPU;
+      // the existing feature cells remain valid until the requested regen.
+      if (primaryLogical === 'structural-features' || primaryLogical === 'structuralFeatures') {
+        this.cfg.structuralFeatures = data;
+        this.cfg['structural-features'] = data;
+        if (this.renderer && typeof this.renderer.updateConfig === 'function') {
+          this.renderer.updateConfig({ structuralFeatures: data, 'structural-features': data });
+        }
+      }
+      this._setRegenRequired(true);
       return;
     }
 
@@ -607,6 +620,9 @@ export class Game {
         const seedToUse = seedOverride !== null ? seedOverride : (attempts === 0 ? null : Math.floor(Math.random() * 1000000));
         this.dungeon = await generateDungeon(this.cfg, seedToUse);
         console.log("Dungeon regenerated:", this.dungeon.seed);
+        // uploadMap also rebuilds config-driven modifier/structural data. Keep the
+        // renderer cache in lockstep with the freshly reloaded configuration.
+        this.renderer.updateConfig(this.cfg);
         this.renderer.uploadMap(this.dungeon);
         const rsx = Math.floor(this.dungeon.startX) + 0.5;
         const rsy = Math.floor(this.dungeon.startY) + 0.5;
@@ -686,17 +702,57 @@ export class Game {
       this._showHud("Bob preset: " + name + " — P to cycle, V/B to toggle");
       return;
     }
+    if (code === "KeyK") {
+      if (e.shiftKey) {
+        this.renderer.setFeatureDebug(true);
+        const focus = this._focusStructuralFeature();
+        this._showHud(focus
+          ? `Structural debug: FOCUSED at ${focus.x},${focus.y} — cyan/violet channel, amber grille`
+          : "Structural debug: no generated feature found");
+      } else {
+        const v = this.renderer.toggleFeatureDebug();
+        this._showHud("Structural debug: " + (v ? "ON — cyan/violet channel, amber grille; Shift+K focuses" : "OFF"));
+      }
+      return;
+    }
     if (code === "Digit1" || code === "Numpad1") { const v = this.renderer.toggleGridDebug(); this._showHud("Grid debug: " + (v ? "ON (floor green / wall red / ceil blue)" : "OFF")); return; }
     if (code === "Digit2" || code === "Numpad2") { const v = this.renderer.toggleLighting(); this._showHud("Lighting: " + (v ? "ON" : "OFF (flat albedo)")); return; }
     if (code === "Digit3" || code === "Numpad3") { const v = this.renderer.togglePBR(); this._showHud("PBR: " + (v ? "ON" : "OFF (diffuse only)")); return; }
     if (code === "Digit4" || code === "Numpad4") { const v = this.renderer.togglePOM(); this._showHud("POM: " + (v ? "ON" : "OFF")); return; }
     if (code === "Digit5" || code === "Numpad5") { const v = this.renderer.toggleFog(); this._showHud("Fog: " + (v ? "ON" : "OFF")); return; }
-    if (code === "Digit6" || code === "Numpad6") { const v = this.renderer.cyclePBRDebug(); const names=["Normal - OFF","Moss Noise mask (3D FBM)","Moss Nearwall/Env mask (corners+floor seams+room biome)","Moss Material mask (AO/Height/Rough combo)","Moss Combined mask (final)","Puddle mask","Damaged Combined (height/normal/rough/AO, no albedo)","Damaged Noise (chaotic 2D)"]; this._showHud("PBR Debug: " + (names[v]||"Mode "+v) + " (" + v + ") - moss: noise|env|material|combined"); return; }
+    if (code === "Digit6" || code === "Numpad6") { const v = this.renderer.cyclePBRDebug(); const names=["Normal - OFF","Moss Noise mask (3D FBM)","Moss Nearwall/Env mask (corners+floor seams+room biome)","Moss Material mask (AO/Height/Rough combo)","Moss Combined mask (final)","Puddle mask","Damaged Combined (height/normal/rough/AO, no albedo)","Damaged Noise (chaotic 2D)","Structural features (channel cyan/violet, grille amber)"]; this._showHud("PBR Debug: " + (names[v]||"Mode "+v) + " (" + v + ") - moss: noise|env|material|combined"); return; }
     if (code === "Digit7" || code === "Numpad7") { const v = this.renderer.toggleChamfer(); this._showHud("Chamfer: " + (v ? "ON (floor/ceil baseboard + vertical edges)" : "OFF (sharp 90°)")); return; }
     if (code === "Digit8" || code === "Numpad8") { const v = this.renderer.toggleCorner(); this._showHud("Corner Geometry: " + (v ? "ON (rounded intruding r=0.15 outer+inner)" : "OFF")); return; }
     if (code === "Digit9" || code === "Numpad9") { const v = this.renderer.toggleModifiers(); this._showHud("Modifiers: " + (v ? "ON (moss decomposed noise|env|mat|combined + puddle via 2x modifierMap + 3D noise + UBO 256B - all JSON tunable)" : "OFF (clean PBR)")); return; }
     if (code === "Digit0" || code === "Numpad0") { const v = this.renderer.toggleSSR(); this._showHud("SSR Puddle Reflections: " + (v ? "ON (puddle-only, sprite-aware)" : "OFF")); return; }
     if (code === "KeyO") { const v = this.renderer.cycleSSRDebug(); const names=["OFF","PuddleMask cyan/pink","Depth","Normal","ReflectionUV","HitMask","RayDir","Fresnel","SSR only"]; this._showHud("SSR Debug: " + (names[v]||"Mode "+v) + " ("+v+") - O cycle, 0 toggle"); return; }
+  }
+
+  _focusStructuralFeature() {
+    const feature = this.dungeon?.features?.[0];
+    if (!feature?.floorCells?.length || !this.player) return null;
+    const midIndex = feature.floorCells[Math.floor(feature.floorCells.length * 0.5)];
+    const targetX = (midIndex % this.dungeon.w) + 0.5;
+    const targetY = Math.floor(midIndex / this.dungeon.w) + 0.5;
+    const offsets = feature.axis === 'east-west'
+      ? [[0,-2], [0,2], [0,-1], [0,1]]
+      : [[-2,0], [2,0], [-1,0], [1,0]];
+    let viewX = targetX;
+    let viewY = targetY;
+    for (const [dx,dy] of offsets) {
+      const cx = Math.floor(targetX) + dx;
+      const cy = Math.floor(targetY) + dy;
+      if (cx < 0 || cy < 0 || cx >= this.dungeon.w || cy >= this.dungeon.h) continue;
+      const index = cy * this.dungeon.w + cx;
+      if (this.dungeon.grid[index] === 0 && ((this.dungeon.featureCells?.[index] ?? 0) & 0xff) === 0) {
+        viewX = cx + 0.5;
+        viewY = cy + 0.5;
+        break;
+      }
+    }
+    const angle = Math.atan2(targetY - viewY, targetX - viewX);
+    this.player.setPosition(viewX, viewY, angle);
+    return { x: Math.floor(targetX), y: Math.floor(targetY), viewX, viewY };
   }
 
   _showHud(msg) {

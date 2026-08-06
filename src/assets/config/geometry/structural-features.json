@@ -1,0 +1,51 @@
+{
+  "version": 1,
+  "enabled": true,
+  "profiles": {
+    "stone_channel": {
+      "type": "channel",
+      "width": 0.75,
+      "depth": 0.11,
+      "bankWidth": 0.16,
+      "bankSharpness": 1.4,
+      "waterDepth": 0.07,
+      "lipHeight": 0,
+      "walkable": true,
+      "liningMode": "blend_host",
+      "liningMaterial": "sewer_lining",
+      "liningStrength": 0.7
+    }
+  },
+  "fixtures": {
+    "round_sewer_grille": {
+      "material": "round_sewer_grille",
+      "pomStrength": 0.09
+    }
+  },
+  "rayIntersection": {
+    "scanSteps": 12,
+    "binarySteps": 6,
+    "tracePadding": 0.01,
+    "surfaceEpsilon": 0.0001
+  },
+  "recipes": {
+    "sewer_track": {
+      "geometry": "stone_channel",
+      "fill": "water",
+      "endFixture": "round_sewer_grille"
+    },
+    "ritual_blood_channel": {
+      "geometry": "stone_channel",
+      "liningMode": "inherit_host",
+      "fill": "blood",
+      "endFixture": "round_sewer_grille"
+    }
+  },
+  "generator": {
+    "prototypeGuarantee": 1,
+    "maxPerLevel": 1,
+    "minRoomSpan": 5,
+    "preferredRoles": ["hub", "hall", "guardian", "shrine"],
+    "excludedRoles": ["entrance", "exit"]
+  }
+}

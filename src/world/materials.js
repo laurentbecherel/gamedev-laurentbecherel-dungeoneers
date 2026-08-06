@@ -193,6 +193,88 @@ function genSlabTile(size, baseRGB, proc, seed, isCeil, matRough) {
   return { albedo, normal, height, rough, metal, ao, emiss };
 }
 
+// Opaque round sewer grille fixture. Albedo alpha is a coverage mask used to
+// composite this layer over the host wall; the dark cavity is intentionally
+// opaque and receives very low height/AO behind raised iron bars.
+function genRoundGrilleTile(size, baseRGB, proc, seed, matRough) {
+  const albedo = new Uint8Array(size * size * 4);
+  const height = new Float32Array(size * size);
+  const ao = new Float32Array(size * size);
+  const rough = new Uint8Array(size * size);
+  const metal = new Uint8Array(size * size);
+  const emiss = new Uint8Array(size * size * 4);
+  const cx = 0.5;
+  const cy = proc.centerV ?? 0.78;
+  const radius = (proc.diameter ?? 0.56) * 0.5;
+  const rimWidth = proc.rimWidth ?? 0.055;
+  const barHalfWidth = proc.barHalfWidth ?? 0.022;
+  const braceHalfWidth = proc.braceHalfWidth ?? 0.025;
+  const barOffsets = proc.barOffsets || [-0.16, -0.08, 0, 0.08, 0.16];
+
+  for (let y = 0; y < size; y++) for (let x = 0; x < size; x++) {
+    // Quantized virtual texel centers are deliberate: stable retro silhouettes.
+    const u = (x + 0.5) / size;
+    const v = (y + 0.5) / size;
+    const dx = u - cx, dy = v - cy;
+    const d = Math.hypot(dx, dy);
+    const inside = d <= radius;
+    const rim = inside && d >= radius - rimWidth;
+    const inner = d < radius - rimWidth * 0.75;
+    let bar = false;
+    if (inner) {
+      for (const off of barOffsets) {
+        if (Math.abs(dx - off) <= barHalfWidth) { bar = true; break; }
+      }
+      if (Math.abs(dy) <= braceHalfWidth) bar = true;
+    }
+    const iron = rim || bar;
+    const rustNoise = hash2(x, y, seed + 701);
+    const idx = y * size + x, ai = idx * 4;
+    if (!inside) {
+      albedo[ai] = albedo[ai+1] = albedo[ai+2] = 0;
+      albedo[ai+3] = 0;
+      height[idx] = 0.5;
+      ao[idx] = 1;
+      rough[idx] = 255;
+      metal[idx] = 0;
+    } else if (iron) {
+      const worn = rim ? 1.08 : 0.92;
+      const rust = rustNoise > 0.72 ? 0.30 : 0;
+      albedo[ai] = Math.min(255, (baseRGB[0] * worn + 55 * rust) | 0);
+      albedo[ai+1] = Math.min(255, (baseRGB[1] * worn + 18 * rust) | 0);
+      albedo[ai+2] = Math.min(255, (baseRGB[2] * worn + 6 * rust) | 0);
+      albedo[ai+3] = 255;
+      height[idx] = rim ? 0.94 : 0.84;
+      ao[idx] = rim ? 0.82 : 0.68;
+      rough[idx] = Math.round(Math.min(0.9, (matRough ?? 0.48) + rust * 0.45) * 255);
+      metal[idx] = Math.round((rust ? 0.55 : 0.86) * 255);
+    } else {
+      const cavityNoise = hash2(x * 3, y * 5, seed + 919);
+      albedo[ai] = 5 + Math.floor(cavityNoise * 5);
+      albedo[ai+1] = 7 + Math.floor(cavityNoise * 5);
+      albedo[ai+2] = 7 + Math.floor(cavityNoise * 6);
+      albedo[ai+3] = 255;
+      height[idx] = 0.04 + cavityNoise * 0.025;
+      ao[idx] = 0.12 + cavityNoise * 0.06;
+      rough[idx] = Math.round(0.96 * 255);
+      metal[idx] = 0;
+    }
+    emiss[ai] = emiss[ai+1] = emiss[ai+2] = 0;
+    emiss[ai+3] = 255;
+  }
+
+  const normal = new Uint8Array(size * size * 4);
+  const ns = proc.normalStrength ?? 2.2;
+  for (let y = 0; y < size; y++) for (let x = 0; x < size; x++) {
+    const xm = Math.max(0, x - 1), xp = Math.min(size - 1, x + 1);
+    const ym = Math.max(0, y - 1), yp = Math.min(size - 1, y + 1);
+    const n = heightToNormal(height[y*size+xm], height[y*size+xp], height[ym*size+x], height[yp*size+x], ns);
+    const ni = (y * size + x) * 4;
+    normal[ni] = n[0] | 0; normal[ni+1] = n[1] | 0; normal[ni+2] = n[2] | 0; normal[ni+3] = 255;
+  }
+  return { albedo, normal, height, rough, metal, ao, emiss };
+}
+
 /**
  * New core: generate material data as Texture2DArray layers.
  * Each material is one layer (depth) of size texSize x texSize.
@@ -230,6 +312,8 @@ export function generateMaterialArrayData(wallMats, floorMats, ceilMats, procCon
       'slab': (sz, base, pr, sd, rv) => genSlabTile(sz, base, pr, sd, false, rv),
       'cobble': (sz, base, pr, sd, rv) => genSlabTile(sz, base, { ...pr, blockSize: pr.blockSize ?? 6, groutWidth: pr.groutWidth ?? 2 }, sd, true, rv),
       'beams': (sz, base, pr, sd, rv) => genSlabTile(sz, base, { ...pr, blockSize: pr.blockSize ?? 12 }, sd, true, rv),
+      'channel_stone': (sz, base, pr, sd, rv) => genSlabTile(sz, base, { ...pr, blockSize: pr.blockSize ?? 6, groutWidth: pr.groutWidth ?? 1 }, sd, false, rv),
+      'round_grille_fixture': (sz, base, pr, sd, rv) => genRoundGrilleTile(sz, base, pr, sd, rv),
     };
     const fn = reg[mat.type] || (defaultType === 'brick' ? reg['brick'] : reg['slab']);
     return fn;
@@ -259,7 +343,7 @@ export function generateMaterialArrayData(wallMats, floorMats, ceilMats, procCon
         const si = y * texSize + x;
         const di = off + si;
         const sai = si * 4, dai = off4 + si * 4;
-        albedo[dai] = tile.albedo[sai]; albedo[dai+1] = tile.albedo[sai+1]; albedo[dai+2]=tile.albedo[sai+2]; albedo[dai+3]=255;
+        albedo[dai] = tile.albedo[sai]; albedo[dai+1] = tile.albedo[sai+1]; albedo[dai+2]=tile.albedo[sai+2]; albedo[dai+3]=tile.albedo[sai+3] ?? 255;
         normal[dai] = tile.normal[sai]; normal[dai+1]=tile.normal[sai+1]; normal[dai+2]=tile.normal[sai+2]; normal[dai+3]=255;
         height[di] = Math.round(tile.height[si]*255);
         const sr = tile.rough[si];
@@ -327,7 +411,7 @@ export function generateMaterialAtlases(wallMats, floorMats, ceilMats, procConfi
         const sai = off4 + (y * texSize + x) * 4;
         const di = y * w + ox + x;
         const dai = di * 4;
-        albedo[dai] = arrData.albedo[sai]; albedo[dai+1]=arrData.albedo[sai+1]; albedo[dai+2]=arrData.albedo[sai+2]; albedo[dai+3]=255;
+        albedo[dai] = arrData.albedo[sai]; albedo[dai+1]=arrData.albedo[sai+1]; albedo[dai+2]=arrData.albedo[sai+2]; albedo[dai+3]=arrData.albedo[sai+3];
         normal[dai] = arrData.normal[sai]; normal[dai+1]=arrData.normal[sai+1]; normal[dai+2]=arrData.normal[sai+2]; normal[dai+3]=255;
         height[di] = arrData.height[si];
         roughMetalAO[dai]=arrData.roughMetalAO[sai]; roughMetalAO[dai+1]=arrData.roughMetalAO[sai+1]; roughMetalAO[dai+2]=arrData.roughMetalAO[sai+2]; roughMetalAO[dai+3]=arrData.roughMetalAO[sai+3];

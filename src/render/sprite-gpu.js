@@ -13,6 +13,7 @@ export class SpriteGpuRenderer {
     this.uniformBuffer = null;
     this.lightDataBuffer = null;
     this.sampler = null;
+    this.textureFilter = 'nearest';
     this.quadBuffer = null;
     this.instanceBuffer = null;
     this.ready = false;
@@ -42,6 +43,7 @@ export class SpriteGpuRenderer {
 
     this.sampler = device.createSampler({ magFilter: 'linear', minFilter: 'linear', addressModeU: 'clamp-to-edge', addressModeV: 'clamp-to-edge', label: 'spriteSampler' });
     this.nearestSampler = device.createSampler({ magFilter: 'nearest', minFilter: 'nearest', addressModeU: 'repeat', addressModeV: 'repeat', label: 'spriteNearest' });
+    this.textureFilter = String(externalShaders?.textureFilter ?? 'nearest').toLowerCase() === 'linear' ? 'linear' : 'nearest';
 
     this.bindGroupLayout0 = device.createBindGroupLayout({
       entries: [
@@ -104,11 +106,24 @@ export class SpriteGpuRenderer {
     });
     this.samplerBindGroup = device.createBindGroup({
       layout: this.bindGroupLayout2,
-      entries: [{ binding: 0, resource: this.sampler }, { binding: 1, resource: this.nearestSampler }],
-      label: 'sprite_sampler_bg'
+      entries: [{ binding: 0, resource: this.textureFilter === 'linear' ? this.sampler : this.nearestSampler }, { binding: 1, resource: this.nearestSampler }],
+      label: `sprite_sampler_bg_${this.textureFilter}`
     });
 
     this.ready = true;
+  }
+
+  setTextureFilter(value) {
+    this.textureFilter = String(value ?? 'nearest').toLowerCase() === 'linear' ? 'linear' : 'nearest';
+    if (!this.device || !this.bindGroupLayout2 || !this.sampler || !this.nearestSampler) return;
+    this.samplerBindGroup = this.device.createBindGroup({
+      layout: this.bindGroupLayout2,
+      entries: [
+        { binding: 0, resource: this.textureFilter === 'linear' ? this.sampler : this.nearestSampler },
+        { binding: 1, resource: this.nearestSampler },
+      ],
+      label: `sprite_sampler_bg_${this.textureFilter}`
+    });
   }
 
   async ensureSprites(device, spriteIds) {

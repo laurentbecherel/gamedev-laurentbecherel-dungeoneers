@@ -94,7 +94,6 @@ export function generateDungeonSprites(dungeon, config, rngOverride = null) {
 
   const w = dungeon.w, h = dungeon.h, grid = dungeon.grid;
   const rooms = dungeon.rooms || [];
-  const floorHeight = dungeon.floorHeight || null;
 
   // --- Collect candidates: floor cells adjacent to wall ---
   const candidates = [];
@@ -112,6 +111,9 @@ export function generateDungeonSprites(dungeon, config, rngOverride = null) {
     for (let x = 0; x < w; x++) {
       const idx = y * w + x;
       if (grid[idx] !== 0) continue; // need floor
+      // Structural floor features own the tile footprint. Keep wall torches,
+      // braziers, and other billboards out of channels/pits/lava recipes.
+      if (((dungeon.featureCells?.[idx] ?? 0) & 0xff) !== 0) continue;
       // avoid start too close
       if (dungeon.startX != null) {
         const ds = Math.hypot((x + 0.5) - dungeon.startX, (y + 0.5) - dungeon.startY);
@@ -225,8 +227,7 @@ export function generateDungeonSprites(dungeon, config, rngOverride = null) {
     if (tooClose(tx, ty)) return null;
 
     // Anchored Z
-    let tileFloorH = 0;
-    if (floorHeight) tileFloorH = floorHeight[cand.y * w + cand.x] || 0;
+    const tileFloorH = 0;
     const zBase = isWall ? wallZBase : (isFloor ? floorZBase : wallZBase * 0.6);
     const zJit = isWall ? wallZJitter : floorZJitter;
     const z = tileFloorH + zBase + (rng() - 0.5) * zJit;

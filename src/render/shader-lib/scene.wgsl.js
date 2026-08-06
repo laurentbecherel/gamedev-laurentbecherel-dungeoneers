@@ -99,10 +99,22 @@ fn debugDamagedNoiseMask(worldPos: vec3<f32>) -> vec3<f32> {
 struct HorizontalShadeResult {
   color: vec3<f32>,
   dist: f32,
+  normal: vec3<f32>,
+  reflectionWeight: f32,
 }
 
 fn shadeHorizontalCell(horizWorld: vec2<f32>, horizUV: vec2<f32>, matId: f32, count: f32, ray: vec2<f32>, eyeZ: f32, heightAtRay: f32, isCeil: bool) -> HorizontalShadeResult {
-  let layer: i32 = clampLayer(matId, count);
+  let hostLayer: i32 = clampLayer(matId, count);
+  var layer: i32 = hostLayer;
+  // Base floors are a strict z=0 plane. Only structural features alter macro
+  // geometry; material height remains shading/POM data, not world elevation.
+  let hostHeight: f32 = select(0.0, heightAtRay, isCeil);
+  let featureGeom: FloorFeatureGeometry = resolveFeatureFloor(horizWorld, hostHeight);
+  let isChannel: bool = !isCeil && featureKind(featureGeom.word) == FEATURE_CHANNEL;
+  let isLiquid: bool = isChannel && featureGeom.liquidMask > 0.5;
+  if (isChannel && featureGeom.bankT > featureUniforms.rayIntersection.w && !isLiquid) {
+    layer = clampLayer(featureUniforms.materials.y, count);
+  }
   var uv: vec2<f32> = horizUV;
   let pomEn: f32 = f32(frame.pomEnabled);
   let worldPosForPOM: vec3<f32> = vec3<f32>(horizWorld, heightAtRay);
@@ -140,32 +152,73 @@ fn shadeHorizontalCell(horizWorld: vec2<f32>, horizUV: vec2<f32>, matId: f32, co
   var ao: f32 = rma.a;
   let emissiveAlbedoMul: f32 = select(0.8, frame.pbrEmissiveAlbedoMul, frame.pbrEmissiveAlbedoMul > 0.0);
   let emissiveStrength: f32 = select(2.5, frame.pbrEmissiveStrength, frame.pbrEmissiveStrength > 0.0);
-  let emissive: vec3<f32> = albedoRaw * emissiveAlbedoMul * rma.b * emissiveStrength;
+  var emissive: vec3<f32> = albedoRaw * emissiveAlbedoMul * rma.b * emissiveStrength;
 
   let surfMul: f32 = select(select(0.7, frame.renderFloorMul, frame.renderFloorMul > 0.0), select(0.8, frame.renderCeilMul, frame.renderCeilMul > 0.0), isCeil);
   var albedo: vec3<f32> = albedoRaw * surfMul;
   var N: vec3<f32> = Nw;
+  var reflectionNormal: vec3<f32> = N;
 
   if (isCeil) {
     applyCeilBaseboard(horizWorld, &N, &ao, &albedo, &rma);
     applyGridCeil(horizWorld, &N, &ao, &albedo, &rma);
-  } else {
+  } else if (!isChannel) {
     applyFloorBaseboard(horizWorld, &N, &ao, &albedo, &rma);
     applyGridFloor(horizWorld, &N, &ao, &albedo, &rma);
+  }
+
+  if (isChannel && !isLiquid) {
+    // Macro bank normal bends the lining normal without introducing a mesh path.
+    N = normalize(N + featureGeom.macroNormal - vec3<f32>(0.0,0.0,1.0));
+    // Blend lining back toward the original host so different room floors remain legible.
+    let hostAlbedo: vec3<f32> = sampleFloorAlbedo(hostLayer, uv) * surfMul;
+    let liningStrength: f32 = clamp(featureUniforms.system.y * featureGeom.bankT, 0.0, 1.0);
+    albedo = mix(hostAlbedo, albedo, liningStrength);
   }
 
   let isFloorSurface: f32 = 1.0;
   var roughTmp: f32 = rma.r;
   var metalTmp: f32 = rma.g;
-  applyModifiers(&albedo, &N, &roughTmp, &metalTmp, &ao, vec3<f32>(horizWorld, heightAtRay), &heightVal, isFloorSurface);
+  // Capture the cosmetic puddle coverage before applyModifiers mutates AO and
+  // the surface normal. The modifier remains the sole owner of its established
+  // albedo/roughness/ripple look; this value is only forwarded to the GBuffer.
+  var cosmeticPuddleMask: f32 = 0.0;
+  if (!isCeil && !isChannel && frame.modifiersEnabled != 0) {
+    let modUV: vec2<f32> = horizWorld / frame.mapSize;
+    let puddleCell: f32 = loadModifierMap(modUV).b;
+    cosmeticPuddleMask = computePuddleMaskTweakable(vec3<f32>(horizWorld, heightAtRay), heightVal, ao, puddleCell);
+  }
+  if (!isLiquid) {
+    applyModifiers(&albedo, &N, &roughTmp, &metalTmp, &ao, vec3<f32>(horizWorld, heightAtRay), &heightVal, isFloorSurface);
+  }
   rma.r = roughTmp;
   rma.g = metalTmp;
+
+  var reflectionWeight: f32 = 0.0;
+  if (isLiquid) {
+    let water: WaterSurface = evaluateWaterSurface(vec3<f32>(horizWorld, heightAtRay), featureGeom.flowDir, 1.0, featureGeom.edgeFactor);
+    // Opaque-raycast approximation of shallow water: retain a restrained view
+    // of the recessed lining so depth reads without requiring transparency.
+    let liningLayer: i32 = clampLayer(featureUniforms.materials.y, count);
+    let submergedLining: vec3<f32> = sampleFloorAlbedo(liningLayer, uv) * surfMul * featureUniforms.waterAppearance.y;
+    albedo = mix(submergedLining, water.albedo, featureUniforms.waterAppearance.z);
+    N = water.normal;
+    reflectionNormal = normalize(mix(vec3<f32>(0.0, 0.0, 1.0), water.normal, clamp(featureUniforms.waterOptics.x, 0.0, 1.0)));
+    rma.r = water.roughness;
+    rma.g = 0.0;
+    ao = 1.0;
+    emissive = vec3<f32>(0.0);
+    reflectionWeight = water.reflectionWeight;
+  } else if (cosmeticPuddleMask > 0.001) {
+    reflectionWeight = cosmeticPuddleMask;
+  }
+  if (!isLiquid) { reflectionNormal = N; }
 
   let worldPos: vec3<f32> = vec3<f32>(horizWorld, heightAtRay);
   let viewDir: vec3<f32> = normalize(vec3<f32>(frame.playerPos, eyeZ) - worldPos);
   let dist: f32 = distance(horizWorld, frame.playerPos);
   let col: vec3<f32> = pbrShade(albedo, N, rma.r, rma.g, ao, emissive, worldPos, viewDir);
-  return HorizontalShadeResult(col, dist);
+  return HorizontalShadeResult(col, dist, reflectionNormal, reflectionWeight);
 }
 
 fn shadeFloorCell(floorWorld: vec2<f32>, floorUV: vec2<f32>, matId: f32, fc: f32, ray: vec2<f32>, eyeZ: f32, floorH_atRay: f32) -> HorizontalShadeResult {
@@ -175,7 +228,7 @@ fn shadeCeilCell(ceilWorld: vec2<f32>, ceilUV: vec2<f32>, matId: f32, cc: f32, r
   return shadeHorizontalCell(ceilWorld, ceilUV, matId, cc, ray, eyeZ, ceilH_atRay, true);
 }
 
-fn shadeWallCell(wallU: f32, wallV: f32, matId: f32, wc: f32, side: i32, stepDir: vec2<i32>, ray: vec2<f32>, hitPos: vec2<f32>, hasCornerRound: bool, cornerNormal: vec3<f32>) -> vec3<f32> {
+fn shadeWallCell(wallU: f32, wallV: f32, matId: f32, wc: f32, side: i32, stepDir: vec2<i32>, ray: vec2<f32>, hitPos: vec2<f32>, wallCell: vec2<i32>, hasCornerRound: bool, cornerNormal: vec3<f32>) -> vec3<f32> {
   let layer: i32 = clampLayer(matId, wc);
   var uv: vec2<f32> = vec2<f32>(wallU, wallV);
   let bitangent: vec3<f32> = vec3<f32>(0.0, 0.0, 1.0);
@@ -213,12 +266,30 @@ fn shadeWallCell(wallU: f32, wallV: f32, matId: f32, wc: f32, side: i32, stepDir
   var tangentOrtho: vec3<f32> = normalize(tOrtho);
   tangent = mix(tangentFlat, tangentOrtho, cornerEn);
 
-  let worldPos: vec3<f32> = vec3<f32>(hitPos.x, hitPos.y, (1.0 - wallV) * 1.15);
+  let featureWord: u32 = loadFeatureCell(wallCell);
+  let hasGrille: bool = featureUniforms.system.x > 0.5 && isFeatureWallFace(featureWord, FEATURE_GRILLE, side, stepDir);
+  // The channel-facing wall continues down to the waterline so the water meets
+  // the grille instead of leaving a dry strip at z=0. Restrict that extension
+  // to the channel opening; the rest of the host wall keeps its normal base.
+  let grilleFloor: f32 = -featureUniforms.channel.y + featureUniforms.channel.w;
+  let insideChannelOpening: bool = abs(wallU - 0.5) <= featureUniforms.channel.x * 0.5;
+  let extendsToWater: bool = hasGrille && insideChannelOpening;
+  let wallFloor: f32 = select(0.0, grilleFloor, extendsToWater);
+  let worldPos: vec3<f32> = vec3<f32>(hitPos.x, hitPos.y, mix(1.15, wallFloor, wallV));
+  // Preserve the host masonry scale above z=0. Mirror the small submerged
+  // continuation instead of stretching one texel row down the wall skirt.
+  let hostVRaw: f32 = (1.15 - worldPos.z) / 1.15;
+  let hostV: f32 = clamp(select(hostVRaw, 2.0 - hostVRaw, hostVRaw > 1.0), 0.0, 1.0);
+  uv.y = hostV;
   let viewDir: vec3<f32> = normalize(vec3<f32>(frame.playerPos, frame.playerHeight) - worldPos);
   let viewTS: vec3<f32> = vec3<f32>(dot(viewDir, tangent), dot(viewDir, bitangent), dot(viewDir, Ngeom));
   let pomEn: f32 = f32(frame.pomEnabled);
   let isFloorSurface: f32 = 0.0;
-  let poWall: vec2<f32> = pomOffsetArrayDamaged(wallHeight, uv, layer, viewTS, frame.pomWall, frame.pomSteps, worldPos, isFloorSurface);
+  let fixtureLayer: i32 = clampLayer(featureUniforms.materials.x, wc);
+  var poWall: vec2<f32> = pomOffsetArrayDamaged(wallHeight, uv, layer, viewTS, frame.pomWall, frame.pomSteps, worldPos, isFloorSurface);
+  if (hasGrille) {
+    poWall = pomOffsetWallComposite(uv, layer, fixtureLayer, viewTS, max(frame.pomWall, featureUniforms.system.w), frame.pomSteps);
+  }
   var uvPOM: vec2<f32> = mix(uv, uv + poWall, pomEn);
 
   var albedoRaw: vec3<f32> = sampleWallAlbedo(layer, uvPOM);
@@ -226,6 +297,17 @@ fn shadeWallCell(wallU: f32, wallV: f32, matId: f32, wc: f32, side: i32, stepDir
   var normalTSw: vec3<f32> = decodeNormal(normalRaw);
   var heightVal: f32 = sampleWallHeight(layer, uvPOM);
   var rmaW: vec4<f32> = sampleWallRMA(layer, uvPOM);
+  if (hasGrille) {
+    let fixtureAlbedo: vec4<f32> = sampleWallAlbedoRGBA(fixtureLayer, uvPOM);
+    let fixtureCoverage: f32 = fixtureAlbedo.a;
+    let fixtureNormal: vec3<f32> = decodeNormal(sampleWallNormalRaw(fixtureLayer, uvPOM));
+    let fixtureHeight: f32 = sampleWallHeight(fixtureLayer, uvPOM);
+    let fixtureRMA: vec4<f32> = sampleWallRMA(fixtureLayer, uvPOM);
+    albedoRaw = mix(albedoRaw, fixtureAlbedo.rgb, fixtureCoverage);
+    normalTSw = normalize(mix(normalTSw, fixtureNormal, fixtureCoverage));
+    heightVal = mix(heightVal, fixtureHeight, fixtureCoverage);
+    rmaW = mix(rmaW, fixtureRMA, fixtureCoverage);
+  }
 
   let emissiveAlbedoMul: f32 = select(0.8, frame.pbrEmissiveAlbedoMul, frame.pbrEmissiveAlbedoMul > 0.0);
   let emissiveStrength: f32 = select(2.5, frame.pbrEmissiveStrength, frame.pbrEmissiveStrength > 0.0);
@@ -242,8 +324,8 @@ fn shadeWallCell(wallU: f32, wallV: f32, matId: f32, wc: f32, side: i32, stepDir
   var rmaAoCorner: f32 = rmaW.a * aoMul;
   rmaW.a = mix(rmaW.a, rmaAoCorner, cornerEn);
 
-  applyWallFloorTrim(wallV, Ngeom, &Nw, &albedoRaw, &rmaW);
-  applyWallCeilTrim(wallV, Ngeom, &Nw, &albedoRaw, &rmaW);
+  applyWallFloorTrim(hostV, Ngeom, &Nw, &albedoRaw, &rmaW);
+  applyWallCeilTrim(hostV, Ngeom, &Nw, &albedoRaw, &rmaW);
   let noCorner: f32 = 1.0 - cornerEn;
   let vertEn: f32 = noCorner * f32(frame.chamferEnabled);
   var NwBefore: vec3<f32> = Nw;

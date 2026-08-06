@@ -9,6 +9,7 @@ import { wgslGridChamfer } from './shader-lib/grid-chamfer.wgsl.js';
 import { wgslModifiers } from './shader-lib/modifiers.wgsl.js';
 import { wgslScene } from './shader-lib/scene.wgsl.js';
 import { wgslSSR } from './shader-lib/ssr.wgsl.js';
+import { wgslFeatures } from './shader-lib/features.wgsl.js';
 
 export const MAX_LIGHTS = 8;
 export const MAX_CHARS = 8;
@@ -201,12 +202,30 @@ struct LightingUniforms {
   _pad: vec3<i32>,
 };
 
+struct FeatureUniforms {
+  channel: vec4<f32>,
+  waterShallow: vec4<f32>,
+  waterDeep: vec4<f32>,
+  waterMotion: vec4<f32>,
+  materials: vec4<f32>,
+  system: vec4<f32>,
+  waterAppearance: vec4<f32>,
+  waterColor: vec4<f32>,
+  waterRipples: vec4<f32>,
+  rayIntersection: vec4<f32>,
+  waterOptics: vec4<f32>,
+};
+
+struct FeatureCellBuffer { data: array<u32>, };
+
 // Bindings
 @group(0) @binding(0) var<uniform> frameData: array<vec4<f32>, 32>;
 @group(0) @binding(1) var<uniform> lightData: array<vec4<f32>, 40>;
 @group(0) @binding(2) var<uniform> modifiersBlock: ModifiersBlock;
 @group(0) @binding(3) var<uniform> frame: FrameUniforms;
 @group(0) @binding(4) var<uniform> lights: LightingUniforms;
+@group(0) @binding(5) var<storage, read> featureCellBuffer: FeatureCellBuffer;
+@group(0) @binding(6) var<uniform> featureUniforms: FeatureUniforms;
 
 @group(1) @binding(0) var mapTex: texture_2d<f32>;
 @group(1) @binding(1) var matMapTex: texture_2d<f32>;
@@ -225,7 +244,7 @@ struct LightingUniforms {
 @group(1) @binding(14) var modifierMap: texture_2d<f32>;
 @group(1) @binding(15) var modifierMap2: texture_2d<f32>;
 
-@group(2) @binding(0) var nearestSampler: sampler;
+@group(2) @binding(0) var materialSampler: sampler;
 @group(2) @binding(1) var linearSampler: sampler;
 
 var<private> u_resolution: vec2<f32>;
@@ -507,6 +526,7 @@ ${wgslRaymarch}
 ${wgslPbr}
 ${wgslChamfer}
 ${wgslGridChamfer}
+${wgslFeatures}
 ${wgslScene}
 `;
 
@@ -549,6 +569,7 @@ fn fs_main(@location(0) v_uv: vec2<f32>, @builtin(position) fragPos: vec4<f32>) 
   var perpDist: f32 = 0.0;
   var hitPos: vec2<f32> = vec2<f32>(0.0);
   var cellType: f32 = 0.0;
+  var hitCell: vec2<i32> = vec2<i32>(0);
   var cornerNormal: vec3<f32> = vec3<f32>(0.0);
   var hasCornerRound: bool = false;
   let cornerRadius: f32 = clamp(u_cornerRadius, 0.02, 0.45);
@@ -562,7 +583,7 @@ fn fs_main(@location(0) v_uv: vec2<f32>, @builtin(position) fragPos: vec4<f32>) 
     cellType = c.r * 255.0;
     if (cellType > 0.5) {
       let wh = resolveWallHit(cell, side, stepDir, ray, cornerRadius, u_cornerEnabled, u_cornerInner);
-      if (wh.hit) { hit = 1; perpDist = wh.t; hitPos = wh.hp; cornerNormal = vec3<f32>(wh.n.x, wh.n.y, 0.0); hasCornerRound = wh.rounded; break; }
+      if (wh.hit) { hit = 1; hitCell = cell; perpDist = wh.t; hitPos = wh.hp; cornerNormal = vec3<f32>(wh.n.x, wh.n.y, 0.0); hasCornerRound = wh.rounded; break; }
     }
   }
 
@@ -572,14 +593,21 @@ fn fs_main(@location(0) v_uv: vec2<f32>, @builtin(position) fragPos: vec4<f32>) 
   let cc: f32 = select(1.0, u_ceilCount, u_ceilCount > 0.0);
   let eyeFactor: f32 = select(0.15, u_renderEyeFactor, u_renderEyeFactor >= 0.0);
   var gWallV_raw: f32 = 0.0;
+  var resolvedNormal: vec3<f32> = vec3<f32>(0.0,0.0,1.0);
+  var resolvedReflection: f32 = 0.0;
 
   if (hit == 1) {
     var floorH: f32 = 0.0; var ceilH: f32 = 1.15;
+    let hitFeatureWord: u32 = loadFeatureCell(hitCell);
     var wallU: f32;
     if (side == 0) { wallU = hitPos.y - floor(hitPos.y); } else { wallU = hitPos.x - floor(hitPos.x); }
     if ((side == 0 && ray.x > 0.0) || (side == 1 && ray.y < 0.0)) { wallU = 1.0 - wallU; }
     if (u_authentic == 1) { wallU = floor(wallU * 64.0 * 65536.0) / 65536.0 / 64.0; }
-    let eyeZ: f32 = 0.5;
+    let insideChannelOpening: bool = abs(wallU - 0.5) <= featureUniforms.channel.x * 0.5;
+    if (insideChannelOpening && isFeatureWallFace(hitFeatureWord, FEATURE_GRILLE, side, stepDir)) {
+      floorH = -featureUniforms.channel.y + featureUniforms.channel.w;
+    }
+    let eyeZ: f32 = u_playerHeight;
     let wallH_full: f32 = resolution.y / max(perpDist, 0.0001) * resolution.x / resolution.y * 0.5 / tan(u_fov * 0.5);
     let drawStart: f32 = resolution.y * 0.5 - (ceilH - eyeZ) * wallH_full;
     let drawEnd: f32 = resolution.y * 0.5 + (eyeZ - floorH) * wallH_full;
@@ -588,13 +616,17 @@ fn fs_main(@location(0) v_uv: vec2<f32>, @builtin(position) fragPos: vec4<f32>) 
     if (wallV_raw < 0.0 || wallV_raw > 1.0) {
       let horizon: f32 = 0.5; let vNorm: f32 = fragCoord.y / resolution.y;
       if (vNorm > horizon) {
-        var dist: f32 = (eyeZ - 0.0) / max(0.0001, vNorm - horizon) * resolution.x / resolution.y * 0.5 / tan(u_fov * 0.5);
-        dist = max(dist, 0.001);
-        let floorWorld: vec2<f32> = u_playerPos + ray * dist;
+        let projection: f32 = resolution.x / resolution.y * 0.5 / tan(u_fov * 0.5);
+        let verticalSlope: f32 = max(0.0001, vNorm - horizon) / projection;
+        let flatDistance: f32 = max(eyeZ / verticalSlope, 0.001);
+        let floorHit: FeatureFloorRayHit = traceFeatureFloorSurface(u_playerPos, ray, eyeZ, flatDistance, verticalSlope, max(perpDist, flatDistance));
+        var dist: f32 = floorHit.distance;
+        let floorWorld: vec2<f32> = floorHit.worldXY;
+        let floorH2: f32 = floorHit.height;
         let floorUV: vec2<f32> = fract(floorWorld);
         let matId: f32 = fetchFloorMatId(vec2<i32>(floor(floorWorld)));
-        let shade = shadeFloorCell(floorWorld, floorUV, matId, fc, ray, eyeZ, 0.0);
-        finalColor = shade.color; perpDist = dist;
+        let shade = shadeFloorCell(floorWorld, floorUV, matId, fc, ray, eyeZ, floorH2);
+        finalColor = shade.color; perpDist = dist; resolvedNormal = shade.normal; resolvedReflection = shade.reflectionWeight;
       } else {
         var dist: f32 = (1.15 - eyeZ) / max(0.0001, horizon - vNorm) * resolution.x / resolution.y * 0.5 / tan(u_fov * 0.5);
         dist = max(dist, 0.001);
@@ -602,12 +634,15 @@ fn fs_main(@location(0) v_uv: vec2<f32>, @builtin(position) fragPos: vec4<f32>) 
         let ceilUV: vec2<f32> = fract(ceilWorld);
         let matId: f32 = fetchCeilMatId(vec2<i32>(floor(ceilWorld)));
         let shade = shadeCeilCell(ceilWorld, ceilUV, matId, cc, ray, eyeZ, 1.15);
-        finalColor = shade.color; perpDist = dist;
+        finalColor = shade.color; perpDist = dist; resolvedNormal = shade.normal;
       }
     } else {
       let wallV: f32 = clamp(wallV_raw, 0.0, 1.0);
       let matId: f32 = max(1.0, cellType);
-      finalColor = shadeWallCell(wallU, wallV, matId, wc, side, stepDir, ray, hitPos, hasCornerRound, cornerNormal);
+      finalColor = shadeWallCell(wallU, wallV, matId, wc, side, stepDir, ray, hitPos, hitCell, hasCornerRound, cornerNormal);
+      if (hasCornerRound) { resolvedNormal = normalize(cornerNormal); }
+      else if (side == 0) { resolvedNormal = vec3<f32>(f32(-stepDir.x),0.0,0.0); }
+      else { resolvedNormal = vec3<f32>(0.0,f32(-stepDir.y),0.0); }
     }
   } else {
     let horizon: f32 = 0.5; let vNorm2: f32 = 1.0 - v_uv.y;
@@ -617,24 +652,19 @@ fn fs_main(@location(0) v_uv: vec2<f32>, @builtin(position) fragPos: vec4<f32>) 
       let pmd: vec4<f32> = textureLoad(mapTex, pc, 0);
       pfH = clamp(pmd.g - 0.5, -0.6, 0.6);
     }
-    let eyeZ2: f32 = 0.5 + pfH * eyeFactor;
+    let eyeZ2: f32 = u_playerHeight;
     if (vNorm2 > horizon) {
-      var floorH: f32 = 0.0; var dist: f32 = 0.001; var floorWorld: vec2<f32> = vec2<f32>(0.0);
-      for (var it: i32 = 0; it < 3; it++) {
-        dist = (eyeZ2 - floorH) / max(0.0001, vNorm2 - horizon) * resolution.x / resolution.y * 0.5 / tan(u_fov * 0.5);
-        if (dist < 0.001) { dist = 0.001; }
-        floorWorld = u_playerPos + ray * dist;
-        let fc2: vec2<i32> = vec2<i32>(vec2<i32>(floor(floorWorld)));
-        if (fc2.x >= 0 && fc2.y >= 0 && fc2.x < i32(u_mapSize.x) && fc2.y < i32(u_mapSize.y)) {
-          let fmd: vec4<f32> = textureLoad(mapTex, fc2, 0);
-          let cellT: i32 = i32(fmd.r * 255.0 + 0.5);
-          if (cellT == 0) { floorH = clamp(fmd.g - 0.5, -0.6, 0.6); } else { break; }
-        }
-      }
+      let projection: f32 = resolution.x / resolution.y * 0.5 / tan(u_fov * 0.5);
+      let verticalSlope: f32 = max(0.0001, vNorm2 - horizon) / projection;
+      let flatDistance: f32 = max(eyeZ2 / verticalSlope, 0.001);
+      let floorHit: FeatureFloorRayHit = traceFeatureFloorSurface(u_playerPos, ray, eyeZ2, flatDistance, verticalSlope, 100000.0);
+      let floorH: f32 = floorHit.height;
+      var dist: f32 = floorHit.distance;
+      let floorWorld: vec2<f32> = floorHit.worldXY;
       let floorUV: vec2<f32> = fract(floorWorld);
       let matId: f32 = fetchFloorMatId(vec2<i32>(floor(floorWorld)));
       let shade = shadeFloorCell(floorWorld, floorUV, matId, fc, ray, eyeZ2, floorH);
-      finalColor = shade.color; perpDist = dist;
+      finalColor = shade.color; perpDist = dist; resolvedNormal = shade.normal; resolvedReflection = shade.reflectionWeight;
     } else {
       var ceilH: f32 = 1.15; var dist: f32 = 0.001; var ceilWorld: vec2<f32> = vec2<f32>(0.0);
       for (var it: i32 = 0; it < 3; it++) {
@@ -651,7 +681,7 @@ fn fs_main(@location(0) v_uv: vec2<f32>, @builtin(position) fragPos: vec4<f32>) 
       let ceilUV: vec2<f32> = fract(ceilWorld);
       let matId: f32 = fetchCeilMatId(vec2<i32>(floor(ceilWorld)));
       let shade = shadeCeilCell(ceilWorld, ceilUV, matId, cc, ray, eyeZ2, ceilH);
-      finalColor = shade.color; perpDist = dist;
+      finalColor = shade.color; perpDist = dist; resolvedNormal = shade.normal;
     }
   }
 
@@ -677,52 +707,11 @@ fn fs_main(@location(0) v_uv: vec2<f32>, @builtin(position) fragPos: vec4<f32>) 
   var out: FSOut;
   out.color = vec4<f32>(finalColor, 1.0);
 
-  // GBuffer
-  let hitF: f32 = f32(hit);
-  let noHit: f32 = 1.0 - hitF;
-  let hasRoundF: f32 = f32(hasCornerRound);
-  let sideEq0: f32 = step(f32(side), 0.5);
-  var gNormalWallNoRound0: vec3<f32> = vec3<f32>(f32(-stepDir.x), 0.0, 0.0);
-  var gNormalWallNoRound1: vec3<f32> = vec3<f32>(0.0, f32(-stepDir.y), 0.0);
-  var gNormalWallNoRound: vec3<f32> = mix(gNormalWallNoRound1, gNormalWallNoRound0, sideEq0);
-  var gNormalCorner: vec3<f32> = normalize(cornerNormal);
-  var gNormalWall: vec3<f32> = mix(gNormalWallNoRound, gNormalCorner, hasRoundF);
-  let wV: f32 = gWallV_raw;
-  let condW0: f32 = step(wV, -0.0001);
-  let condW1: f32 = step(1.0001, wV);
-  var condWmid: f32 = 1.0 - condW0 - condW1;
-  condWmid = clamp(condWmid, 0.0, 1.0);
-  let modUVf: vec2<f32> = (u_playerPos + ray * perpDist) / u_mapSize;
-  let puddleCellf: f32 = loadModifierMap(modUVf).b;
-  let worldPosf: vec3<f32> = vec3<f32>(u_playerPos + ray * perpDist, 0.0);
-  let gMaskFloorPuddle: f32 = computePuddleMaskTweakable(worldPosf, 0.5, 1.0, puddleCellf);
-  var gNormalCeil: vec3<f32> = vec3<f32>(0.0, 0.0, -1.0);
-  var gNormalFloor: vec3<f32> = vec3<f32>(0.0, 0.0, 1.0);
-  var gNormalWallMid: vec3<f32> = mix(gNormalWall, gNormalFloor, condW1);
-  var gNormalWallFinal: vec3<f32> = mix(gNormalWallMid, gNormalCeil, condW0);
-  var gNormalFromHit: vec3<f32> = mix(vec3<f32>(0.0, 0.0, 1.0), gNormalWallFinal, hitF);
-  let vNormH: f32 = fragCoord.y / u_resolution.y;
-  let condFloor: f32 = step(0.5001, vNormH) * noHit;
-  let condCeil: f32 = (1.0 - step(0.5001, vNormH)) * noHit;
-  let fw: vec2<f32> = u_playerPos + ray * perpDist;
-  let modUVf2: vec2<f32> = fw / u_mapSize;
-  let pc2: f32 = loadModifierMap(modUVf2).b;
-  let wp2: vec3<f32> = vec3<f32>(fw, 0.0);
-  let gMaskFromFloor: f32 = computePuddleMaskTweakable(wp2, 0.5, 1.0, pc2) * condFloor;
-  let gMaskFromMid: f32 = gMaskFloorPuddle * condW1 * hitF;
-  var gNormalFromNoHit: vec3<f32> = mix(gNormalCeil, gNormalFloor, condFloor);
-  var gNormalCombined: vec3<f32> = mix(gNormalFromNoHit, gNormalFromHit, hitF);
-  var gMask: f32 = gMaskFromFloor + gMaskFromMid;
-  var gNormal: vec3<f32> = gNormalCombined;
-  let hasGMask: f32 = step(0.021, gMask);
-  let fw2: vec2<f32> = u_playerPos + ray * perpDist;
-  let rippleX: f32 = sin(fw2.x * 2.7 + u_time * 0.6) * 0.08 + sin(fw2.y * 3.3 + u_time * 0.4) * 0.04;
-  let rippleY: f32 = cos(fw2.x * 2.1 + u_time * 0.5) * 0.08 + cos(fw2.y * 2.9 + u_time * 0.3) * 0.04;
-  let gNormalRippled: vec3<f32> = normalize(vec3<f32>(rippleX * gMask, rippleY * gMask, 1.0));
-  gNormal = mix(gNormal, gNormalRippled, hasGMask);
-  let enc: vec2<f32> = octaEncodeGN(normalize(gNormal));
+  // GBuffer now receives the exact resolved surface instead of reconstructing
+  // a flat floor and a second, divergent puddle mask after shading.
+  let enc: vec2<f32> = octaEncodeGN(normalize(resolvedNormal));
   let depthNorm: f32 = clamp(perpDist / max(0.001, u_ssrDepthRange), 0.0, 1.0);
-  out.gbuffer = vec4<f32>(enc.x, enc.y, depthNorm, clamp(gMask, 0.0, 1.0));
+  out.gbuffer = vec4<f32>(enc.x, enc.y, depthNorm, clamp(resolvedReflection, 0.0, 1.0));
   return out;
 }
 `;
@@ -918,7 +907,7 @@ struct SSRResult_Full {
   hitUV: vec2<f32>,
 };
 
-fn traceScreenSpaceRaySSR_Full(startUV: vec2<f32>, N: vec3<f32>, V: vec3<f32>, linearDepth: f32, puddleMask: f32, roughness: f32, resolution: vec2<f32>, steps: i32, binarySteps: i32, maxDistance: f32, thickness: f32, stride: f32, jitter: f32, depthBias: f32, zThicknessScale: f32, camPos: vec2<f32>, eyeZ: f32, playerAngle: f32, planeLen: f32, bobPixels: f32) -> SSRResult_Full {
+fn traceScreenSpaceRaySSR_Full(startUV: vec2<f32>, N: vec3<f32>, V: vec3<f32>, linearDepth: f32, startHeight: f32, puddleMask: f32, roughness: f32, resolution: vec2<f32>, steps: i32, binarySteps: i32, maxDistance: f32, thickness: f32, stride: f32, jitter: f32, depthBias: f32, zThicknessScale: f32, camPos: vec2<f32>, eyeZ: f32, playerAngle: f32, planeLen: f32, bobPixels: f32) -> SSRResult_Full {
   var res: SSRResult_Full;
   res.color = vec3<f32>(0.0, 0.0, 0.0);
   res.hit = 0.0; res.fade = 0.0; res.rayLength = 0.0; res.hitUV = startUV;
@@ -932,7 +921,7 @@ fn traceScreenSpaceRaySSR_Full(startUV: vec2<f32>, N: vec3<f32>, V: vec3<f32>, l
   let rayDir0: vec2<f32> = vec2<f32>(cos(playerAngle), sin(playerAngle));
   let plane0: vec2<f32> = vec2<f32>(-rayDir0.y, rayDir0.x) * planeLen;
   let ray0: vec2<f32> = rayDir0 + plane0 * cameraX0;
-  let worldPos: vec3<f32> = vec3<f32>(camPos + ray0 * linearDepth, 0.0);
+  let worldPos: vec3<f32> = vec3<f32>(camPos + ray0 * linearDepth, startHeight);
 
   var noise: f32 = 0.0;
   if (effectiveJitter > 0.001) {
@@ -961,9 +950,15 @@ fn traceScreenSpaceRaySSR_Full(startUV: vec2<f32>, N: vec3<f32>, V: vec3<f32>, l
     let sampledLin: f32 = sampledDepthNorm * frame.ssrDepthRange;
     let depthDiff: f32 = fwDist - sampledLin;
     let curThickness: f32 = thickness + tRay * zThicknessScale * 0.08;
-    if (abs(depthDiff) < curThickness) {
+    // A hit is a front-to-back depth crossing. Thickness only limits how far
+    // a march step may overshoot; accepting the whole +/- slab made adjacent
+    // water rows snap to unrelated wall UVs while still producing a solid mask.
+    if (depthDiff >= 0.0 && depthDiff < curThickness) {
       res.hit = 1.0; res.hitUV = uv; res.color = textureSampleLevel(sceneTex, nearestSampler, uvFlip, 0.0).rgb; res.rayLength = tRay;
-      var lowT: f32 = tRay - tStep; var highT: f32 = tRay;
+      // tStep has already been multiplied by stride since the previous sample.
+      // Recover the actual previous ray position instead of over-extending the
+      // binary-search bracket into unrelated screen geometry.
+      var lowT: f32 = max(0.0, tRay - tStep / max(stride, 0.0001)); var highT: f32 = tRay;
       for (var b: i32 = 0; b < 8; b++) {
         if (b >= binarySteps) { break; }
         let midT: f32 = mix(lowT, highT, 0.5);
@@ -977,7 +972,7 @@ fn traceScreenSpaceRaySSR_Full(startUV: vec2<f32>, N: vec3<f32>, V: vec3<f32>, l
         if (midN.z > 0.60) { lowT = midT; continue; }
         let midLin: f32 = midDepthNorm * frame.ssrDepthRange;
         let midDiff: f32 = midProj.z - midLin;
-        if (abs(midDiff) < curThickness) { highT = midT; } else { lowT = midT; }
+        if (midDiff >= 0.0) { highT = midT; } else { lowT = midT; }
       }
       let finalW: vec3<f32> = worldPos + R * highT;
       let finalProj: vec3<f32> = worldToScreenUVSSR_Full(finalW, camPos, eyeZ, playerAngle, planeLen, resolution, bobPixels);
@@ -1064,8 +1059,13 @@ fn fs_main(@location(0) v_uv: vec2<f32>) -> SSRFSOut {
   let plane: vec2<f32> = vec2<f32>(-rayDir.y, rayDir.x) * planeLen;
   let ray: vec2<f32> = rayDir + plane * cameraX;
   let linearDepth: f32 = depthNorm * frame.ssrDepthRange;
-  let worldPos: vec3<f32> = vec3<f32>(frame.playerPos + ray * linearDepth, 0.0);
-  let eyePos: vec3<f32> = vec3<f32>(frame.playerPos, 0.5);
+  // Reconstruct the actual source height from the same projection used by the
+  // raymarch pass. Reflective structural water is recessed and cannot assume z=0.
+  let sourceVNorm: f32 = fragCoord.y / resolution.y + frame.bobPixels / max(1.0, resolution.y);
+  let projectionScale: f32 = resolution.x / resolution.y * 0.5 / max(tan(frame.fov * 0.5), 0.0001);
+  let sourceHeight: f32 = frame.playerHeight - linearDepth * (sourceVNorm - 0.5) / projectionScale;
+  let worldPos: vec3<f32> = vec3<f32>(frame.playerPos + ray * linearDepth, sourceHeight);
+  let eyePos: vec3<f32> = vec3<f32>(frame.playerPos, frame.playerHeight);
   let V: vec3<f32> = normalize(eyePos - worldPos);
   let NdotV: f32 = clamp(dot(N, V), 0.0, 1.0);
   if (NdotV < (1.0 - maxGrazingAngle)) { out.color = vec4<f32>(0.0); return out; }
@@ -1080,7 +1080,10 @@ fn fs_main(@location(0) v_uv: vec2<f32>) -> SSRFSOut {
   let depthBias: f32 = frame.ssrDepthBias;
   let zThicknessScale: f32 = frame.ssrZThicknessScale;
 
-  let r: SSRResult_Full = traceScreenSpaceRaySSR_Full(v_uv, N, V, linearDepth, puddleMask, 0.04, resolution, steps, binarySteps, maxDistance, thickness, stride, jitter, depthBias, zThicknessScale, frame.playerPos, 0.5, frame.playerAngle, planeLen, frame.bobPixels);
+  // Preserve the established cosmetic-puddle SSR response. Structural water
+  // owns its PBR roughness in the surface pass; this controls SSR ray jitter.
+  let reflectionRoughness: f32 = 0.04;
+  let r: SSRResult_Full = traceScreenSpaceRaySSR_Full(v_uv, N, V, linearDepth, sourceHeight, puddleMask, reflectionRoughness, resolution, steps, binarySteps, maxDistance, thickness, stride, jitter, depthBias, zThicknessScale, frame.playerPos, frame.playerHeight, frame.playerAngle, planeLen, frame.bobPixels);
 
   let edgeFadeStart: f32 = frame.ssrEdgeFadeStart; let edgeFadeEnd: f32 = frame.ssrEdgeFadeEnd;
   let distFadeStart: f32 = frame.ssrDistanceFadeStart; let distFadeEnd: f32 = frame.ssrDistanceFadeEnd;
@@ -1345,7 +1348,7 @@ export const fsSpriteWgsl = `
 @group(1) @binding(0) var albedoTex: texture_2d<f32>;
 @group(1) @binding(1) var normalTex: texture_2d<f32>;
 @group(1) @binding(2) var ormTex: texture_2d<f32>;
-@group(2) @binding(0) var linearSampler: sampler;
+@group(2) @binding(0) var materialSampler: sampler;
 @group(2) @binding(1) var nearestSampler: sampler;
 struct CameraUniforms {
   resolution: vec2<f32>,
@@ -1383,10 +1386,10 @@ fn fs_main(
   @location(7) v_rimStrength: f32,
   @location(8) v_dist: f32
 ) -> @location(0) vec4<f32> {
-  let albedoS: vec4<f32> = textureSample(albedoTex, linearSampler, v_uv);
+  let albedoS: vec4<f32> = textureSample(albedoTex, materialSampler, v_uv);
   if (albedoS.a < 0.08) { discard; }
   var albedo: vec3<f32> = albedoS.rgb;
-  var normalEnc: vec3<f32> = textureSample(normalTex, linearSampler, v_uv).rgb;
+  var normalEnc: vec3<f32> = textureSample(normalTex, materialSampler, v_uv).rgb;
   var normalTS: vec3<f32> = decodeNormal(normalEnc);
   normalTS = vec3<f32>(normalTS.xy * v_normalStrength, normalTS.z);
   normalTS = normalize(normalTS);
@@ -1394,7 +1397,7 @@ fn fs_main(
   let bitangent: vec3<f32> = vec3<f32>(0.0,0.0,1.0);
   let geomN: vec3<f32> = normalize(-v_cameraForward + vec3<f32>(0.0,0.0,0.4));
   let N: vec3<f32> = normalize(tangent * normalTS.x + bitangent * normalTS.y + geomN * normalTS.z);
-  let orm: vec3<f32> = textureSample(ormTex, linearSampler, v_uv).rgb;
+  let orm: vec3<f32> = textureSample(ormTex, materialSampler, v_uv).rgb;
   let ao: f32 = orm.r;
   var roughness: f32 = clamp(orm.g, 0.04, 1.0);
   let metal: f32 = clamp(orm.b, 0.0, 1.0);
@@ -1587,6 +1590,25 @@ function makeDebugFS(mode) {
       dbgCol = debugFinalPuddleMask(dbgWPos, 0.5, 1.0);
     } else if (${mode} == 7) {
       dbgCol = debugDamagedNoiseMask(dbgWPos);
+    } else if (${mode} == 8) {
+      // Structural feature isolate: ordinary surfaces nearly black, channel
+      // banks/water cyan-violet, and wall fixtures amber.
+      let isFloorPixel: bool = dbgIsFloor > 0.5 && vN > 0.5;
+      let isWallPixel: bool = dbgIsFloor < 0.5;
+      let featureCell: vec2<i32> = select(hitCell, vec2<i32>(floor(dbgWPos.xy)), isFloorPixel);
+      let featureWord: u32 = loadFeatureCell(featureCell);
+      let kind: u32 = featureKind(featureWord);
+      let grilleFaceVisible: bool = isFeatureWallFace(featureWord, FEATURE_GRILLE, side, stepDir);
+      dbgCol = finalColor * 0.06;
+      if (isFloorPixel && kind == FEATURE_CHANNEL) {
+        let geom: FloorFeatureGeometry = resolveFeatureFloor(dbgWPos.xy, 0.0);
+        let checker: f32 = step(0.5, fract((dbgWPos.x + dbgWPos.y) * 4.0));
+        let bankColor: vec3<f32> = mix(vec3<f32>(0.85, 0.05, 1.0), vec3<f32>(0.3, 0.0, 0.65), geom.bankT);
+        let waterColor: vec3<f32> = mix(vec3<f32>(0.0, 0.75, 1.0), vec3<f32>(0.0, 1.0, 0.65), checker);
+        dbgCol = mix(bankColor, waterColor, geom.liquidMask);
+      } else if (isWallPixel && kind == FEATURE_GRILLE && grilleFaceVisible) {
+        dbgCol = vec3<f32>(1.0, 0.45, 0.02);
+      }
     } else {
       dbgCol = finalColor;
     }
@@ -1603,6 +1625,7 @@ export const fsDebugMossCombinedWgsl = makeDebugFS(4);
 export const fsDebugPuddleWgsl = makeDebugFS(5);
 export const fsDebugDamagedWgsl = makeDebugFS(6);
 export const fsDebugDamagedNoiseWgsl = makeDebugFS(7);
+export const fsDebugStructuralWgsl = makeDebugFS(8);
 export const fsDebugMossWgsl = fsDebugMossCombinedWgsl;
 
 // Compatibility exports matching old shaders.js names (non-WGSL suffix)

@@ -31,6 +31,8 @@ export const CONFIG_PATHS = {
   // geometry
   'chamfer':        ['config/geometry/chamfer', 'config/chamfer', 'config/main'],
   'corners':        ['config/geometry/corners', 'config/corners', 'config/main'],
+  'structural-features': ['config/geometry/structural-features', 'config/structural-features', 'config/main'],
+  'liquids':        ['config/rendering/liquids', 'config/liquids', 'config/main'],
   // gameplay
   'generator':      ['config/gameplay/generator', 'config/generator', 'config/main'],
   'player':         ['config/gameplay/player', 'config/player', 'config/main'],
@@ -164,6 +166,8 @@ export async function getLightTypesConfig(){ return _fetchConfig('light-types');
 export async function getParticlesConfig(){ return _fetchConfig('particles'); }
 export async function getMaterialModifiersConfig(){ return _fetchConfig('material-modifiers'); }
 export async function getSSRConfig(){ return _fetchConfig('ssr'); }
+export async function getStructuralFeaturesConfig(){ return _fetchConfig('structural-features'); }
+export async function getLiquidsConfig(){ return _fetchConfig('liquids'); }
 export async function getMaterialAssignmentsConfig(){ return _fetchConfig('material-assignments'); }
 export async function saveMaterialAssignmentsConfig(cfg){ return _saveConfig('material-assignments', cfg); }
 export async function saveSpritesConfig(cfg){ return _saveConfig('sprites', cfg); }
@@ -184,7 +188,7 @@ export async function saveFogConfig(cfg){
 
 // Batch load all rendering configs at once for Game init
 export async function getAllRenderConfigs(){
-  const names = ['rendering','palette','pom','pbr','ao','lighting','shadows','chamfer','corners','raymarch','fog','generator','map','materials-proc','material-assignments','material-modifiers','ssr','player','debug','discovery','sprites','light-types','particles'];
+  const names = ['rendering','palette','pom','pbr','ao','lighting','shadows','chamfer','corners','structural-features','raymarch','fog','generator','map','materials-proc','material-assignments','material-modifiers','liquids','ssr','player','debug','discovery','sprites','light-types','particles'];
   console.log('[config] getAllRenderConfigs start', names.length, 'configs');
   const promises = names.map(async (n) => {
     try{

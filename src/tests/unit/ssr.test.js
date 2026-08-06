@@ -1,6 +1,24 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import { octaEncode, octaDecode, reflectVec, normalize, worldToScreenUV, computeFresnel, validatePuddleReflection } from '../../render/ssr-math.js';
+import { fsSSRwgsl } from '../../render/shaders-wgsl.js';
+
+it('SSR preserves the established cosmetic puddle ray roughness', () => {
+  assert.match(fsSSRwgsl, /let reflectionRoughness: f32 = 0\.04/);
+  assert.doesNotMatch(fsSSRwgsl, /featureUniforms\.waterShallow\.w/);
+});
+
+it('SSR reconstructs recessed reflective surface height before tracing', () => {
+  assert.match(fsSSRwgsl, /let sourceHeight: f32/);
+  assert.match(fsSSRwgsl, /linearDepth, sourceHeight, puddleMask/);
+  assert.doesNotMatch(fsSSRwgsl, /ray0 \* linearDepth, 0\.0/);
+});
+
+it('SSR refines a signed depth crossing instead of selecting anywhere in a thick slab', () => {
+  assert.match(fsSSRwgsl, /depthDiff >= 0\.0 && depthDiff < curThickness/);
+  assert.match(fsSSRwgsl, /if \(midDiff >= 0\.0\) \{ highT = midT; \}/);
+  assert.doesNotMatch(fsSSRwgsl, /abs\(depthDiff\) < curThickness/);
+});
 
 describe('SSR Math — octa encoding roundtrip', () => {
   const vectors = [

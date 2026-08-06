@@ -20,6 +20,8 @@
  * No hardcoded constants besides fallbacks.
  */
 
+import { sampleWalkSurface } from '../world/structural-features.js';
+
 export class Player {
   constructor(x, y, angle = 0) {
     // Continuous pose
@@ -55,6 +57,8 @@ export class Player {
     this.mouseSensitivity = 0.0022;
     this.radius = 0.28;
     this.height = 0.5;
+    this.groundHeight = 0;
+    this._groundHeightReady = false;
     this.gridMoveSpeed = 5.0;
     this.gridTurnSpeed = 6.5;
     this.gridHoldInitialDelay = 0.18;
@@ -128,6 +132,7 @@ export class Player {
     this.moveLerp = 1; this.turnLerp = 1;
     this.bobPhase = 0; this.bobAmount = 0;
     this._forward = 0; this._strafe = 0; this._turn = 0; this._mouseDX = 0;
+    this._groundHeightReady = false;
     this.updateFacingFromAngle();
   }
   // Alias for prototype compat
@@ -363,6 +368,7 @@ export class Player {
       } else {
         this.viewBobOffset = 0; this.viewBobOffsetX = 0; this.viewBobRoll = 0;
       }
+      this._updateGroundHeight(dt, map);
       return;
     }
 
@@ -410,6 +416,19 @@ export class Player {
     } else {
       this.viewBobOffset = 0; this.viewBobOffsetX = 0; this.viewBobRoll = 0;
     }
+    this._updateGroundHeight(dt, map);
+  }
+
+  _updateGroundHeight(dt, map) {
+    const sample = sampleWalkSurface(map, this.x, this.y);
+    const target = Number.isFinite(sample.height) ? sample.height : 0;
+    if (!this._groundHeightReady) {
+      this.groundHeight = target;
+      this._groundHeightReady = true;
+      return;
+    }
+    const blend = 1 - Math.exp(-Math.max(0, dt) * 12);
+    this.groundHeight += (target - this.groundHeight) * blend;
   }
 
   getPosition() {
@@ -417,7 +436,7 @@ export class Player {
     const h = pc.height ?? this.height ?? 0.5;
     // Base height only — vertical bob now handled via u_bobPixels uniform in renderer-gpu.js
     // to avoid double application. Use getViewBobState() for explicit offsets.
-    return { x: this.x, y: this.y, z: h };
+    return { x: this.x, y: this.y, z: h + this.groundHeight };
   }
 
   getAngle() { return this.angle; }
@@ -448,7 +467,7 @@ export class Player {
     return {
       x: this.x,
       y: this.y,
-      z: h + lh,
+      z: this.groundHeight + h + lh,
       color: col,
       intensity: enabled ? intensity : 0,
       radius,

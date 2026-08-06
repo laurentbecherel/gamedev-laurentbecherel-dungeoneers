@@ -4,6 +4,7 @@ import { hash2i, pickWeighted, zoneForDepth, globalDepthForLevel, getTheme } fro
 import { GRID_FLOOR, BOUNDARY_WALL_ID, STAIRS_MATERIAL_ID, DECO_COLUMN, DECO_MOSS, DECO_VINES, DECO_ARCH, DECO_BROKEN, DECO_PUDDLE, DECO_ROOTS, DECO_BEAM } from "./atlas.js";
 import { generateDungeonItems } from "../items.js";
 import { generateModifierMap } from "../modifiers.js";
+import { generateStructuralFeatures } from "../structural-features.js";
 
 function makeRng(seed) { let s = seed >>> 0 || 1; return () => { s = Math.imul(s, 1664525) + 1013904223 >>> 0; return s / 0x100000000; }; }
 
@@ -397,8 +398,10 @@ export async function generateDungeon(config, seedOverride = null) {
     for(let dy=0; dy<r.h; dy++) for(let dx=0; dx<r.w; dx++){
       const x=r.x+dx, y=r.y+dy, i=idx(x,y);
       grid[i]=GRID_FLOOR; floorMat[i]=r.floorMat; ceilMat[i]=r.ceilMat; floorToRoom[i]=ri;
-      const j = (hash2i(x,y,seed)-0.5)*0.06;
-      floorHeight[i]=r.floorBase + j;
+      // Engine invariant: the unmodified floor plane is exactly z=0.
+      // Surface variation belongs to materials/POM/chamfer; structural
+      // features provide explicit local geometry when needed.
+      floorHeight[i]=0;
       ceilHeight[i]=r.ceilBase + (hash2i(x+500,y+500,seed)-0.5)*0.08;
     }
   });
@@ -530,8 +533,13 @@ export async function generateDungeon(config, seedOverride = null) {
   // --- Stage 8: refine corridor heights ---
   for(let y=1;y<h-1;y++) for(let x=1;x<w-1;x++){ const i=idx(x,y); if(grid[i]===GRID_FLOOR && floorToRoom[i]===-2){ floorHeight[i]*=0.2; } }
 
+  // Structural features are compiled after walls exist but before deco/items so
+  // endpoint fixtures can validate real wall cells and channel cells can reserve props.
+  const structural = generateStructuralFeatures({ w, h, grid, floorHeight, ceilHeight, floorMat, ceilMat, rooms, seed }, config);
+
   // --- Stage 9: Deco ---
   for(let y=0;y<h;y++) for(let x=0;x<w;x++){ const i=idx(x,y); let d=0;
+    if(structural.cells[i] !== 0){ deco[i]=0; continue; }
     if(grid[i]!==GRID_FLOOR){ const hv=hash2i(x,y,seed+10); if(hv<0.08) d|=DECO_COLUMN; else if(hv<0.15) d|=DECO_MOSS; else if(hv<0.18) d|=DECO_VINES; else if(hv<0.22) d|=DECO_ARCH; }
     else { const hv=hash2i(x+1000,y+1000,seed+20); if(hv<0.05) d|=DECO_BROKEN; else if(hv<0.08) d|=DECO_PUDDLE; else if(hv<0.11) d|=DECO_ROOTS; else if(hv<0.14) d|=DECO_BEAM; }
     deco[i]=d;
@@ -543,7 +551,8 @@ export async function generateDungeon(config, seedOverride = null) {
   for(let dy=-flattenRadius; dy<=flattenRadius; dy++) for(let dx=-flattenRadius; dx<=flattenRadius; dx++){
     const x=Math.floor(startX)+dx, y=Math.floor(startY)+dy; if(x<0||y<0||x>=w||y>=h)continue; const i=idx(x,y); if(grid[i]===GRID_FLOOR) floorHeight[i]=0;
   }
-  const dungeon = {w,h,grid,floorHeight,ceilHeight,deco,floorMat,ceilMat,startX,startY,seed,rooms,items:[],lights:[],sprites:[],meta:{},modifierMap:null};
+  const dungeon = {w,h,grid,floorHeight,ceilHeight,deco,floorMat,ceilMat,startX,startY,seed,rooms,items:[],lights:[],sprites:[],meta:{},modifierMap:null,
+    features:structural.features, featureCells:structural.cells, featureProfiles:structural.profiles};
   const genItemsCfg = {
     ...config,
     ...(config.generator||{}),

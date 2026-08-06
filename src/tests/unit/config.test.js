@@ -19,6 +19,8 @@ const EXPECTED_FILES = [
   "lighting/fog.json",
   "geometry/chamfer.json",
   "geometry/corners.json",
+  "geometry/structural-features.json",
+  "rendering/liquids.json",
   "gameplay/generator.json",
   "gameplay/player.json",
   "ui/map.json",

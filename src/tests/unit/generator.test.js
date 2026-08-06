@@ -106,6 +106,13 @@ test("generateDungeon connectivity: all floors reachable from start", async () =
   assert(vis.has(idx(Math.floor(exit.cx), Math.floor(exit.cy))), "exit reachable from entrance via main path");
 });
 
+test("unmodified floor macro-geometry is exactly z=0", async () => {
+  const dungeon = await generateDungeon(baseConfig, 42);
+  for (let i = 0; i < dungeon.grid.length; i++) {
+    if (dungeon.grid[i] === 0) assert.equal(dungeon.floorHeight[i], 0, `floor cell ${i}`);
+  }
+});
+
 test("generateDungeon role assignment has entrance stairs guardians treasure", async () => {
   const cfg = {...baseConfig, generator:{...baseConfig.generator, roomTarget:32, roomAttempts:160}};
   const d = await generateDungeon(cfg, 777);

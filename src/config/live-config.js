@@ -29,12 +29,14 @@ const TIER_MAP = {
   'particles': 'T1',
   'material-modifiers': 'T1',
   'ssr': 'T1',
+  'liquids': 'T1',
   'main': 'T1',
   // T2 array rebuild
   'materials-proc': 'T2',
   // T3 regen-required (map structure + per-cell mat IDs)
   'generator': 'T3',
-  'material-assignments': 'T3'
+  'material-assignments': 'T3',
+  'structural-features': 'T3'
 };
 
 const PATH_TIER_OVERRIDES = {
@@ -58,6 +60,8 @@ const PATH_TIER_OVERRIDES = {
   'config/lighting/light-types': 'T1',
   'config/geometry/chamfer': 'T1',
   'config/geometry/corners': 'T1',
+  'config/geometry/structural-features': 'T3',
+  'config/rendering/liquids': 'T1',
   'config/rendering/material-modifiers': 'T1',
   'config/material-modifiers': 'T1',
   'config/rendering/ssr': 'T1',

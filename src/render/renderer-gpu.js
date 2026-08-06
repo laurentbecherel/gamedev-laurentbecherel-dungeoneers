@@ -32,7 +32,8 @@ import {
   fsDebugMossCombinedWgsl,
   fsDebugPuddleWgsl,
   fsDebugDamagedWgsl,
-  fsDebugDamagedNoiseWgsl
+  fsDebugDamagedNoiseWgsl,
+  fsDebugStructuralWgsl
 } from './shaders-wgsl.js';
 
 import { generateMaterialArrayData } from '../world/materials.js';
@@ -58,6 +59,11 @@ export function isWebGL2Supported() {
 }
 
 function alignUp(v, a) { return Math.ceil(v / a) * a; }
+const FEATURE_UNIFORM_BYTES = 176;
+
+function normalizeTextureFilter(value) {
+  return String(value ?? 'nearest').toLowerCase() === 'linear' ? 'linear' : 'nearest';
+}
 
 // FrameUniforms offsets computed earlier (WGSL std layout)
 const FRAME_OFFSETS = {
@@ -547,6 +553,44 @@ function packModifiersBlock(buffer, cfg, dungeon) {
   }
 }
 
+function packFeatureUniforms(buffer, cfg, materialLayers = {}) {
+  const f = new Float32Array(buffer);
+  const sf = cfg?.structuralFeatures || cfg?.['structural-features'] || {};
+  const channel = sf.profiles?.stone_channel || sf.profiles?.channel || {};
+  const fixture = sf.fixtures?.round_sewer_grille || {};
+  const water = cfg?.liquids?.liquids?.water || {};
+  const appearance = water.appearance || {};
+  const ripples = water.ripples || {};
+  const rayIntersection = sf.rayIntersection || {};
+  const normColor = (v, fallback) => {
+    const a = Array.isArray(v) ? v : fallback;
+    return a.map(n => n > 1 ? n / 255 : n);
+  };
+  const shallow = normColor(water.shallowColor, [42,65,72]);
+  const deep = normColor(water.deepColor, [12,25,32]);
+  // vec4 0: channel macro profile
+  f.set([channel.width ?? 0.75, channel.depth ?? 0.11, channel.bankWidth ?? 0.16, channel.waterDepth ?? 0.07], 0);
+  // vec4 1/2: water colors + rough/reflection
+  f.set([shallow[0], shallow[1], shallow[2], water.roughness ?? 0.10], 4);
+  f.set([deep[0], deep[1], deep[2], water.reflectionWeight ?? 0.90], 8);
+  // vec4 3: retro motion
+  f.set([water.normalAmplitude ?? 0.07, water.rippleScale ?? 3.0, water.flowSpeed ?? 0.08, water.animationHz ?? 12], 12);
+  // vec4 4: 1-based material IDs + bank cut sharpness
+  f.set([materialLayers.grille ?? 1, materialLayers.lining ?? 1, channel.bankSharpness ?? 1.4, 0], 16);
+  // vec4 5: enabled + lining strength + edge darkening + fixture POM
+  f.set([sf.enabled === false ? 0 : 1, channel.liningStrength ?? 0.70, water.edgeDarkening ?? 0.35, fixture.pomStrength ?? 0.09], 20);
+  // vec4 6: water/lining composition
+  f.set([appearance.edgeBlendDepth ?? 0.08, appearance.submergedLiningBrightness ?? 0.48, appearance.surfaceOpacity ?? 0.78, appearance.minimumRoughness ?? 0.03], 24);
+  // vec4 7: water color variation
+  f.set([appearance.colorVariationScale ?? 5.0, appearance.colorVariationSpeed ?? 0.8, appearance.shallowMix ?? 0.32, appearance.shallowVariation ?? 0.18], 28);
+  // vec4 8: two-wave ripple shape
+  f.set([ripples.primaryAcrossFrequency ?? 0.73, ripples.secondaryAlongFrequency ?? 0.61, ripples.secondaryAcrossFrequency ?? 1.17, ripples.secondaryPhase ?? 1.7], 32);
+  // vec4 9: recessed height-field intersection quality
+  f.set([rayIntersection.scanSteps ?? 12, rayIntersection.binarySteps ?? 6, rayIntersection.tracePadding ?? 0.01, rayIntersection.surfaceEpsilon ?? 0.0001], 36);
+  // vec4 10: water reflection/refraction optics
+  f.set([appearance.reflectionNormalStrength ?? 0.18, 0, 0, 0], 40);
+}
+
 export class GPURenderer {
   constructor(canvasEl) {
     this.canvas = canvasEl;
@@ -565,6 +609,7 @@ export class GPURenderer {
     this.bindGroups = {};
     // Config cache
     this._cfgCache = null;
+    this.textureFilter = 'nearest';
     // Legacy compatible fields
     this.atlases = {};
     this.materialInfo = null;
@@ -580,6 +625,7 @@ export class GPURenderer {
     this.matMapTex = null;
     this.modifierTex = null;
     this.modifierTex2 = null;
+    this.featureMaterialLayers = { grille: 1, lining: 1 };
     this.noiseTex = null;
     this.mapUITex = null;
     // toggles
@@ -685,6 +731,7 @@ export class GPURenderer {
       magFilter: 'nearest', minFilter: 'nearest', addressModeU: 'repeat', addressModeV: 'repeat', addressModeW: 'repeat',
       label: 'repeatNearest'
     });
+    this.textureFilter = normalizeTextureFilter(config?.rendering?.textureFilter ?? config?.renderer?.textureFilter);
 
     // Feature detection always true for array textures in WebGPU
     this.useArrayPath = true;
@@ -699,6 +746,15 @@ export class GPURenderer {
     if (wallMats.length === 0) wallMats.push({ id:1, base:[138,58,44], roughness:0.85, metal:0, variationSeed:101 });
     if (floorMats.length === 0) floorMats.push({ id:1, base:[90,88,80], roughness:0.88, metal:0, variationSeed:201 });
     if (ceilMats.length === 0) ceilMats.push({ id:1, base:[80,78,70], roughness:0.9, metal:0, variationSeed:301 });
+    const structuralCfg = config?.structuralFeatures || config?.['structural-features'] || {};
+    const channelCfg = structuralCfg.profiles?.stone_channel || structuralCfg.profiles?.channel || {};
+    const grilleCfg = structuralCfg.fixtures?.round_sewer_grille || {};
+    const grilleMaterialName = grilleCfg.material || 'round_sewer_grille';
+    const liningMaterialName = channelCfg.liningMaterial || 'sewer_lining';
+    this.featureMaterialLayers = {
+      grille: Math.max(1, wallMats.findIndex(m => m.name === grilleMaterialName) + 1),
+      lining: Math.max(1, floorMats.findIndex(m => m.name === liningMaterialName) + 1),
+    };
 
     const proc = config.materialsProc || config['materials-proc'] || config.materialProc || {};
     const procWalls = proc.walls || {};
@@ -794,7 +850,9 @@ export class GPURenderer {
       for (let x = 0; x < mapW; x++) {
         const i = (y * mapW + x);
         const cell = dungeon.grid[i];
-        let fh = dungeon.floorH ? dungeon.floorH[i] : (dungeon.floorHeight ? dungeon.floorHeight[i] : 0.0);
+        // Base floor macro-geometry is always z=0. Structural geometry is
+        // uploaded separately through featureCells/featureUniforms.
+        let fh = 0.0;
         let g = Math.floor((fh + 0.5) * 255); if (g < 0) g = 0; if (g > 255) g = 255;
         let ch = dungeon.ceilH ? dungeon.ceilH[i] : (dungeon.ceilHeight ? dungeon.ceilHeight[i] : 1.0);
         let b = Math.floor((ch - 0.7) * 255); if (b < 0) b = 0; if (b > 255) b = 255;
@@ -882,7 +940,9 @@ export class GPURenderer {
     // Render targets
     const cw = this.canvas.width || 640, ch = this.canvas.height || 360;
     this.sceneTex = device.createTexture({ size:{ width:cw,height:ch }, format:'rgba8unorm', usage: GPUTextureUsage.RENDER_ATTACHMENT|GPUTextureUsage.TEXTURE_BINDING, label:'sceneTex' });
-    this.gNormalDepthTex = device.createTexture({ size:{ width:cw,height:ch }, format:'rgba8unorm', usage: GPUTextureUsage.RENDER_ATTACHMENT|GPUTextureUsage.TEXTURE_BINDING, label:'gNormal' });
+    // SSR needs more than 8-bit depth/normal precision: at the configured
+    // 25-unit range rgba8 quantized depth in ~10 cm jumps, visibly tearing UVs.
+    this.gNormalDepthTex = device.createTexture({ size:{ width:cw,height:ch }, format:'rgba16float', usage: GPUTextureUsage.RENDER_ATTACHMENT|GPUTextureUsage.TEXTURE_BINDING, label:'gNormalDepth16F' });
     this.ssrTex = device.createTexture({ size:{ width:cw,height:ch }, format:'rgba8unorm', usage: GPUTextureUsage.RENDER_ATTACHMENT|GPUTextureUsage.TEXTURE_BINDING, label:'ssrTex' });
     this.compositeTex = device.createTexture({ size:{ width:cw,height:ch }, format:'rgba8unorm', usage: GPUTextureUsage.RENDER_ATTACHMENT|GPUTextureUsage.TEXTURE_BINDING, label:'compositeTex' });
 
@@ -906,6 +966,10 @@ export class GPURenderer {
     this.buffers.frameUniform = device.createBuffer({ size: FRAME_UNIFORM_SIZE, usage: GPUBufferUsage.UNIFORM|GPUBufferUsage.COPY_DST, label:'frameUniforms' });
     this.buffers.lightingUniform = device.createBuffer({ size: 800, usage: GPUBufferUsage.UNIFORM|GPUBufferUsage.COPY_DST, label:'lightingUniforms' });
     this.buffers.modifiersUniform = device.createBuffer({ size: 544, usage: GPUBufferUsage.UNIFORM|GPUBufferUsage.COPY_DST, label:'modifiers' });
+    this.buffers.featureUniform = device.createBuffer({ size: FEATURE_UNIFORM_BYTES, usage: GPUBufferUsage.UNIFORM|GPUBufferUsage.COPY_DST, label:'featureUniforms' });
+    const featureCells = dungeon.featureCells instanceof Uint32Array ? dungeon.featureCells : new Uint32Array(Math.max(1, dungeon.w*dungeon.h));
+    this.buffers.featureCells = device.createBuffer({ size: Math.max(4, featureCells.byteLength), usage: GPUBufferUsage.STORAGE|GPUBufferUsage.COPY_DST, label:'featureCells' });
+    device.queue.writeBuffer(this.buffers.featureCells, 0, featureCells);
     this.buffers.frameData = device.createBuffer({ size: 512, usage: GPUBufferUsage.UNIFORM|GPUBufferUsage.COPY_DST, label:'frameData' });
     this.buffers.lightData = device.createBuffer({ size: 640, usage: GPUBufferUsage.UNIFORM|GPUBufferUsage.COPY_DST, label:'lightData' });
     this.buffers.uiUniform = device.createBuffer({ size: 16, usage: GPUBufferUsage.UNIFORM|GPUBufferUsage.COPY_DST, label:'uiUniform' });
@@ -916,9 +980,14 @@ export class GPURenderer {
       packModifiersBlock(tmp, this._cfgCache, dungeon);
       device.queue.writeBuffer(this.buffers.modifiersUniform, 0, tmp);
     }
+    {
+      const tmp = new ArrayBuffer(FEATURE_UNIFORM_BYTES);
+      packFeatureUniforms(tmp, this._cfgCache, this.featureMaterialLayers);
+      device.queue.writeBuffer(this.buffers.featureUniform, 0, tmp);
+    }
 
     // Create Bind Group Layouts
-    // Group0: 5 uniform buffers
+    // Group0: frame/lighting/modifier uniforms plus structural feature data.
     const bgl0 = device.createBindGroupLayout({
       entries: [
         { binding:0, visibility: GPUShaderStage.FRAGMENT|GPUShaderStage.VERTEX, buffer:{ type:'uniform' } },
@@ -926,6 +995,8 @@ export class GPURenderer {
         { binding:2, visibility: GPUShaderStage.FRAGMENT, buffer:{ type:'uniform' } },
         { binding:3, visibility: GPUShaderStage.FRAGMENT|GPUShaderStage.VERTEX, buffer:{ type:'uniform' } },
         { binding:4, visibility: GPUShaderStage.FRAGMENT|GPUShaderStage.VERTEX, buffer:{ type:'uniform' } },
+        { binding:5, visibility: GPUShaderStage.FRAGMENT, buffer:{ type:'read-only-storage' } },
+        { binding:6, visibility: GPUShaderStage.FRAGMENT, buffer:{ type:'uniform' } },
       ],
       label: 'bgl_frame'
     });
@@ -1017,7 +1088,7 @@ export class GPURenderer {
           entryPoint: 'fs_main',
           targets: [
             { format: 'rgba8unorm' }, // scene
-            { format: 'rgba8unorm' }  // gNormalDepth
+            { format: 'rgba16float' } // gNormalDepth
           ]
         },
         primitive: { topology: 'triangle-list' },
@@ -1042,11 +1113,12 @@ export class GPURenderer {
       fsDebugMossCombinedWgsl,
       fsDebugPuddleWgsl,
       fsDebugDamagedWgsl,
-      fsDebugDamagedNoiseWgsl
+      fsDebugDamagedNoiseWgsl,
+      fsDebugStructuralWgsl
     ];
     this.pipelines.debugPBR = [];
     this.pipelines.debugPBR[0] = this.pipelines.raymarch; // 0 alias
-    for (let i = 1; i < 8; i++) this.pipelines.debugPBR[i] = null;
+    for (let i = 1; i < 9; i++) this.pipelines.debugPBR[i] = null;
     console.log('[WebGPU] PBR debug pipelines lazy – init fast path (5 pipelines only)');
 
     // SSR pipeline
@@ -1166,6 +1238,8 @@ export class GPURenderer {
         { binding:2, resource:{ buffer: this.buffers.modifiersUniform } },
         { binding:3, resource:{ buffer: this.buffers.frameUniform } },
         { binding:4, resource:{ buffer: this.buffers.lightingUniform } },
+        { binding:5, resource:{ buffer: this.buffers.featureCells } },
+        { binding:6, resource:{ buffer: this.buffers.featureUniform } },
       ],
       label:'bg_frame'
     });
@@ -1200,6 +1274,14 @@ export class GPURenderer {
         { binding:1, resource: this.samplers.linear },
       ],
       label:'bg_samplers'
+    });
+    this.bindGroups.materialSamplers = device.createBindGroup({
+      layout: bgl2,
+      entries: [
+        { binding:0, resource: this.textureFilter === 'linear' ? this.samplers.linear : this.samplers.repeatNearest },
+        { binding:1, resource: this.samplers.linear },
+      ],
+      label:`bg_material_samplers_${this.textureFilter}`
     });
 
     // SSR bind group
@@ -1277,7 +1359,12 @@ export class GPURenderer {
     try {
       this.spriteRenderer = new SpriteGpuRenderer(device); // expects device not gl
       // Sprite renderer init expects externalShaders? Our webgpu version will have its own init
-      await this.spriteRenderer.init({ vsSpriteSrc: vsSpriteWgsl, fsSpritePBRSrc: fsSpriteWgsl, MAX_LIGHTS: this.maxLights });
+      await this.spriteRenderer.init({
+        vsSpriteSrc: vsSpriteWgsl,
+        fsSpritePBRSrc: fsSpriteWgsl,
+        MAX_LIGHTS: this.maxLights,
+        textureFilter: this.textureFilter,
+      });
       const ids = [...new Set(this._sprites.map(s => s.spriteId || s.type || 'torch_wall'))].filter(Boolean);
       await this.spriteRenderer.ensureSprites(device, ids);
     } catch (e) {
@@ -1465,7 +1552,7 @@ export class GPURenderer {
   setCornerEnabled(v) { this.cornerEnabled = v ? 1 : 0; }
   setModifiersEnabled(v){ this.modifiersEnabled = v ? 1 : 0; }
   setSSREnabled(v){ this.ssrEnabled = v ? 1 : 0; }
-  setPBRDebugMode(v) { this.pbrDebugMode = Math.max(0, Math.min(7, v | 0)); }
+  setPBRDebugMode(v) { this.pbrDebugMode = Math.max(0, Math.min(8, v | 0)); }
   toggleGridDebug(){ this.gridDebug = this.gridDebug ? 0 : 1; return this.gridDebug; }
   toggleLighting(){ this.lightingEnabled = this.lightingEnabled ? 0 : 1; return this.lightingEnabled; }
   togglePBR(){ this.pbrEnabled = this.pbrEnabled ? 0 : 1; return this.pbrEnabled; }
@@ -1477,10 +1564,16 @@ export class GPURenderer {
   toggleSSR(){ this.ssrEnabled = this.ssrEnabled ? 0 : 1; return this.ssrEnabled; }
   // Fix: old WebGL2 had %4 but HUD lists 9 modes (0 OFF + 8 debug). Restore 9 for O to reach all modes.
   cycleSSRDebug(){ this.ssrDebugMode = (this.ssrDebugMode + 1) % 9; return this.ssrDebugMode; }
+  setFeatureDebug(v){
+    this.pbrDebugMode = v ? 8 : 0;
+    try { if (v) this._ensureDebugPipeline(8); } catch {}
+    return this.pbrDebugMode;
+  }
+  toggleFeatureDebug(){ return this.setFeatureDebug(this.pbrDebugMode !== 8); }
   _ensureDebugPipeline(mode) {
     if (!this.device) return null;
     mode = mode | 0;
-    if (mode <= 0 || mode >= 8) return this.pipelines.raymarch;
+    if (mode <= 0 || mode >= 9) return this.pipelines.raymarch;
     if (this.pipelines.debugPBR && this.pipelines.debugPBR[mode]) return this.pipelines.debugPBR[mode];
     const src = this._debugPBRSourceCache && this._debugPBRSourceCache[mode];
     if (!src) return this.pipelines.raymarch;
@@ -1496,7 +1589,7 @@ export class GPURenderer {
           entryPoint: 'fs_main',
           targets: [
             { format: 'rgba8unorm' },
-            { format: 'rgba8unorm' }
+            { format: 'rgba16float' }
           ]
         },
         primitive: { topology: 'triangle-list' },
@@ -1513,7 +1606,7 @@ export class GPURenderer {
   }
 
   cyclePBRDebug() {
-    const next = (this.pbrDebugMode + 1) % 8;
+    const next = (this.pbrDebugMode + 1) % 9;
     this.pbrDebugMode = next;
     // Lazy compile on first use – restores old WebGL2 behavior to keep init fast
     try { if (next !== 0) this._ensureDebugPipeline(next); } catch {}
@@ -1555,7 +1648,7 @@ export class GPURenderer {
     for (let y=0;y<mapH;y++) for (let x=0;x<mapW;x++) {
       const i = y*mapW+x;
       const cell = dungeon.grid[i];
-      let fh = dungeon.floorH ? dungeon.floorH[i] : (dungeon.floorHeight ? dungeon.floorHeight[i] : 0.0);
+      let fh = 0.0;
       let g = Math.floor((fh + 0.5) * 255); if (g < 0) g = 0; if (g > 255) g = 255;
       let ch = dungeon.ceilH ? dungeon.ceilH[i] : (dungeon.ceilHeight ? dungeon.ceilHeight[i] : 1.0);
       let b = Math.floor((ch - 0.7) * 255); if (b < 0) b = 0; if (b > 255) b = 255;
@@ -1577,6 +1670,15 @@ export class GPURenderer {
       if (this.lightManager) this.lightManager.setFromMap(dungeon);
       this._sprites = dungeon.sprites || dungeon.items || [];
       this._lastDungeon = dungeon;
+      const featureCells = dungeon.featureCells instanceof Uint32Array ? dungeon.featureCells : new Uint32Array(mapW*mapH);
+      if (this.buffers.featureCells && featureCells.byteLength <= this.buffers.featureCells.size) {
+        device.queue.writeBuffer(this.buffers.featureCells, 0, featureCells);
+      }
+      if (this.buffers.featureUniform) {
+        const featureTmp = new ArrayBuffer(FEATURE_UNIFORM_BYTES);
+        packFeatureUniforms(featureTmp, this._cfgCache || {}, this.featureMaterialLayers);
+        device.queue.writeBuffer(this.buffers.featureUniform, 0, featureTmp);
+      }
       // modifiers
       const modMap = generateModifierMap(dungeon, this._cfgCache||{});
       if (modMap && modMap.data) {
@@ -1619,7 +1721,20 @@ export class GPURenderer {
     this.device.queue.writeBuffer(this.buffers.uiUniform, 0, uiBuf);
   }
 
-  updateConfig(partial){ if(!partial) return; if(!this._cfgCache) this._cfgCache={}; Object.assign(this._cfgCache, partial); }
+  _uploadFeatureUniforms(){
+    try {
+      if (!this.device || !this.buffers.featureUniform) return;
+      const tmp = new ArrayBuffer(FEATURE_UNIFORM_BYTES);
+      packFeatureUniforms(tmp, this._cfgCache || {}, this.featureMaterialLayers);
+      this.device.queue.writeBuffer(this.buffers.featureUniform, 0, tmp);
+    } catch (e) { console.warn('[updateConfig] structural feature UBO write failed', e); }
+  }
+  updateConfig(partial){
+    if(!partial) return;
+    if(!this._cfgCache) this._cfgCache={};
+    Object.assign(this._cfgCache, partial);
+    this._uploadFeatureUniforms();
+  }
   updateFog(fogCfg){ if(!fogCfg) return; if(!this._cfgCache) this._cfgCache={}; this._cfgCache.fog=fogCfg; this.fogEnabled = (fogCfg.enabled!==false)?1:0; }
   updateChamfer(c){ if(!c) return; if(!this._cfgCache) this._cfgCache={}; this._cfgCache.chamfer=c; this.chamferEnabled = (c.enabled!==false)?1:0; }
   updateCorners(c){ if(!c) return; if(!this._cfgCache) this._cfgCache={}; this._cfgCache.corners=c; this.cornerEnabled = (c.enabled!==false)?1:0; }
@@ -1627,7 +1742,28 @@ export class GPURenderer {
   updatePBR(p){ if(!p) return; if(!this._cfgCache) this._cfgCache={}; this._cfgCache.pbr=p; }
   updateAO(a){ if(!a) return; if(!this._cfgCache) this._cfgCache={}; this._cfgCache.ao=a; }
   updateRaymarch(r){ if(!r) return; if(!this._cfgCache) this._cfgCache={}; this._cfgCache.raymarch=r; }
-  updateRendering(r){ if(!r) return; if(!this._cfgCache) this._cfgCache={}; this._cfgCache.rendering=r; }
+  updateRendering(r){
+    if(!r) return;
+    if(!this._cfgCache) this._cfgCache={};
+    this._cfgCache.rendering=r;
+    this._setMaterialTextureFilter(r.textureFilter);
+  }
+
+  _setMaterialTextureFilter(value){
+    const filter = normalizeTextureFilter(value);
+    this.textureFilter = filter;
+    if (this.device && this.bindGroupLayouts.bgl2 && this.samplers.linear && this.samplers.repeatNearest) {
+      this.bindGroups.materialSamplers = this.device.createBindGroup({
+        layout: this.bindGroupLayouts.bgl2,
+        entries: [
+          { binding:0, resource: filter === 'linear' ? this.samplers.linear : this.samplers.repeatNearest },
+          { binding:1, resource: this.samplers.linear },
+        ],
+        label:`bg_material_samplers_${filter}`
+      });
+    }
+    this.spriteRenderer?.setTextureFilter(filter);
+  }
   updatePOM(p){ if(!p) return; if(!this._cfgCache) this._cfgCache={}; this._cfgCache.pom=p; }
   updateLighting(l){ if(!l) return; if(!this._cfgCache) this._cfgCache={}; this._cfgCache.lighting=l; try{ this.lightManager?.setConfig(l); }catch{} }
   updateMaterialModifiers(mm){
@@ -1860,7 +1996,7 @@ export class GPURenderer {
       playerPos: [camX, camY],
       playerAngle: renderAngle,
       fov: this._resolveConfigValue(cfg, ['rendering.fov','renderer.fov'], 1.0),
-      playerHeight: player.height ?? 0.5,
+      playerHeight: rawPos.z ?? player.height ?? 0.5,
       bobPixels,
       mapSize: [dungeon.w, dungeon.h],
       time: timeSec,
@@ -2065,7 +2201,7 @@ export class GPURenderer {
     gPass.setPipeline(raymarchPipeline);
     gPass.setBindGroup(0, this.bindGroups.frame);
     gPass.setBindGroup(1, this.bindGroups.materials);
-    gPass.setBindGroup(2, this.bindGroups.samplers);
+    gPass.setBindGroup(2, this.bindGroups.materialSamplers);
     gPass.draw(3,1,0,0);
     gPass.end();
 
@@ -2079,7 +2215,7 @@ export class GPURenderer {
           planeLen: Math.tan((this._fovCache||1.0)*0.5),
           resolution: [this.canvas.width||640, this.canvas.height||360],
           bobPixels,
-          eyeZ: player.height ?? 0.5,
+          eyeZ: rawPos.z ?? player.height ?? 0.5,
         };
         const spritesForRender = [];
         for (const orig of this._sprites) {
