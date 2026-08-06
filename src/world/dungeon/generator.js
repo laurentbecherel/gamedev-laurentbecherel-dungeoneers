@@ -5,6 +5,7 @@ import { GRID_FLOOR, BOUNDARY_WALL_ID, STAIRS_MATERIAL_ID, DECO_COLUMN, DECO_MOS
 import { generateDungeonItems } from "../items.js";
 import { generateModifierMap } from "../modifiers.js";
 import { generateStructuralFeatures } from "../structural-features.js";
+import { assignArchitecturePlan } from "./architecture.js";
 
 function makeRng(seed) { let s = seed >>> 0 || 1; return () => { s = Math.imul(s, 1664525) + 1013904223 >>> 0; return s / 0x100000000; }; }
 
@@ -21,6 +22,8 @@ export async function generateDungeon(config, seedOverride = null) {
   const roomSizeMax = gen.roomSizeMax ?? 8;
   const mainPathRoomSizeBonus = gen.mainPathRoomSizeBonus ?? 1;
   const flattenRadius = gen.flattenStartRadius ?? 2;
+  const configuredMaterialLimits = config.architectures?.materialLimits || {};
+  const materialLimits = { wall:configuredMaterialLimits.wall ?? 16, floor:configuredMaterialLimits.floor ?? 24, ceil:configuredMaterialLimits.ceil ?? 16 };
   const levelCount = gen.levelCount ?? 1;
   const levelIndex = 0;
   const boundaryWallId = config.boundaryWallId ?? BOUNDARY_WALL_ID;
@@ -386,18 +389,54 @@ export async function generateDungeon(config, seedOverride = null) {
     r.ceilBase = ((hz.ceilMin||1)+(hz.ceilMax||1.2))/2;
   });
 
+  // Architecture is selected in contiguous story regions after every room has
+  // a role and depth. Room types are then selected within that language.
+  const architecturePlan = assignArchitecturePlan(rooms, mainPath, seed, config.architectures);
+  function resolveArchitectureMaterial(spec, roomIndex, salt, fallbackId) {
+    if (typeof spec === 'number') return spec;
+    if (Array.isArray(spec)) {
+      const entries = spec.map(value => typeof value === 'number' ? { id:value, weight:1 } : value);
+      return pickWeighted(entries, roomIndex + salt, seed + salt, seed + salt * 3);
+    }
+    if (spec && typeof spec === 'object') {
+      const values = spec.values || spec.ids || [];
+      const weights = spec.weights || [];
+      return resolveArchitectureMaterial(values.map((id, index) => ({ id, weight:weights[index] ?? 1 })), roomIndex, salt, fallbackId);
+    }
+    return fallbackId;
+  }
+  if (architecturePlan.enabled) {
+    rooms.forEach((room, roomIndex) => {
+      const materials = room.architectureMaterials;
+      if (!materials) return;
+      room.wallMat = Math.max(1, Math.min(materialLimits.wall, resolveArchitectureMaterial(materials.wall, roomIndex, 601, room.wallMat) | 0));
+      room.floorMat = Math.max(1, Math.min(materialLimits.floor, resolveArchitectureMaterial(materials.floor, roomIndex, 607, room.floorMat) | 0));
+      room.ceilMat = Math.max(1, Math.min(materialLimits.ceil, resolveArchitectureMaterial(materials.ceil, roomIndex, 613, room.ceilMat) | 0));
+    });
+  } else {
+    rooms.forEach(room => {
+      room.architectureId = room.architectureId ?? 1;
+      room.architectureType = room.architectureType || 'plain';
+      room.typeId = room.typeId ?? 1;
+      room.typeName = room.typeName || 'Plain';
+    });
+  }
+
   // --- Stage 6: Grid carving ---
   const size = w*h;
   const grid = new Uint8Array(size); grid.fill(boundaryWallId);
   const floorMat = new Uint8Array(size); const ceilMat = new Uint8Array(size);
   const floorHeight = new Float32Array(size); const ceilHeight = new Float32Array(size);
   const deco = new Uint8Array(size);
+  const architectureMap = new Uint8Array(size);
+  const typeMap = new Uint8Array(size);
   const floorToRoom = new Int16Array(size); floorToRoom.fill(-1);
   function idx(x,y){return y*w+x;}
   rooms.forEach((r, ri) => {
     for(let dy=0; dy<r.h; dy++) for(let dx=0; dx<r.w; dx++){
       const x=r.x+dx, y=r.y+dy, i=idx(x,y);
       grid[i]=GRID_FLOOR; floorMat[i]=r.floorMat; ceilMat[i]=r.ceilMat; floorToRoom[i]=ri;
+      architectureMap[i]=r.architectureId || 1; typeMap[i]=r.typeId || 1;
       // Engine invariant: the unmodified floor plane is exactly z=0.
       // Surface variation belongs to materials/POM/chamfer; structural
       // features provide explicit local geometry when needed.
@@ -530,6 +569,21 @@ export async function generateDungeon(config, seedOverride = null) {
   for(let x=0;x<w;x++){ grid[idx(x,0)]=boundaryWallId; grid[idx(x,h-1)]=boundaryWallId; }
   for(let y=0;y<h;y++){ grid[idx(0,y)]=boundaryWallId; grid[idx(w-1,y)]=boundaryWallId; }
 
+  // Diagnostic and downstream story maps cover corridors and wall shells too.
+  // Nearest-room inheritance gives transitions a readable boundary instead of
+  // noisy per-cell assignment.
+  for (let y=0; y<h; y++) for (let x=0; x<w; x++) {
+    const i=idx(x,y);
+    if (architectureMap[i] && typeMap[i]) continue;
+    let nearest=rooms[0], nearestDistance=Infinity;
+    for (const room of rooms) {
+      const distance=Math.abs(x-room.cx)+Math.abs(y-room.cy);
+      if (distance<nearestDistance) { nearestDistance=distance; nearest=room; }
+    }
+    architectureMap[i]=nearest?.architectureId || 1;
+    typeMap[i]=nearest?.typeId || 1;
+  }
+
   // --- Stage 8: refine corridor heights ---
   for(let y=1;y<h-1;y++) for(let x=1;x<w-1;x++){ const i=idx(x,y); if(grid[i]===GRID_FLOOR && floorToRoom[i]===-2){ floorHeight[i]*=0.2; } }
 
@@ -540,8 +594,22 @@ export async function generateDungeon(config, seedOverride = null) {
   // --- Stage 9: Deco ---
   for(let y=0;y<h;y++) for(let x=0;x<w;x++){ const i=idx(x,y); let d=0;
     if(structural.cells[i] !== 0){ deco[i]=0; continue; }
-    if(grid[i]!==GRID_FLOOR){ const hv=hash2i(x,y,seed+10); if(hv<0.08) d|=DECO_COLUMN; else if(hv<0.15) d|=DECO_MOSS; else if(hv<0.18) d|=DECO_VINES; else if(hv<0.22) d|=DECO_ARCH; }
-    else { const hv=hash2i(x+1000,y+1000,seed+20); if(hv<0.05) d|=DECO_BROKEN; else if(hv<0.08) d|=DECO_PUDDLE; else if(hv<0.11) d|=DECO_ROOTS; else if(hv<0.14) d|=DECO_BEAM; }
+    let nearest=rooms[0], nearestDistance=Infinity;
+    for (const room of rooms) {
+      const distance=Math.abs(x-room.cx)+Math.abs(y-room.cy);
+      if (distance<nearestDistance) { nearestDistance=distance; nearest=room; }
+    }
+    const chances=nearest?.decoChances || {};
+    if(grid[i]!==GRID_FLOOR){
+      const hv=hash2i(x,y,seed+10);
+      const column=chances.column ?? 0.08, moss=chances.moss ?? 0.07, vines=chances.vines ?? 0.03, arch=chances.arch ?? 0.04;
+      if(hv<column) d|=DECO_COLUMN; else if(hv<column+moss) d|=DECO_MOSS; else if(hv<column+moss+vines) d|=DECO_VINES; else if(hv<column+moss+vines+arch) d|=DECO_ARCH;
+    }
+    else {
+      const hv=hash2i(x+1000,y+1000,seed+20);
+      const broken=chances.broken ?? 0.05, puddle=chances.puddle ?? 0.03, roots=chances.roots ?? 0.03, beam=chances.beam ?? 0.03;
+      if(hv<broken) d|=DECO_BROKEN; else if(hv<broken+puddle) d|=DECO_PUDDLE; else if(hv<broken+puddle+roots) d|=DECO_ROOTS; else if(hv<broken+puddle+roots+beam) d|=DECO_BEAM;
+    }
     deco[i]=d;
   }
 
@@ -551,7 +619,7 @@ export async function generateDungeon(config, seedOverride = null) {
   for(let dy=-flattenRadius; dy<=flattenRadius; dy++) for(let dx=-flattenRadius; dx<=flattenRadius; dx++){
     const x=Math.floor(startX)+dx, y=Math.floor(startY)+dy; if(x<0||y<0||x>=w||y>=h)continue; const i=idx(x,y); if(grid[i]===GRID_FLOOR) floorHeight[i]=0;
   }
-  const dungeon = {w,h,grid,floorHeight,ceilHeight,deco,floorMat,ceilMat,startX,startY,seed,rooms,items:[],lights:[],sprites:[],meta:{},modifierMap:null,
+  const dungeon = {w,h,grid,floorHeight,ceilHeight,deco,floorMat,ceilMat,architectureMap,typeMap,startX,startY,seed,rooms,items:[],lights:[],sprites:[],meta:{},modifierMap:null,
     features:structural.features, featureCells:structural.cells, featureProfiles:structural.profiles};
   const genItemsCfg = {
     ...config,
@@ -576,6 +644,8 @@ export async function generateDungeon(config, seedOverride = null) {
   } catch(e){ console.warn('[gen] modifier map failed', e); dungeon.modifierMap = null; }
   dungeon.meta = {themeId:"classic", themeName:"Classic Dungeon", levelIndex, levelCount, boundaryWallId,
     zoneSummary: theme.zones.map(z=>z.name), edges: edges.length, rolesSummary: Object.fromEntries([...new Set(rooms.map(r=>r.role))].map(r=>[r, rooms.filter(rr=>rr.role===r).length])),
+    architecturePlan,
+    paletteAccents: architecturePlan.dominantPalette?.accentRamps || [],
     materialCounts:{ walls: Math.max(...rooms.map(r=>r.wallMat)), floors: Math.max(...rooms.map(r=>r.floorMat)), ceils: Math.max(...rooms.map(r=>r.ceilMat)) }};
   return dungeon;
 }

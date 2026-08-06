@@ -27,16 +27,16 @@
       "id": "green",
       "name": "Natural Green",
       "from": [
-        18,
-        48,
-        26
+        16,
+        40,
+        23
       ],
       "to": [
         81,
         145,
         59
       ],
-      "count": 32
+      "count": 48
     }
   ],
   "brownRamp": {
@@ -54,16 +54,16 @@
   },
   "greenRamp": {
     "from": [
-      18,
-      48,
-      26
+      16,
+      40,
+      23
     ],
     "to": [
       81,
       145,
       59
     ],
-    "count": 32
+    "count": 48
   },
   "regularColors": {
     "count": 112,

@@ -205,6 +205,7 @@ body.editor {
   scrollbar-color: #353c39 #090b0b;
 }
 .editor-panel { width: min(1120px, 100%); max-width: none; }
+.editor-panel.architecture-editor-active { width: 100%; }
 
 .tabs {
   gap: 0;
@@ -342,6 +343,39 @@ input[type=range]::-webkit-slider-thumb { border-radius: 0; background: var(--em
 .empty-state .emoji .ph { font-size: 34px; opacity: .55; }
 .empty-state p { margin: 0; color: var(--muted); font-size: 13px; }
 .empty-state p + p { margin-top: 8px; color: var(--dim); font: 10px var(--mono); }
+
+.architecture-preview { margin-bottom: 28px; border: 1px solid var(--line); background: #0d100f; }
+.architecture-preview-loading, .architecture-preview-error { padding: 28px; color: var(--muted); font: 11px var(--mono); }
+.architecture-preview-heading { display: flex; justify-content: space-between; gap: 20px; padding: 20px; border-bottom: 1px solid var(--line); }
+.architecture-preview-heading > div > span { color: var(--ember); font: 700 9px var(--mono); letter-spacing: .15em; text-transform: uppercase; }
+.architecture-preview-heading h2 { margin: 6px 0 4px; color: var(--ink); font: 28px var(--display); text-transform: uppercase; }
+.architecture-preview-heading p { max-width: 620px; margin: 0; color: var(--dim); font: 10px/1.5 var(--mono); }
+.architecture-preview-controls { align-self: center; min-width: 390px; }
+.architecture-preview-modes { display: flex; flex-wrap: wrap; }
+.architecture-preview-modes button { padding: 7px 9px; border: 1px solid var(--line); color: var(--muted); background: #111514; font: 8px var(--mono); cursor: pointer; }
+.architecture-preview-modes button.active { border-color: var(--ember); color: var(--ink); background: rgba(208,111,54,.13); }
+.architecture-preview-controls label { display: grid; grid-template-columns: 70px 1fr; align-items: center; margin-top: 10px; color: var(--dim); font: 9px var(--mono); }
+.architecture-preview-grid { display: grid; gap: 12px; padding: 12px; }
+.architecture-preview-group { border: 1px solid var(--line); background: #111413; }
+.architecture-preview-group > header { display: flex; justify-content: space-between; gap: 18px; padding: 14px; border-bottom: 1px solid var(--line); }
+.architecture-preview-group header > div:first-child { display: grid; grid-template-columns: 34px auto; align-items: baseline; }
+.architecture-preview-group header b { color: var(--ember); font: 700 10px var(--mono); }
+.architecture-preview-group h3 { margin: 0; color: var(--ink); font: 16px var(--display); text-transform: uppercase; }
+.architecture-preview-group header p { grid-column: 2; margin: 3px 0 0; color: var(--dim); font: 9px/1.45 var(--mono); }
+.architecture-ramp { display: flex; align-self: center; gap: 4px; }
+.architecture-ramp i { width: 58px; height: 16px; border: 1px solid rgba(255,255,255,.13); background: linear-gradient(90deg,var(--from),var(--to)); }
+.architecture-type-grid { display: grid; grid-template-columns: repeat(3,minmax(260px,1fr)); }
+.architecture-type-card { min-width: 0; padding: 16px; border-right: 1px solid var(--line); border-bottom: 1px solid var(--line); }
+.architecture-type-card:last-child { border-right: 0; }
+.architecture-type-card h4 { display: flex; gap: 8px; margin: 0 0 12px; color: #b9c0bc; font: 10px var(--mono); text-transform: uppercase; }
+.architecture-surfaces { display: grid; grid-template-columns: repeat(3,1fr); gap: 12px 8px; }
+.architecture-surfaces figure[data-surface-group="floors"] { outline: 1px solid rgba(132,105,70,.16); outline-offset: 1px; }
+.architecture-surfaces figure { min-width: 0; margin: 0; }
+.architecture-surfaces canvas { display: block; width: 100%; aspect-ratio: 1; border: 1px solid rgba(255,255,255,.055); image-rendering: pixelated; background: #080a09; }
+.architecture-surfaces figcaption { margin-top: 6px; overflow: hidden; color: var(--dim); font: 8px/1.35 var(--mono); text-overflow: ellipsis; white-space: nowrap; }
+.architecture-type-card small { display: block; margin-top: 11px; color: #59615d; font: 8px var(--mono); }
+@media (max-width: 1280px) { .architecture-type-grid { grid-template-columns: repeat(2,minmax(240px,1fr)); } .architecture-preview-heading { display: block; } .architecture-preview-controls { margin-top: 14px; } }
+@media (max-width: 760px) { .architecture-type-grid { grid-template-columns: 1fr; } }
 
 .live-badge,
 .regen-banner { top: 78px; border-radius: 0; }

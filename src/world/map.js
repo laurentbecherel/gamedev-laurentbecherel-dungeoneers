@@ -16,6 +16,7 @@ export class DungeonMapWrapper {
     if(x<0||y<0||x>=this.d.w||y>=this.d.h) return null;
     const i=y*this.d.w+x;
     return {grid:this.d.grid[i], floorMat:this.d.floorMat[i], ceilMat:this.d.ceilMat[i],
+      architectureId:this.d.architectureMap?.[i] || 1, typeId:this.d.typeMap?.[i] || 1,
       floorHeight:this.d.floorHeight[i], ceilHeight:this.d.ceilHeight[i], deco:this.d.deco[i]};
   }
   getRoomAt(x, y) {

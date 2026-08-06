@@ -1,34 +1,153 @@
 {
-  "version": 1,
+  "version": 2,
+  "_readme": "Architecture selects a coherent construction language for contiguous regions. Type varies rooms inside that language. All weights, persistence, materials, palette accents, modifiers and decoration rates are editor-configurable.",
+  "materialLimits": {"wall":16,"floor":24,"ceil":16},
+  "selection": {
+    "activeArchitectureIds": ["brick_dungeon", "dark_dungeon", "stone_castle", "mossy_cellar", "wooden_undercroft", "natural_grotto"],
+    "maxArchitecturesPerLevel": 2,
+    "transitionChance": 0.22,
+    "minRegionRooms": 3,
+    "sideBranchInheritChance": 0.94,
+    "typeAdjacencyPersistence": 0.38,
+    "sideBranchTypeInheritChance": 0.5,
+    "corridorPolicy": "nearest_room"
+  },
+  "types": [
+    {
+      "id": "plain", "numericId": 1, "name": "Plain", "baseWeight": 1.7, "maxConsecutive": 3,
+      "storyTags": ["utility", "circulation"],
+      "roleWeights": {"entrance": 2.5, "hall": 2.2, "corridor": 2.8, "hub": 0.8, "guardian": 0.35, "treasure": 0.4, "shrine": 0.3, "armory": 0.8, "secret": 1.1, "exit": 0.8},
+      "decoMultipliers": {"column": 0.35, "arch": 0.35, "beam": 0.8},
+      "modifierMultipliers": {"moss": 1, "puddle": 1, "blood": 1, "dust": 1, "damaged": 1},
+      "structural": {"vaultType": 0}
+    },
+    {
+      "id": "refined", "numericId": 2, "name": "Sophisticated", "baseWeight": 0.7, "maxConsecutive": 2,
+      "storyTags": ["ceremonial", "wealth"],
+      "roleWeights": {"entrance": 0.4, "hall": 0.6, "corridor": 0.2, "hub": 1.4, "guardian": 1.1, "treasure": 3, "shrine": 2.6, "armory": 0.5, "secret": 1.4, "exit": 1.8},
+      "decoMultipliers": {"column": 1.4, "arch": 1.6, "broken": 0.45, "beam": 0.7},
+      "modifierMultipliers": {"moss": 0.65, "puddle": 0.5, "blood": 0.75, "dust": 0.8, "damaged": 0.55},
+      "structural": {"vaultType": 1}
+    },
+    {
+      "id": "colonnade", "numericId": 3, "name": "Colonnade", "baseWeight": 0.42, "maxConsecutive": 1,
+      "storyTags": ["load_bearing", "grand_volume"],
+      "roleWeights": {"entrance": 0.5, "hall": 0.8, "corridor": 0.1, "hub": 3.2, "guardian": 2.1, "treasure": 1.3, "shrine": 2.2, "armory": 0.5, "secret": 0.3, "exit": 1.4},
+      "decoMultipliers": {"column": 4.2, "arch": 1.25, "beam": 0.4},
+      "modifierMultipliers": {"moss": 0.85, "puddle": 0.75, "blood": 1, "dust": 1.15, "damaged": 0.85},
+      "structural": {"vaultType": 2}
+    },
+    {
+      "id": "arcaded", "numericId": 4, "name": "Arcaded", "baseWeight": 0.48, "maxConsecutive": 2,
+      "storyTags": ["processional", "thresholds"],
+      "roleWeights": {"entrance": 0.7, "hall": 1, "corridor": 0.35, "hub": 1.7, "guardian": 1.6, "treasure": 1.5, "shrine": 3.2, "armory": 0.35, "secret": 0.7, "exit": 2.4},
+      "decoMultipliers": {"column": 1.2, "arch": 4.5, "beam": 0.3},
+      "modifierMultipliers": {"moss": 0.9, "puddle": 0.75, "blood": 0.9, "dust": 0.95, "damaged": 0.8},
+      "structural": {"vaultType": 3}
+    },
+    {
+      "id": "fortified", "numericId": 5, "name": "Bars & Metal", "baseWeight": 0.38, "maxConsecutive": 2,
+      "storyTags": ["security", "industry", "confinement"],
+      "roleWeights": {"entrance": 0.5, "hall": 0.55, "corridor": 0.8, "hub": 0.8, "guardian": 3.5, "treasure": 2.1, "shrine": 0.2, "armory": 3.4, "secret": 1.6, "exit": 1.1},
+      "decoMultipliers": {"column": 0.7, "arch": 0.55, "beam": 3.3, "broken": 1.25},
+      "modifierMultipliers": {"moss": 0.45, "puddle": 1.15, "blood": 1.45, "dust": 0.75, "damaged": 1.35},
+      "structural": {"vaultType": 0, "metalDetails": true}
+    }
+  ],
   "architectures": [
     {
-      "id": "dungeon",
-      "name": "Dungeon",
-      "description": "Standard dungeon masonry",
-      "wallShapes": {
-        "brick_bond": 0.6,
-        "ashlar_rough": 0.4
+      "id": "brick_dungeon", "numericId": 1, "name": "Brick Dungeon", "weight": 2.4,
+      "description": "Old fired-brick service dungeon: practical at the entrance, increasingly repaired and fortified at depth.",
+      "storyTags": ["dungeon", "masonry", "institutional"],
+      "zoneWeights": {"Entry": 2.2, "Antechamber": 1.8, "Depths": 1.2, "Sanctum": 0.7, "Exit": 0.55},
+      "roleWeights": {"entrance": 1.4, "armory": 1.5, "guardian": 1.2},
+      "typeWeights": {"plain": 1.5, "refined": 0.8, "colonnade": 0.55, "arcaded": 0.8, "fortified": 1.35},
+      "roleTypeWeights": {"armory": {"fortified": 2.2}, "treasure": {"refined": 1.6}, "hub": {"arcaded": 1.4}},
+      "palette": {"accentRamps": [{"id":"ember_brick","from":[64,28,20],"to":[218,112,63],"count":48},{"id":"moss_green","from":[16,38,22],"to":[105,148,70],"count":40}]},
+      "materials": {
+        "plain": {"wall":1,"floor":{"values":[1,10,2,9],"weights":[0.34,0.34,0.12,0.2]},"ceil":1}, "refined": {"wall":1,"floor":{"values":[5,13,9],"weights":[0.45,0.25,0.3]},"ceil":4}, "colonnade": {"wall":1,"floor":{"values":[9,13,5],"weights":[0.5,0.25,0.25]},"ceil":4}, "arcaded": {"wall":1,"floor":{"values":[10,1,9],"weights":[0.45,0.3,0.25]},"ceil":4}, "fortified": {"wall":8,"floor":{"values":[8,14,4],"weights":[0.5,0.35,0.15]},"ceil":7}
       },
-      "floorShapes": {
-        "slab": 0.7,
-        "cobble": 0.3
+      "modifierMultipliers": {"moss":0.9,"puddle":0.85,"blood":1,"dust":1.05,"damaged":1.1},
+      "decoChances": {"column":0.07,"arch":0.055,"moss":0.055,"vines":0.018,"broken":0.055,"puddle":0.025,"roots":0.015,"beam":0.035}
+    },
+    {
+      "id": "dark_dungeon", "numericId": 2, "name": "Dark Dungeon", "weight": 1.25,
+      "description": "Basalt prison masonry, wet iron and soot; favored for guardians, armories and lower zones.",
+      "storyTags": ["dungeon", "basalt", "oppressive"],
+      "zoneWeights": {"Entry":0.45,"Antechamber":0.8,"Depths":1.5,"Sanctum":2.1,"Exit":1.7},
+      "roleWeights": {"guardian":1.8,"armory":2,"secret":1.3,"shrine":0.55},
+      "typeWeights": {"plain":1.25,"refined":0.35,"colonnade":0.6,"arcaded":0.55,"fortified":2.1},
+      "roleTypeWeights": {"guardian":{"fortified":2.4},"armory":{"fortified":2.8},"secret":{"plain":1.5}},
+      "palette": {"accentRamps": [{"id":"rust","from":[42,27,24],"to":[174,74,45],"count":44},{"id":"cold_verdigris","from":[14,31,32],"to":[61,112,101],"count":44}]},
+      "materials": {
+        "plain":{"wall":4,"floor":{"values":[4,14,2,6],"weights":[0.4,0.35,0.12,0.13]},"ceil":3},"refined":{"wall":4,"floor":{"values":[8,14,4],"weights":[0.5,0.3,0.2]},"ceil":3},"colonnade":{"wall":4,"floor":{"values":[14,4,9],"weights":[0.55,0.3,0.15]},"ceil":3},"arcaded":{"wall":4,"floor":{"values":[4,14,2],"weights":[0.4,0.45,0.15]},"ceil":3},"fortified":{"wall":8,"floor":{"values":[8,14,4],"weights":[0.5,0.4,0.1]},"ceil":8}
       },
-      "ceilShapes": {
-        "slab": 0.8,
-        "beams": 0.2
+      "modifierMultipliers": {"moss":0.7,"puddle":1.35,"blood":1.2,"dust":0.65,"damaged":1.3},
+      "decoChances": {"column":0.065,"arch":0.04,"moss":0.04,"vines":0.008,"broken":0.075,"puddle":0.055,"roots":0.008,"beam":0.065}
+    },
+    {
+      "id": "stone_castle", "numericId": 3, "name": "Stone Castle", "weight": 1.35,
+      "description": "Dressed limestone military architecture with deliberate axes, grand supports and ceremonial rooms.",
+      "storyTags": ["castle", "ashlar", "military"],
+      "zoneWeights": {"Entry":1.6,"Antechamber":1.7,"Depths":1.1,"Sanctum":1.2,"Exit":1.5},
+      "roleWeights": {"hub":1.6,"treasure":1.5,"shrine":1.4,"guardian":1.3},
+      "typeWeights": {"plain":0.9,"refined":1.6,"colonnade":1.55,"arcaded":1.7,"fortified":0.9},
+      "roleTypeWeights": {"hub":{"colonnade":2},"shrine":{"arcaded":2.2},"treasure":{"refined":2}},
+      "palette": {"accentRamps": [{"id":"royal_gold","from":[62,48,25],"to":[211,171,83],"count":44},{"id":"banner_blue","from":[25,35,52],"to":[75,111,151],"count":44}]},
+      "materials": {
+        "plain":{"wall":5,"floor":{"values":[5,13,9],"weights":[0.35,0.35,0.3]},"ceil":4},"refined":{"wall":5,"floor":{"values":[13,5,8],"weights":[0.5,0.3,0.2]},"ceil":4},"colonnade":{"wall":5,"floor":{"values":[13,9,5],"weights":[0.45,0.4,0.15]},"ceil":4},"arcaded":{"wall":5,"floor":{"values":[5,13,10],"weights":[0.4,0.45,0.15]},"ceil":4},"fortified":{"wall":8,"floor":{"values":[14,8,13],"weights":[0.4,0.4,0.2]},"ceil":8}
       },
-      "decoMult": {
-        "moss": 1,
-        "column": 1,
-        "broken": 1
+      "modifierMultipliers": {"moss":0.55,"puddle":0.6,"blood":0.9,"dust":0.85,"damaged":0.65},
+      "decoChances": {"column":0.12,"arch":0.095,"moss":0.025,"vines":0.008,"broken":0.03,"puddle":0.015,"roots":0.008,"beam":0.025}
+    },
+    {
+      "id": "mossy_cellar", "numericId": 4, "name": "Mossy Cellar", "weight": 0.85,
+      "description": "A damp constructed cellar of rough fieldstone, earth floors, old repairs and encroaching roots.",
+      "storyTags": ["cellar", "fieldstone", "subterranean"],
+      "zoneWeights": {"Entry":0.2,"Antechamber":0.45,"Depths":1.25,"Sanctum":2.3,"Exit":2.1},
+      "roleWeights": {"secret":2.2,"shrine":1.7,"treasure":1.2,"armory":0.2},
+      "typeWeights": {"plain":2.1,"refined":0.25,"colonnade":0.15,"arcaded":0.35,"fortified":0.25},
+      "roleTypeWeights": {"shrine":{"arcaded":1.8},"secret":{"plain":2.2}},
+      "palette": {"accentRamps": [{"id":"earth","from":[39,31,25],"to":[139,108,72],"count":42},{"id":"lichen","from":[20,43,27],"to":[105,157,83],"count":46}]},
+      "materials": {
+        "plain":{"wall":6,"floor":{"values":[11,12,16,6],"weights":[0.42,0.3,0.2,0.08]},"ceil":5},"refined":{"wall":2,"floor":{"values":[6,12,5],"weights":[0.45,0.35,0.2]},"ceil":5},"colonnade":{"wall":2,"floor":{"values":[6,16,12],"weights":[0.45,0.3,0.25]},"ceil":5},"arcaded":{"wall":6,"floor":{"values":[11,6,12],"weights":[0.4,0.35,0.25]},"ceil":5},"fortified":{"wall":8,"floor":{"values":[12,8,6],"weights":[0.45,0.35,0.2]},"ceil":8}
       },
-      "pillar": {
-        "spacing": 4,
-        "columnChance": 0.35
+      "modifierMultipliers": {"moss":2.15,"puddle":1.85,"blood":0.65,"dust":0.45,"damaged":1.15},
+      "decoChances": {"column":0.025,"arch":0.025,"moss":0.13,"vines":0.085,"broken":0.07,"puddle":0.085,"roots":0.11,"beam":0.008}
+    },
+    {
+      "id": "wooden_undercroft", "numericId": 5, "name": "Wooden Undercroft", "weight": 0.7,
+      "description": "A timber-supported mine, storehouse or occupied undercroft built into older foundations.",
+      "storyTags": ["wood", "mine", "occupied"],
+      "zoneWeights": {"Entry":1.2,"Antechamber":1.45,"Depths":1.1,"Sanctum":0.65,"Exit":0.55},
+      "roleWeights": {"armory":1.7,"hall":1.3,"treasure":1.1,"shrine":0.25},
+      "typeWeights": {"plain":1.7,"refined":0.45,"colonnade":0.35,"arcaded":0.25,"fortified":1.35},
+      "roleTypeWeights": {"armory":{"fortified":2.1},"treasure":{"refined":1.5}},
+      "palette": {"accentRamps": [{"id":"timber","from":[45,28,18],"to":[177,111,57],"count":46},{"id":"copper","from":[38,43,37],"to":[108,142,104],"count":42}]},
+      "materials": {
+        "plain":{"wall":7,"floor":{"values":[7,15,11],"weights":[0.5,0.35,0.15]},"ceil":6},"refined":{"wall":7,"floor":{"values":[15,7,5],"weights":[0.5,0.35,0.15]},"ceil":6},"colonnade":{"wall":7,"floor":{"values":[7,15,11],"weights":[0.45,0.45,0.1]},"ceil":6},"arcaded":{"wall":7,"floor":{"values":[15,7,10],"weights":[0.5,0.35,0.15]},"ceil":6},"fortified":{"wall":8,"floor":{"values":[8,15,7],"weights":[0.45,0.35,0.2]},"ceil":7}
       },
-      "storyTags": [
-        "dungeon"
-      ]
+      "modifierMultipliers": {"moss":0.7,"puddle":0.8,"blood":0.85,"dust":1.45,"damaged":1.55},
+      "decoChances": {"column":0.055,"arch":0.015,"moss":0.03,"vines":0.012,"broken":0.09,"puddle":0.025,"roots":0.025,"beam":0.145}
+    },
+    {
+      "id": "natural_grotto", "numericId": 6, "name": "Natural Grotto", "weight": 0.75,
+      "description": "An unworked cave system of exposed earth, noise-shaped rock, mineral fractures, roots and pooled water.",
+      "storyTags": ["cave", "natural", "earth", "subterranean"],
+      "zoneWeights": {"Entry":0.12,"Antechamber":0.3,"Depths":1.35,"Sanctum":2.5,"Exit":2.2},
+      "roleWeights": {"secret":2.4,"shrine":1.8,"treasure":1.1,"armory":0.1,"guardian":0.75},
+      "typeWeights": {"plain":2.5,"refined":0.18,"colonnade":0.18,"arcaded":0.4,"fortified":0.16},
+      "roleTypeWeights": {"shrine":{"arcaded":2.1},"secret":{"plain":2.5},"guardian":{"fortified":1.25}},
+      "palette": {"accentRamps":[{"id":"deep_earth","from":[32,25,20],"to":[126,94,59],"count":42},{"id":"wet_lichen","from":[14,38,26],"to":[91,157,87],"count":46},{"id":"cool_mineral","from":[31,42,43],"to":[105,139,130],"count":30}]},
+      "materials": {
+        "plain":{"wall":{"values":[9,10,11],"weights":[0.38,0.45,0.17]},"floor":{"values":[11,12,16,17],"weights":[0.4,0.3,0.22,0.08]},"ceil":{"values":[9,10],"weights":[0.72,0.28]}},
+        "refined":{"wall":{"values":[10,11,9],"weights":[0.52,0.28,0.2]},"floor":{"values":[17,12,11],"weights":[0.45,0.35,0.2]},"ceil":{"values":[9,10],"weights":[0.8,0.2]}},
+        "colonnade":{"wall":{"values":[10,11],"weights":[0.7,0.3]},"floor":{"values":[17,16,12],"weights":[0.45,0.3,0.25]},"ceil":9},
+        "arcaded":{"wall":{"values":[10,9],"weights":[0.65,0.35]},"floor":{"values":[11,17,12],"weights":[0.4,0.35,0.25]},"ceil":{"values":[9,10],"weights":[0.82,0.18]}},
+        "fortified":{"wall":{"values":[10,8,9],"weights":[0.5,0.3,0.2]},"floor":{"values":[12,8,16],"weights":[0.45,0.3,0.25]},"ceil":{"values":[9,8],"weights":[0.7,0.3]}}
+      },
+      "modifierMultipliers": {"moss":2.35,"puddle":2.05,"blood":0.5,"dust":0.3,"damaged":1.3},
+      "decoChances": {"column":0.018,"arch":0.022,"moss":0.16,"vines":0.11,"broken":0.085,"puddle":0.11,"roots":0.16,"beam":0.004}
     }
   ]
 }

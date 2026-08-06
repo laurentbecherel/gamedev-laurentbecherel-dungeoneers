@@ -26,8 +26,9 @@ fn pomOffsetArray(heightTex: texture_2d_array<f32>, uv: vec2<f32>, layer: i32, v
   // Use textureLoad to stay in uniform flow (matches old non-uniform workaround) but with correct centered loop
   // Sample bilinear via textureLoad of 64x64 – we keep point but centered loop restores old visual
   {
+    let maxLayer: i32 = max(0, i32(textureNumLayers(heightTex)) - 1);
     let c = vec2<i32>(clamp(curUV, vec2<f32>(0.0), vec2<f32>(0.999)) * 64.0);
-    let h: f32 = textureLoad(heightTex, c, u32(clamp(layer,0,7)), 0).r;
+    let h: f32 = textureLoad(heightTex, c, u32(clamp(layer,0,maxLayer)), 0).r;
     // first sample stored, loop will handle break check after
     var heightV: f32 = h;
     for (var i: i32 = 0; i < 16; i++) {
@@ -35,7 +36,7 @@ fn pomOffsetArray(heightTex: texture_2d_array<f32>, uv: vec2<f32>, layer: i32, v
       if (curDepth >= heightV) { break; }
       curUV += delta;
       let cc = vec2<i32>(clamp(curUV, vec2<f32>(0.0), vec2<f32>(0.999)) * 64.0);
-      heightV = textureLoad(heightTex, cc, u32(clamp(layer,0,7)), 0).r;
+      heightV = textureLoad(heightTex, cc, u32(clamp(layer,0,maxLayer)), 0).r;
       curDepth += layerDepth;
     }
   }
@@ -44,8 +45,9 @@ fn pomOffsetArray(heightTex: texture_2d_array<f32>, uv: vec2<f32>, layer: i32, v
 
 fn sampleWallCompositeHeight(baseLayer: i32, fixtureLayer: i32, uv: vec2<f32>) -> f32 {
   let c = vec2<i32>(clamp(uv, vec2<f32>(0.0), vec2<f32>(0.999)) * 64.0);
-  let bl: u32 = u32(clamp(baseLayer, 0, 7));
-  let fl: u32 = u32(clamp(fixtureLayer, 0, 7));
+  let maxLayer: i32 = max(0, i32(textureNumLayers(wallHeight)) - 1);
+  let bl: u32 = u32(clamp(baseLayer, 0, maxLayer));
+  let fl: u32 = u32(clamp(fixtureLayer, 0, maxLayer));
   let baseH: f32 = textureLoad(wallHeight, c, bl, 0).r;
   let fixtureH: f32 = textureLoad(wallHeight, c, fl, 0).r;
   let coverage: f32 = textureLoad(wallAlbedo, c, fl, 0).a;

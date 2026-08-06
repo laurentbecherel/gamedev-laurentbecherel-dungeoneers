@@ -9,6 +9,8 @@
     "6": "cycle modifier debug: OFF, moss noise/env/material/combined, puddle, damaged combined/noise, structural features, blood, dust",
     "7": "toggle Chamfer (baseboard + vertical edge bevels)",
     "8": "toggle Corner geometry (true intruding rounded corners)",
+    "I": "replace rendered PBR view with architecture/type ID grid",
+    "H": "cycle architecture while retaining the dungeon seed; Shift+H restores automatic weighted selection",
     "R": "regen dungeon",
     "M": "toggle fullscreen map"
   },
@@ -17,6 +19,10 @@
   },
   "regen": {
     "maxAttempts": 3
+  },
+  "architectureCycle": {
+    "key": "KeyH",
+    "keepSeed": true
   },
   "overlay": {
     "scaleRefW": 640,

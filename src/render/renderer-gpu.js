@@ -800,9 +800,9 @@ export class GPURenderer {
     const walls = await getAsset('materials', 'walls');
     const floors = await getAsset('materials', 'floors');
     const ceils = await getAsset('materials', 'ceils');
-    const wallMats = (walls?.materials || []).slice(0, 8);
-    const floorMats = (floors?.materials || []).slice(0, 8);
-    const ceilMats = (ceils?.materials || []).slice(0, 8);
+    const wallMats = [...(walls?.materials || [])];
+    const floorMats = [...(floors?.materials || [])];
+    const ceilMats = [...(ceils?.materials || [])];
     if (wallMats.length === 0) wallMats.push({ id:1, base:[138,58,44], roughness:0.85, metal:0, variationSeed:101 });
     if (floorMats.length === 0) floorMats.push({ id:1, base:[90,88,80], roughness:0.88, metal:0, variationSeed:201 });
     if (ceilMats.length === 0) ceilMats.push({ id:1, base:[80,78,70], roughness:0.9, metal:0, variationSeed:301 });
@@ -1803,6 +1803,13 @@ export class GPURenderer {
     if(!this._cfgCache) this._cfgCache={};
     Object.assign(this._cfgCache, partial);
     this._uploadFeatureUniforms();
+  }
+  updatePalette(paletteCfg){
+    if(!paletteCfg) return;
+    if(!this._cfgCache) this._cfgCache={};
+    this._cfgCache.palette = paletteCfg;
+    this._applyPaletteFromConfig(this._cfgCache);
+    this.rebuildPalette();
   }
   updateFog(fogCfg){ if(!fogCfg) return; if(!this._cfgCache) this._cfgCache={}; this._cfgCache.fog=fogCfg; this.fogEnabled = (fogCfg.enabled!==false)?1:0; }
   updateChamfer(c){ if(!c) return; if(!this._cfgCache) this._cfgCache={}; this._cfgCache.chamfer=c; this.chamferEnabled = (c.enabled!==false)?1:0; }

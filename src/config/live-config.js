@@ -33,6 +33,7 @@ const TIER_MAP = {
   'main': 'T1',
   // T2 array rebuild
   'materials-proc': 'T2',
+  'architectures': 'T3',
   // T3 regen-required (map structure + per-cell mat IDs)
   'generator': 'T3',
   'material-assignments': 'T3',
@@ -48,6 +49,7 @@ const PATH_TIER_OVERRIDES = {
   'materials/walls': 'T2',
   'materials/floors': 'T2',
   'materials/ceils': 'T2',
+  'materials/architectures': 'T3',
   'config/gameplay/generator': 'T3',
   'config/generator': 'T3',
   'config/rendering/material-assignments': 'T3',
@@ -77,6 +79,7 @@ export function getTierForLogical(logicalOrPath) {
   const lower = key.toLowerCase();
   if (lower.includes('materials-proc') || lower.includes('materials/walls') || lower.includes('materials/floors') || lower.includes('materials/ceils')) return 'T2';
   if (lower.includes('generator')) return 'T3';
+  if (lower.includes('architectures')) return 'T3';
   if (lower.includes('materials') && (lower.includes('walls') || lower.includes('floors') || lower.includes('ceils'))) return 'T2';
   // path like config/lighting/fog -> extract last segment as logical?
   const last = key.split('/').pop();

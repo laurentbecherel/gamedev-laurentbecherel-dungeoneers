@@ -121,7 +121,7 @@
   "packing": {
     "note": "v10 Task10+: Texture2DArray pipeline, no bleeding, supports N materials per category via array layers. Atlas packing deprecated.",
     "mode": "array",
-    "maxLayers": 8,
+    "maxLayers": 24,
     "seamless": true
   },
   "_changelog": "v10 removed forcedCount=1, array pipeline allows per-room variation; tiling noise now periodic wrapping"

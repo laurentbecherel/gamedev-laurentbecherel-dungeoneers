@@ -3,6 +3,14 @@
   "_readme": "Ceil mats with per-mat proc overrides",
   "materials": [
     {"id":1, "name":"stone_ceiling", "type":"slab", "base":[80,78,70], "roughness":0.9, "metal":0, "tag":"ceiling", "role":"Flat stone ceiling", "variationSeed":301, "proc":{"blockSize":8, "groutWidth":1}},
-    {"id":2, "name":"wooden_beams", "type":"beams", "base":[60,45,30], "roughness":0.8, "metal":0, "tag":"ceiling", "role":"Wooden beam ceiling", "variationSeed":302, "proc":{"blockSize":12, "groutWidth":1, "domeHeight":0.12}}
+    {"id":2, "name":"wooden_beams", "type":"beams", "base":[60,45,30], "roughness":0.8, "metal":0, "tag":"ceiling", "role":"Wooden beam ceiling", "variationSeed":302, "proc":{"blockSize":12, "groutWidth":1, "domeHeight":0.12}},
+    {"id":3, "name":"basalt_vault", "type":"stone_block", "base":[42,45,48], "roughness":0.95, "metal":0, "tag":"ceiling", "role":"Dark basalt vault", "variationSeed":403, "proc":{"groutWidth":2,"domeHeight":0.15}},
+    {"id":4, "name":"limestone_vault", "type":"slab", "base":[124,121,109], "roughness":0.82, "metal":0, "tag":"ceiling", "role":"Dressed castle vault", "variationSeed":504, "proc":{"blockSize":10,"groutWidth":1,"domeHeight":0.11}},
+    {"id":5, "name":"cellar_rock_canopy", "type":"natural_rock", "base":[59,65,55], "roughness":0.98, "metal":0, "tag":"ceiling", "role":"Rough fieldstone cellar canopy", "variationSeed":605, "proc":{"blockSize":11,"groutWidth":1,"normalStrength":1.5}},
+    {"id":6, "name":"timber_rafters", "type":"wood_planks", "base":[71,48,29], "roughness":0.87, "metal":0, "tag":"ceiling", "role":"Dense undercroft rafters", "variationSeed":706, "proc":{"direction":"horizontal","plankWidth":7,"boardLength":32,"groutWidth":1,"knotChance":0.16,"normalStrength":1.15}},
+    {"id":7, "name":"heavy_crossbeams", "type":"beams", "base":[66,49,31], "roughness":0.82, "metal":0.08, "tag":"ceiling", "role":"Fortified crossbeams", "variationSeed":707, "proc":{"direction":"horizontal","plankWidth":10,"boardLength":32,"groutWidth":2,"knotChance":0.12,"normalStrength":1.3}},
+    {"id":8, "name":"reinforced_coffer", "type":"metal_plate", "base":[79,75,66], "roughness":0.55, "metal":0.42, "tag":"ceiling", "role":"Refined reinforced ceiling panels", "variationSeed":808, "proc":{"blockSize":12,"groutWidth":1,"rustThreshold":0.99,"normalStrength":1.45}},
+    {"id":9, "name":"raw_cave_ceiling", "type":"cave_rock", "base":[57,63,55], "roughness":0.99, "metal":0, "tag":"ceiling", "role":"Low irregular cave rock overhead", "variationSeed":909, "proc":{"macroCells":5,"detailCells":12,"creviceThreshold":0.2,"normalStrength":1.8}},
+    {"id":10, "name":"earthen_cave_ceiling", "type":"packed_dirt", "base":[68,53,37], "roughness":0.99, "metal":0, "tag":"ceiling", "role":"Rooted compact earth exposed overhead", "variationSeed":1010, "proc":{"patchSize":10,"pebbleChance":0.045,"largePebbleChance":0.014,"rutChance":0.04,"normalStrength":1.25}}
   ]
 }

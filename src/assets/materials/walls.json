@@ -4,7 +4,7 @@
   "materials": [
     {
       "id": 1,
-      "name": "test_temp_1785946228895",
+      "name": "dungeon_brick",
       "type": "brick",
       "base": [
         138,
@@ -29,6 +29,8 @@
       ],
       "proc": {
         "groutWidth": 1,
+        "brickWidth": 8,
+        "brickHeight": 8,
         "domeHeight": 0.28,
         "bevelStart": 0.42,
         "crackAmount": 0.6
@@ -101,6 +103,184 @@
         "braceHalfWidth": 0.025,
         "normalStrength": 2.2
       }
+    },
+    {
+      "id": 4,
+      "name": "dark_basalt",
+      "type": "stone_block",
+      "base": [
+        48,
+        51,
+        54
+      ],
+      "roughness": 0.93,
+      "metal": 0,
+      "tag": "masonry",
+      "role": "Soot-dark basalt prison blocks",
+      "architectureShape": "basalt_bond",
+      "variationSeed": 410,
+      "storyTags": [
+        "dark_dungeon"
+      ],
+      "proc": {
+        "blockSize": 10,
+        "groutWidth": 2,
+        "domeHeight": 0.16,
+        "bevelDepth": 0.2,
+        "crackAmount": 0.75,
+        "fleckThreshold": 0.95
+      }
+    },
+    {
+      "id": 5,
+      "name": "dressed_limestone",
+      "type": "stone_block",
+      "base": [
+        143,
+        139,
+        124
+      ],
+      "roughness": 0.78,
+      "metal": 0,
+      "tag": "ashlar",
+      "role": "Carefully dressed castle ashlar",
+      "architectureShape": "ashlar_dressed",
+      "variationSeed": 510,
+      "storyTags": [
+        "stone_castle"
+      ],
+      "proc": {
+        "brickWidth": 12,
+        "brickHeight": 8,
+        "groutWidth": 1,
+        "domeHeight": 0.13,
+        "bevelDepth": 0.12,
+        "crackAmount": 0.2,
+        "fleckThreshold": 0.98
+      }
+    },
+    {
+      "id": 6,
+      "name": "cellar_fieldstone",
+      "type": "natural_rock",
+      "base": [
+        76,
+        79,
+        67
+      ],
+      "roughness": 0.97,
+      "metal": 0,
+      "tag": "natural",
+      "role": "Irregular damp fieldstone used in old cellar walls",
+      "architectureShape": "fieldstone_courses",
+      "variationSeed": 610,
+      "storyTags": [
+        "mossy_cellar"
+      ],
+      "proc": {
+        "blockSize": 11,
+        "groutWidth": 1,
+        "domeHeight": 0.38,
+        "bevelDepth": 0.3,
+        "cornerRound": 0.9,
+        "crackAmount": 1.1,
+        "normalStrength": 1.55
+      }
+    },
+    {
+      "id": 7,
+      "name": "timber_planks",
+      "type": "wood_planks",
+      "base": [
+        91,
+        61,
+        36
+      ],
+      "roughness": 0.84,
+      "metal": 0,
+      "tag": "timber",
+      "role": "Heavy undercroft timber planks",
+      "architectureShape": "timber_frame",
+      "variationSeed": 710,
+      "storyTags": [
+        "wooden_undercroft"
+      ],
+      "proc": {
+        "direction": "vertical",
+        "plankWidth": 8,
+        "boardLength": 32,
+        "groutWidth": 1,
+        "knotChance": 0.2,
+        "normalStrength": 1.2
+      }
+    },
+    {
+      "id": 8,
+      "name": "reinforced_dressed_wall",
+      "type": "metal_plate",
+      "base": [
+        83,
+        78,
+        67
+      ],
+      "roughness": 0.58,
+      "metal": 0.46,
+      "tag": "reinforced",
+      "role": "Dressed wall with dark metal reinforcement",
+      "architectureShape": "reinforced_panel",
+      "variationSeed": 810,
+      "storyTags": [
+        "fortified",
+        "refined"
+      ],
+      "proc": {
+        "blockSize": 12,
+        "groutWidth": 1,
+        "rustThreshold": 0.982,
+        "normalStrength": 1.65
+      }
+    },
+    {
+      "id": 9,
+      "name": "exposed_cave_earth",
+      "type": "packed_dirt",
+      "base": [79, 59, 39],
+      "roughness": 0.99,
+      "metal": 0,
+      "tag": "natural",
+      "role": "Compacted raw earth with embedded grit and shallow erosion",
+      "architectureShape": "eroded_earth",
+      "variationSeed": 910,
+      "storyTags": ["natural_grotto", "earth"],
+      "proc": {"patchSize":11,"pebbleChance":0.035,"largePebbleChance":0.012,"rutChance":0.06,"normalStrength":1.1}
+    },
+    {
+      "id": 10,
+      "name": "raw_cave_rock",
+      "type": "cave_rock",
+      "base": [73, 76, 65],
+      "roughness": 0.98,
+      "metal": 0,
+      "tag": "natural",
+      "role": "Unworked cave wall shaped by broad natural fractures",
+      "architectureShape": "noise_eroded_rock",
+      "variationSeed": 1010,
+      "storyTags": ["natural_grotto", "rock"],
+      "proc": {"macroCells":5,"detailCells":11,"creviceThreshold":0.2,"normalStrength":1.65}
+    },
+    {
+      "id": 11,
+      "name": "mineral_cave_rock",
+      "type": "cave_rock",
+      "base": [62, 72, 68],
+      "roughness": 0.96,
+      "metal": 0,
+      "tag": "natural",
+      "role": "Cool mineral-bearing cave rock with sparse pale inclusions",
+      "architectureShape": "noise_mineral_rock",
+      "variationSeed": 1110,
+      "storyTags": ["natural_grotto", "mineral"],
+      "proc": {"macroCells":6,"detailCells":13,"creviceThreshold":0.17,"mineralChance":0.018,"normalStrength":1.8}
     }
   ]
 }

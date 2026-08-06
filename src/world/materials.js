@@ -18,7 +18,7 @@ function heightToNormal(hL, hR, hU, hD, strength) {
   return [(nx * ilen * 0.5 + 0.5) * 255, (ny * ilen * 0.5 + 0.5) * 255, (nz * ilen * 0.5 + 0.5) * 255];
 }
 
-function genBrickTile(size, baseRGB, proc, seed, matRough) {
+function genBrickTile(size, baseRGB, proc, seed, matRough, matMetal = 0) {
   const hs = proc.heightScale ?? 1.15;
   const ns = proc.normalStrength ?? 1.15;
   const aoB = proc.aoBoost ?? proc.aoStrength ?? 0.6;
@@ -39,7 +39,8 @@ function genBrickTile(size, baseRGB, proc, seed, matRough) {
   const roundness = proc.roundness ?? 0.06;
   const groutDepth = proc.groutDepth ?? 0.08;
   const nf = proc.normalFactor ?? 1.6;
-  const brickW = 8, brickH = 8;
+  const brickW = Math.max(4, proc.brickWidth ?? proc.blockSize ?? 8);
+  const brickH = Math.max(4, proc.brickHeight ?? proc.blockSize ?? 8);
   const albedo = new Uint8Array(size * size * 4);
   const height = new Float32Array(size * size);
   const ao = new Float32Array(size * size);
@@ -67,7 +68,13 @@ function genBrickTile(size, baseRGB, proc, seed, matRough) {
     let h = inGrout ? groutDepth : 0.5 + varH + round - bevel * bevelDepth;
     let r = baseRGB[0], g = baseRGB[1], b = baseRGB[2];
     if (inGrout) { r *= 0.45; g *= 0.4; b *= 0.35; h = groutDepth; }
-    else { r += varR; g += varR * 0.7; b += varR * 0.5; }
+    else {
+      r += varR; g += varR * 0.7; b += varR * 0.5;
+      // A few single/paired texels break pristine faces without turning the
+      // material into photographic noise. These survive nearest filtering.
+      const fleck = hash2(x, y, seed + 2711);
+      if (fleck > (proc.fleckThreshold ?? 0.965)) { r -= 13; g -= 11; b -= 9; h -= 0.025; }
+    }
     const onEdge = ax < 1.5 || ax > brickW - 1.5 || ly < 1.5 || ly > brickH - 1.5;
     if (onEdge && hash2(bx * 3 + 1, by * 5 + 2, seed) > 0.7) h -= 0.14 * ca;
     h = Math.max(0, Math.min(1, (h - 0.5) * hs + 0.5));
@@ -91,7 +98,7 @@ function genBrickTile(size, baseRGB, proc, seed, matRough) {
     else roughV = baseRough + perBrickRoughJitter + microRough + microRough2 - dome * 0.18 + edgeRough;
     roughV = Math.max(0.2, Math.min(0.95, roughV));
     rough[idx] = Math.round(roughV * 255);
-    metal[idx] = 0;
+    metal[idx] = Math.round(Math.max(0, Math.min(1, matMetal)) * 255);
     const ei=idx*4; emiss[ei]=0; emiss[ei+1]=0; emiss[ei+2]=0; emiss[ei+3]=255;
   }
   const normal = new Uint8Array(size * size * 4);
@@ -107,7 +114,7 @@ function genBrickTile(size, baseRGB, proc, seed, matRough) {
   return { albedo, normal, height, rough, metal, ao, emiss };
 }
 
-function genSlabTile(size, baseRGB, proc, seed, isCeil, matRough) {
+function genSlabTile(size, baseRGB, proc, seed, isCeil, matRough, matMetal = 0) {
   const hs = proc.heightScale ?? 1.15;
   const ns = proc.normalStrength ?? 1.15;
   const aoB = proc.aoBoost ?? proc.aoStrength ?? 0.6;
@@ -154,7 +161,15 @@ function genSlabTile(size, baseRGB, proc, seed, isCeil, matRough) {
     let h = inGrout ? groutDepth : 0.5 + varH + round - bevel * bevelDepth;
     let r = baseRGB[0], g = baseRGB[1], b = baseRGB[2];
     if (inGrout) { r *= 0.6; g *= 0.6; b *= 0.6; }
-    else { r += varR; g += varR; b += varR; }
+    else {
+      r += varR; g += varR; b += varR;
+      const crackSeed = hash2(bx, by, seed + 401);
+      const crackX = Math.floor((ly * (0.35 + crackSeed * 0.4) + crackSeed * bs) % bs);
+      const hairline = crackSeed > (proc.crackThreshold ?? 0.86) && Math.abs(lx - crackX) < 0.7 && ly > 1;
+      const fleck = hash2(x, y, seed + 2801) > (proc.fleckThreshold ?? 0.975);
+      if (hairline) { r -= 18; g -= 18; b -= 17; h -= 0.055; }
+      else if (fleck) { r -= 10; g -= 10; b -= 9; h -= 0.018; }
+    }
     h = Math.max(0, Math.min(1, (h - 0.5) * hs + 0.5));
     const idx = y * size + x;
     height[idx] = h;
@@ -177,7 +192,7 @@ function genSlabTile(size, baseRGB, proc, seed, isCeil, matRough) {
     }
     roughV = Math.max(0.25, Math.min(0.95, roughV));
     rough[idx] = Math.round(roughV * 255);
-    metal[idx] = 0;
+    metal[idx] = Math.round(Math.max(0, Math.min(1, matMetal)) * 255);
     const ei=idx*4; emiss[ei]=0; emiss[ei+1]=0; emiss[ei+2]=0; emiss[ei+3]=255;
   }
   const normal = new Uint8Array(size * size * 4);
@@ -191,6 +206,160 @@ function genSlabTile(size, baseRGB, proc, seed, isCeil, matRough) {
     normal[ni] = n[0]|0; normal[ni+1]=n[1]|0; normal[ni+2]=n[2]|0; normal[ni+3]=255;
   }
   return { albedo, normal, height, rough, metal, ao, emiss };
+}
+
+function normalMapFromHeight(size, height, strength) {
+  const normal = new Uint8Array(size * size * 4);
+  for (let y = 0; y < size; y++) for (let x = 0; x < size; x++) {
+    const xm = x > 0 ? x - 1 : 0, xp = x < size - 1 ? x + 1 : size - 1;
+    const ym = y > 0 ? y - 1 : 0, yp = y < size - 1 ? y + 1 : size - 1;
+    const n = heightToNormal(height[y*size+xm], height[y*size+xp], height[ym*size+x], height[yp*size+x], strength);
+    const i = (y * size + x) * 4;
+    normal[i] = n[0] | 0; normal[i+1] = n[1] | 0; normal[i+2] = n[2] | 0; normal[i+3] = 255;
+  }
+  return normal;
+}
+
+// Purpose-built, deliberately low-frequency patterns. Details are quantized
+// to one or two texels so they read as authored pixel art after palette lookup.
+function genWoodTile(size, baseRGB, proc, seed, matRough, matMetal = 0) {
+  const albedo = new Uint8Array(size*size*4), height = new Float32Array(size*size);
+  const ao = new Float32Array(size*size), rough = new Uint8Array(size*size), metal = new Uint8Array(size*size), emiss = new Uint8Array(size*size*4);
+  const vertical = proc.direction === 'vertical';
+  const plankWidth = Math.max(5, proc.plankWidth ?? 8), boardLength = Math.max(16, proc.boardLength ?? 32);
+  const seamWidth = Math.max(1, proc.groutWidth ?? 1), knotChance = proc.knotChance ?? 0.18;
+  const roughBase = matRough ?? 0.84;
+  for (let y=0;y<size;y++) for (let x=0;x<size;x++) {
+    const across = vertical ? x : y, along = vertical ? y : x;
+    const plank = Math.floor(across/plankWidth), localAcross = across%plankWidth;
+    const jointOffset = (plank&1) ? Math.floor(boardLength*.5) : 0;
+    const localAlong = (along+jointOffset)%boardLength;
+    const seam = localAcross<seamWidth || localAlong<seamWidth;
+    const boardTone = (hash2(plank, Math.floor((along+jointOffset)/boardLength), seed)-.5)*30;
+    const grainCell = Math.floor(along/2);
+    const grain = (hash2(grainCell, plank, seed+53)-.5)*10 + ((grainCell+plank*3)%7===0 ? -7 : 0);
+    const knotSeed = hash2(plank, Math.floor((along+jointOffset)/boardLength), seed+79);
+    const knotCenter = 5 + Math.floor(knotSeed*Math.max(5,boardLength-10));
+    const knotDist = Math.hypot(localAlong-knotCenter, localAcross-plankWidth*.5);
+    const knot = knotSeed < knotChance && knotDist < 2.2;
+    const nail = !seam && (localAlong===2 || localAlong===boardLength-2) && (localAcross===2 || localAcross===plankWidth-2);
+    let r=baseRGB[0]+boardTone+grain, g=baseRGB[1]+boardTone*.72+grain*.55, b=baseRGB[2]+boardTone*.42+grain*.28;
+    let h=0.53 + (hash2(grainCell,plank,seed+97)-.5)*.035, a=.91, rv=roughBase + (hash2(x,y,seed+103)-.5)*.08, mv=matMetal;
+    if(seam){r*=.38;g*=.34;b*=.3;h=.12;a=.68;rv=Math.min(.98,roughBase+.12);mv=0;}
+    else if(knot){r-=26;g-=18;b-=10;h-=.07;rv=Math.min(.98,rv+.08);}
+    else if(nail){r=48;g=45;b=39;h=.62;rv=.58;mv=.72;}
+    const i=y*size+x, q=i*4; height[i]=Math.max(0,Math.min(1,h)); ao[i]=a; rough[i]=Math.round(Math.max(.25,Math.min(.98,rv))*255); metal[i]=Math.round(Math.max(0,Math.min(1,mv))*255);
+    albedo[q]=Math.max(0,Math.min(255,r)); albedo[q+1]=Math.max(0,Math.min(255,g)); albedo[q+2]=Math.max(0,Math.min(255,b)); albedo[q+3]=255; emiss[q+3]=255;
+  }
+  return {albedo,normal:normalMapFromHeight(size,height,proc.normalStrength??1.15),height,rough,metal,ao,emiss};
+}
+
+function genNaturalRockTile(size, baseRGB, proc, seed, matRough, matMetal = 0) {
+  const albedo = new Uint8Array(size*size*4), height = new Float32Array(size*size);
+  const ao = new Float32Array(size*size), rough = new Uint8Array(size*size), metal = new Uint8Array(size*size), emiss = new Uint8Array(size*size*4);
+  const cell = Math.max(7, proc.blockSize ?? 10), seamWidth = Math.max(1, proc.groutWidth ?? 2), roughBase=matRough??.96;
+  for(let y=0;y<size;y++) for(let x=0;x<size;x++){
+    // Both axes wander by a few whole texels. The course is still readable at
+    // low resolution, but no longer resolves as a perfect bathroom-tile grid.
+    const coarseCol=Math.floor(x/cell), yWarp=Math.floor((hash2(coarseCol,0,seed+19)-.5)*4), wy=y+yWarp;
+    const row=Math.floor(wy/cell), rowWarp=Math.floor((hash2(row,0,seed)-.5)*5), wx=x+rowWarp;
+    const col=Math.floor(wx/cell), lx=((wx%cell)+cell)%cell, ly=((wy%cell)+cell)%cell;
+    const edgeWarp=Math.floor((hash2(col,row,seed+31)-.5)*2);
+    const edge=Math.min(lx,cell-1-lx,ly+edgeWarp,cell-1-ly-edgeWarp);
+    const cornerChip=(lx+ly < 2+(hash2(col,row,seed+37)>.55?1:0)) || ((cell-1-lx)+(cell-1-ly) < 2);
+    const seam=edge<seamWidth || cornerChip;
+    const stone=hash2(col,row,seed+47), speck=hash2(x,y,seed+67);
+    const dx=(lx-cell*.5)/(cell*.5),dy=(ly-cell*.5)/(cell*.5),dome=Math.max(0,1-Math.hypot(dx,dy)*.62);
+    let tone=(stone-.5)*34+(speck>.965?-13:0),r=baseRGB[0]+tone,g=baseRGB[1]+tone*.92,b=baseRGB[2]+tone*.72;
+    let h=.39+dome*.22+(stone-.5)*.08,a=.88,rv=roughBase+(speck-.5)*.035;
+    if(seam){r*=.48;g*=.5;b*=.45;h=.09;a=.62;rv=.98;}
+    const i=y*size+x,q=i*4;height[i]=Math.max(0,Math.min(1,h));ao[i]=a;rough[i]=Math.round(Math.max(.35,Math.min(.99,rv))*255);metal[i]=Math.round(matMetal*255);
+    albedo[q]=Math.max(0,Math.min(255,r));albedo[q+1]=Math.max(0,Math.min(255,g));albedo[q+2]=Math.max(0,Math.min(255,b));albedo[q+3]=255;emiss[q+3]=255;
+  }
+  return {albedo,normal:normalMapFromHeight(size,height,proc.normalStrength??1.45),height,rough,metal,ao,emiss};
+}
+
+// Compacted cave earth is intentionally broad and quiet: large colour patches
+// establish soil, while isolated one/two-pixel stones provide the readable
+// retro detail. It must not look like another grouted masonry material.
+function genPackedDirtTile(size, baseRGB, proc, seed, matRough, matMetal = 0) {
+  const albedo=new Uint8Array(size*size*4),height=new Float32Array(size*size),ao=new Float32Array(size*size),rough=new Uint8Array(size*size),metal=new Uint8Array(size*size),emiss=new Uint8Array(size*size*4);
+  const patch=Math.max(7,proc.patchSize??10),cellCount=Math.max(4,Math.round(size/patch)),cellSize=size/cellCount;
+  const pebbleChance=proc.pebbleChance??.04,largeChance=proc.largePebbleChance??.01,roughBase=matRough??.98;
+  const soilNoise=(x,y,salt=0)=>{
+    const gx=x/cellSize,gy=y/cellSize,ix=Math.floor(gx),iy=Math.floor(gy),tx=gx-ix,ty=gy-iy;
+    const sx=tx*tx*(3-2*tx),sy=ty*ty*(3-2*ty),wrap=value=>(value%cellCount+cellCount)%cellCount;
+    const a=hash2(wrap(ix),wrap(iy),seed+salt),b=hash2(wrap(ix+1),wrap(iy),seed+salt),c=hash2(wrap(ix),wrap(iy+1),seed+salt),d=hash2(wrap(ix+1),wrap(iy+1),seed+salt);
+    return (a+(b-a)*sx)*(1-sy)+(c+(d-c)*sx)*sy;
+  };
+  for(let y=0;y<size;y++) for(let x=0;x<size;x++){
+    const px=Math.floor(x/cellSize),py=Math.floor(y/cellSize),lx=Math.floor(x-px*cellSize),ly=Math.floor(y-py*cellSize);
+    // Quantized smooth value noise makes irregular, seamless soil masses; it
+    // avoids both photographic grain and the square grid of a stone material.
+    const patchTone=(Math.round(soilNoise(x,y)*6)/6-.5)*26;
+    const grit=hash2(x,y,seed+31), pebble=grit>1-pebbleChance;
+    const gcx=Math.floor(x/4),gcy=Math.floor(y/4),largeSeed=hash2(gcx,gcy,seed+53);
+    const largePebble=largeSeed>1-largeChance && Math.hypot((x%4)-1.5,(y%4)-1.5)<1.45;
+    const rutSeed=hash2(px,py,seed+71),rut=(rutSeed<(proc.rutChance??.1)) && ly===2+Math.floor(rutSeed*Math.max(1,patch-4)) && lx>1;
+    const compact=hash2(Math.floor(x/3),Math.floor(y/3),seed+89)-.5;
+    let tone=patchTone+compact*7,r=baseRGB[0]+tone,g=baseRGB[1]+tone*.82,b=baseRGB[2]+tone*.58;
+    let h=.45+patchTone/255+compact*.025,a=.92,rv=roughBase+(grit-.5)*.025;
+    if(rut){r-=9;g-=8;b-=6;h-=.055;a=.82;rv=Math.min(.99,rv+.01);}
+    if(pebble||largePebble){
+      const bright=largePebble?24:15;r+=bright;g+=bright*.92;b+=bright*.72;h+=largePebble?.18:.1;a=.88;rv=Math.max(.72,rv-.08);
+    }
+    const i=y*size+x,q=i*4;height[i]=Math.max(.18,Math.min(.78,h));ao[i]=a;rough[i]=Math.round(Math.max(.72,Math.min(.995,rv))*255);metal[i]=Math.round(Math.max(0,Math.min(1,matMetal))*255);
+    albedo[q]=Math.max(0,Math.min(255,r));albedo[q+1]=Math.max(0,Math.min(255,g));albedo[q+2]=Math.max(0,Math.min(255,b));albedo[q+3]=255;emiss[q+3]=255;
+  }
+  return {albedo,normal:normalMapFromHeight(size,height,proc.normalStrength??1.1),height,rough,metal,ao,emiss};
+}
+
+// True cave rock has no courses, grout, or repeating rectangular cells. Two
+// periodic value-noise scales form broad bulges and smaller fracture basins;
+// quantization keeps the result authored-looking at the native pixel scale.
+function genCaveRockTile(size, baseRGB, proc, seed, matRough, matMetal = 0) {
+  const albedo=new Uint8Array(size*size*4),height=new Float32Array(size*size),ao=new Float32Array(size*size),rough=new Uint8Array(size*size),metal=new Uint8Array(size*size),emiss=new Uint8Array(size*size*4);
+  const valueNoise=(x,y,cells,salt)=>{
+    const gx=x/size*cells,gy=y/size*cells,ix=Math.floor(gx),iy=Math.floor(gy),tx=gx-ix,ty=gy-iy;
+    const sx=tx*tx*(3-2*tx),sy=ty*ty*(3-2*ty),wrap=value=>(value%cells+cells)%cells;
+    const a=hash2(wrap(ix),wrap(iy),seed+salt),b=hash2(wrap(ix+1),wrap(iy),seed+salt),c=hash2(wrap(ix),wrap(iy+1),seed+salt),d=hash2(wrap(ix+1),wrap(iy+1),seed+salt);
+    return (a+(b-a)*sx)*(1-sy)+(c+(d-c)*sx)*sy;
+  };
+  const macroCells=Math.max(3,proc.macroCells??5),detailCells=Math.max(7,proc.detailCells??11),roughBase=matRough??.98;
+  for(let y=0;y<size;y++) for(let x=0;x<size;x++){
+    const macro=valueNoise(x,y,macroCells,0),detail=valueNoise(x,y,detailCells,73),fracture=valueNoise(x,y,detailCells+4,149);
+    const crevice=Math.abs(fracture-.5)<(proc.creviceThreshold??.19)*.075 && detail<.65;
+    const inclusion=hash2(x,y,seed+211)>(1-(proc.mineralChance??.008));
+    const quantized=Math.round((macro*.72+detail*.28)*9)/9;
+    let tone=(quantized-.5)*38+(detail-.5)*10,r=baseRGB[0]+tone,g=baseRGB[1]+tone*.96,b=baseRGB[2]+tone*.82;
+    let h=.25+macro*.39+detail*.12,a=.9,rv=roughBase+(detail-.5)*.035;
+    if(crevice){r*=.48;g*=.5;b*=.46;h-=.2;a=.58;rv=.995;}
+    else if(inclusion){r+=32;g+=29;b+=20;h+=.035;rv=Math.max(.76,rv-.12);}
+    h=Math.round(Math.max(.05,Math.min(.88,h))*32)/32;
+    const i=y*size+x,q=i*4;height[i]=h;ao[i]=a;rough[i]=Math.round(Math.max(.72,Math.min(.995,rv))*255);metal[i]=Math.round(Math.max(0,Math.min(1,matMetal))*255);
+    albedo[q]=Math.max(0,Math.min(255,r));albedo[q+1]=Math.max(0,Math.min(255,g));albedo[q+2]=Math.max(0,Math.min(255,b));albedo[q+3]=255;emiss[q+3]=255;
+  }
+  return {albedo,normal:normalMapFromHeight(size,height,proc.normalStrength??1.7),height,rough,metal,ao,emiss};
+}
+
+function genMetalPlateTile(size, baseRGB, proc, seed, matRough, matMetal = .55) {
+  const albedo=new Uint8Array(size*size*4),height=new Float32Array(size*size),ao=new Float32Array(size*size),rough=new Uint8Array(size*size),metal=new Uint8Array(size*size),emiss=new Uint8Array(size*size*4);
+  const plate=Math.max(8,proc.blockSize??12),seamWidth=Math.max(1,proc.groutWidth??1),roughBase=matRough??.58;
+  for(let y=0;y<size;y++) for(let x=0;x<size;x++){
+    const bx=Math.floor(x/plate),by=Math.floor(y/plate),lx=x%plate,ly=y%plate;
+    const seam=lx<seamWidth||ly<seamWidth, rivet=!seam&&(lx===2||lx===plate-2)&&(ly===2||ly===plate-2);
+    const scratchSeed=hash2(bx,by,seed+111), scratch=scratchSeed>.62&&ly===2+Math.floor(scratchSeed*(plate-4))&&lx>3&&lx<plate-2;
+    const rust=hash2(x,y,seed+137)>(proc.rustThreshold??.975);
+    const panelTone=(hash2(bx,by,seed)-.5)*18;
+    let r=baseRGB[0]+panelTone,g=baseRGB[1]+panelTone,b=baseRGB[2]+panelTone*.9,h=.52,a=.92,rv=roughBase,mv=matMetal;
+    if(seam){r*=.34;g*=.34;b*=.32;h=.1;a=.64;rv=Math.min(.96,roughBase+.18);}
+    else if(rivet){r+=30;g+=28;b+=24;h=.78;a=.86;rv=Math.max(.32,roughBase-.12);mv=Math.max(.78,mv);}
+    else if(scratch){r+=16;g+=15;b+=13;h=.46;rv=Math.min(.92,roughBase+.12);}
+    if(rust&&!seam){r+=34;g-=5;b-=13;rv=Math.min(.98,rv+.28);mv*=.48;}
+    const i=y*size+x,q=i*4;height[i]=h;ao[i]=a;rough[i]=Math.round(Math.max(.2,Math.min(.98,rv))*255);metal[i]=Math.round(Math.max(0,Math.min(1,mv))*255);
+    albedo[q]=Math.max(0,Math.min(255,r));albedo[q+1]=Math.max(0,Math.min(255,g));albedo[q+2]=Math.max(0,Math.min(255,b));albedo[q+3]=255;emiss[q+3]=255;
+  }
+  return {albedo,normal:normalMapFromHeight(size,height,proc.normalStrength??1.65),height,rough,metal,ao,emiss};
 }
 
 // Opaque round sewer grille fixture. Albedo alpha is a coverage mask used to
@@ -307,12 +476,17 @@ export function generateMaterialArrayData(wallMats, floorMats, ceilMats, procCon
   function pickTileType(mat, defaultType) {
     // Data-driven tile generator registry – allows new types without code change if added to registry
     const reg = {
-      'brick': (sz, base, pr, sd, rv) => genBrickTile(sz, base, pr, sd, rv),
-      'stone_block': (sz, base, pr, sd, rv) => genBrickTile(sz, base, { ...pr, blockSize: pr.blockSize ?? 10 }, sd, rv),
-      'slab': (sz, base, pr, sd, rv) => genSlabTile(sz, base, pr, sd, false, rv),
-      'cobble': (sz, base, pr, sd, rv) => genSlabTile(sz, base, { ...pr, blockSize: pr.blockSize ?? 6, groutWidth: pr.groutWidth ?? 2 }, sd, true, rv),
-      'beams': (sz, base, pr, sd, rv) => genSlabTile(sz, base, { ...pr, blockSize: pr.blockSize ?? 12 }, sd, true, rv),
-      'channel_stone': (sz, base, pr, sd, rv) => genSlabTile(sz, base, { ...pr, blockSize: pr.blockSize ?? 6, groutWidth: pr.groutWidth ?? 1 }, sd, false, rv),
+      'brick': (sz, base, pr, sd, rv, mv) => genBrickTile(sz, base, pr, sd, rv, mv),
+      'stone_block': (sz, base, pr, sd, rv, mv) => genBrickTile(sz, base, { ...pr, blockSize: pr.blockSize ?? 10 }, sd, rv, mv),
+      'slab': (sz, base, pr, sd, rv, mv) => genSlabTile(sz, base, pr, sd, false, rv, mv),
+      'cobble': (sz, base, pr, sd, rv, mv) => genSlabTile(sz, base, { ...pr, blockSize: pr.blockSize ?? 6, groutWidth: pr.groutWidth ?? 2 }, sd, true, rv, mv),
+      'beams': (sz, base, pr, sd, rv, mv) => genWoodTile(sz, base, { ...pr, plankWidth: pr.plankWidth ?? 10, boardLength: pr.boardLength ?? 32 }, sd, rv, mv),
+      'wood_planks': (sz, base, pr, sd, rv, mv) => genWoodTile(sz, base, pr, sd, rv, mv),
+      'natural_rock': (sz, base, pr, sd, rv, mv) => genNaturalRockTile(sz, base, pr, sd, rv, mv),
+      'packed_dirt': (sz, base, pr, sd, rv, mv) => genPackedDirtTile(sz, base, pr, sd, rv, mv),
+      'cave_rock': (sz, base, pr, sd, rv, mv) => genCaveRockTile(sz, base, pr, sd, rv, mv),
+      'metal_plate': (sz, base, pr, sd, rv, mv) => genMetalPlateTile(sz, base, pr, sd, rv, mv),
+      'channel_stone': (sz, base, pr, sd, rv, mv) => genSlabTile(sz, base, { ...pr, blockSize: pr.blockSize ?? 6, groutWidth: pr.groutWidth ?? 1 }, sd, false, rv, mv),
       'round_grille_fixture': (sz, base, pr, sd, rv) => genRoundGrilleTile(sz, base, pr, sd, rv),
     };
     const fn = reg[mat.type] || (defaultType === 'brick' ? reg['brick'] : reg['slab']);
@@ -336,7 +510,7 @@ export function generateMaterialArrayData(wallMats, floorMats, ceilMats, procCon
       const metalVal = Math.round((mat.metal ?? 0) * 255);
       const emissStr = Math.round((mat.emissiveStrength ?? 0) * 255);
       const tileGen = pickTileType(mat, type);
-      const tile = tileGen(texSize, base, finalProc, seed, roughValRaw);
+      const tile = tileGen(texSize, base, finalProc, seed, roughValRaw, metalVal / 255);
       const off = mi * layerPix;
       const off4 = off * 4;
       for (let y = 0; y < texSize; y++) for (let x = 0; x < texSize; x++) {

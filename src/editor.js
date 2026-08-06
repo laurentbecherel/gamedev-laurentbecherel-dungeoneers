@@ -1,5 +1,6 @@
 import { getAssetList, getAsset, saveAsset } from "./config/config.js";
 import { getLiveConfigManager } from "./config/live-config.js";
+import { buildArchitecturePreview } from "./editor-architecture-preview.js";
 
 const $ = id => document.getElementById(id);
 let current = null, currentData = null, lastSavedData = null, mode = "visual";
@@ -309,6 +310,7 @@ async function selectAsset(cat, name, el) {
 
 function render() {
   const panel = $("editor-panel"); if (!panel) return;
+  panel.classList.toggle('architecture-editor-active', isArchitectureConfig());
   panel.innerHTML = `<div class="tabs"><button class="tab ${mode==='visual'?'active':''}" id="tab-visual">Visual Editor</button><button class="tab ${mode==='raw'?'active':''}" id="tab-raw">Raw JSON</button></div><div id="tab-content"></div>`;
   const tabV = $("tab-visual"), tabR = $("tab-raw");
   if (tabV) tabV.onclick = () => { syncFromUI(); mode = "visual"; render(); };
@@ -318,9 +320,16 @@ function render() {
 function isPaletteConfig() {
   return current && current.name === 'palette' && current.category && current.category.includes('rendering');
 }
+function isArchitectureConfig() {
+  return current && current.name === 'architectures' && current.category === 'materials';
+}
 
 function renderVisual() {
   const c = $("tab-content"); if (!c) return; c.innerHTML = ""; if (!currentData) return;
+  if (isArchitectureConfig()) {
+    const mount = document.createElement('div'); mount.className = 'architecture-preview-mount'; c.appendChild(mount);
+    buildArchitecturePreview(currentData).then(preview => { if (mount.isConnected) mount.replaceChildren(preview); });
+  }
   if (isPaletteConfig()) {
     const custom = buildPaletteEditor();
     c.appendChild(custom);

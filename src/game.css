@@ -29,6 +29,50 @@
   text-transform: uppercase;
 }
 
+.architecture-debug-hidden { visibility: hidden; }
+#architecture-debug-canvas {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+  image-rendering: pixelated;
+  background: #090c0b;
+}
+.architecture-debug-toggle {
+  position: fixed;
+  z-index: 42;
+  top: 82px;
+  left: 16px;
+  padding: 7px 10px;
+  border: 1px solid var(--line);
+  color: var(--muted);
+  background: rgba(8,10,10,.9);
+  font: 700 9px var(--mono);
+  letter-spacing: .1em;
+  cursor: pointer;
+}
+.architecture-debug-toggle[aria-pressed="true"] { border-color: var(--ember); color: var(--ink); }
+.architecture-debug-toggle kbd { margin-left: 5px; color: var(--ember); font: inherit; }
+.architecture-debug-legend {
+  position: fixed;
+  z-index: 41;
+  top: 82px;
+  right: 16px;
+  width: min(330px, 42vw);
+  padding: 13px;
+  border: 1px solid var(--line);
+  color: var(--muted);
+  background: rgba(8,10,10,.94);
+  font: 9px/1.45 var(--mono);
+}
+.architecture-debug-legend > strong { display: block; color: var(--ember); letter-spacing: .14em; }
+.architecture-debug-legend > span { display: block; margin: 3px 0 9px; color: var(--dim); }
+.architecture-legend-list { display: grid; grid-template-columns: 10px 30px 1fr; gap: 4px 6px; align-items: center; }
+.architecture-legend-list i { width: 9px; height: 9px; background: var(--legend); }
+.architecture-legend-list b, .architecture-legend-types b { color: var(--ink); }
+.architecture-legend-types { display: flex; flex-wrap: wrap; gap: 5px 10px; margin-top: 9px; padding-top: 8px; border-top: 1px solid var(--line); }
+
 .game .live-badge {
   top: 80px;
   right: 16px;

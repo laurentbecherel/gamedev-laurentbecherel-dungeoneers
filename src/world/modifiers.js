@@ -132,9 +132,9 @@ export function generateModifierMap(dungeon, config) {
     }
   }
 
-  function nearestRoomRole(x, y, fallback) {
+  function nearestRoomIndex(x, y) {
     const direct = roomGrid[y*w+x];
-    if (direct >= 0) return dungeon.rooms[direct]?.role || fallback;
+    if (direct >= 0) return direct;
     // A wall cell often sits just outside the room rectangle. Carry the room's
     // story field onto its shell instead of silently classifying every wall as hall.
     for (let radius=1; radius<=3; radius++) {
@@ -143,10 +143,15 @@ export function generateModifierMap(dungeon, config) {
         const nx=x+dx, ny=y+dy;
         if (nx<0 || ny<0 || nx>=w || ny>=h) continue;
         const ri = roomGrid[ny*w+nx];
-        if (ri >= 0) return dungeon.rooms[ri]?.role || fallback;
+        if (ri >= 0) return ri;
       }
     }
-    return fallback;
+    return -1;
+  }
+
+  function nearestRoomRole(x, y, fallback) {
+    const roomIndex = nearestRoomIndex(x, y);
+    return roomIndex >= 0 ? (dungeon.rooms[roomIndex]?.role || fallback) : fallback;
   }
 
   function isWallCell(x,y){
@@ -223,6 +228,9 @@ export function generateModifierMap(dungeon, config) {
     const ri = roomGrid[i];
     const role = (ri>=0 ? dungeon.rooms[ri]?.role : null) || (isFloor ? 'corridor' : 'hall');
     const rw = roleWeights[role] || roleWeights['corridor'] || DEFAULT_ROLE_WEIGHTS[role] || DEFAULT_ROLE_WEIGHTS.corridor;
+    const storyRoomIndex = ri >= 0 ? ri : nearestRoomIndex(x, y);
+    const modifierMultipliers = dungeon.rooms?.[storyRoomIndex]?.modifierMultipliers || {};
+    const modifierFactor = name => Number.isFinite(Number(modifierMultipliers[name])) ? Math.max(0, Number(modifierMultipliers[name])) : 1;
 
     const xc = x + 0.5;
     const yc = y + 0.5;
@@ -245,8 +253,8 @@ export function generateModifierMap(dungeon, config) {
     const floorBoost = 0.55 + 0.45 * lowFloorFactor;
     const nearWall = isNearWall(x,y) ? 1.2 : 1.0;
 
-    const rolePuddle = rw.puddle ?? 0.65;
-    const roleMoss = rw.moss ?? 0.0;
+    const rolePuddle = (rw.puddle ?? 0.65) * modifierFactor('puddle');
+    const roleMoss = (rw.moss ?? 0.0) * modifierFactor('moss');
     let puddleI = rolePuddle * shape * floorBoost * nearWall;
 
     const globalN = fbm(xc*globalNoiseScale, yc*globalNoiseScale, seed, 2);
@@ -266,7 +274,7 @@ export function generateModifierMap(dungeon, config) {
 
     // Blood is placed by room story, then shaped into irregular cell clusters
     // in the shader. Keep a broad CPU field so splatters can cross tile seams.
-    const roleBlood = rw.blood ?? 0.0;
+    const roleBlood = (rw.blood ?? 0.0) * modifierFactor('blood');
     let bloodI = 0;
     if (roleBlood > 0.001) {
       const bloodLarge = fbm((xc + warpX * 0.45) * bloodScale, (yc + warpY * 0.45) * bloodScale, seed+711, 4);
@@ -281,7 +289,7 @@ export function generateModifierMap(dungeon, config) {
 
     // Dust uses a much broader, softer field than blood. Material height/AO
     // and upward-facing placement are resolved per pixel in the shader.
-    const roleDust = rw.dust ?? 0.0;
+    const roleDust = (rw.dust ?? 0.0) * modifierFactor('dust');
     let dustI = 0;
     if (roleDust > 0.001) {
       const dustLarge = fbm((xc + warpX * 0.2) * dustScale, (yc + warpY * 0.2) * dustScale, seed+731, 4);
@@ -299,7 +307,7 @@ export function generateModifierMap(dungeon, config) {
     // whole portion of a room or wall is eligible to be damaged.
     const damageRole = nearestRoomRole(x, y, isFloor ? role : 'hall');
     const damageRw = roleWeights[damageRole] || roleWeights.corridor || DEFAULT_ROLE_WEIGHTS[damageRole] || DEFAULT_ROLE_WEIGHTS.corridor;
-    const roleDamaged = damageRw.damaged ?? rw.damaged ?? 0.0;
+    const roleDamaged = (damageRw.damaged ?? rw.damaged ?? 0.0) * modifierFactor('damaged');
     let damagedI = 0;
     if (roleDamaged > 0.001) {
       const warpX = (fbm(xc * damagedWarpScale, yc * damagedWarpScale, seed+611, 2) - 0.5) * damagedWarpStrength;

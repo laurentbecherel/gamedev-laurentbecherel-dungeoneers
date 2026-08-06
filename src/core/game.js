@@ -12,6 +12,7 @@ import { UI } from "../ui/ui.js";
 import { DiscoveryManager } from "../world/discovery.js";
 import { getLiveConfigManager, getTierForLogical, reverseLookupCategoryName } from "../config/live-config.js";
 import { generateMaterialAtlases, generateMaterialArrayData } from "../world/materials.js";
+import { ArchitectureDebugOverlay } from "../render/architecture-debug.js";
 
 const DEFAULT_DISCOVERY_FALLBACK = {
   reveal: { enabled: true, peekDistance: 1, corridorRevealRadius: 4, animationDuration: 400, dither: { enabled: true, pattern: "random" } },
@@ -51,6 +52,9 @@ export class Game {
     this._regenRequired = false;
     this._regenBannerEl = null;
     this._liveBadgeEl = null;
+    this.architectureDebug = null;
+    this._architectureOverrideId = null;
+    this._architectureCycleBusy = false;
   }
 
   _createLiveUI() {
@@ -139,6 +143,7 @@ export class Game {
     merged.materialsProc = renderCfgs["materials-proc"] || baseCfg.materialsProc || baseCfg["materials-proc"] || baseCfg.materialProc || { walls:{}, floors:{}, ceils:{} };
     merged.materialAssignments = renderCfgs["material-assignments"] || baseCfg.materialAssignments || baseCfg["material-assignments"] || { version:1, policy:{}, fallback:{wall:1,floor:1,ceil:1} };
     merged['material-assignments'] = merged.materialAssignments;
+    merged.architectures = renderCfgs.architectures || baseCfg.architectures || { version:1, architectures:[] };
     merged.materialModifiers = renderCfgs["material-modifiers"] || baseCfg.materialModifiers || baseCfg["material-modifiers"] || { version:1, enabled:false, modifiers:{} };
     merged['material-modifiers'] = merged.materialModifiers;
     merged.structuralFeatures = renderCfgs['structural-features'] || baseCfg.structuralFeatures || baseCfg['structural-features'] || { enabled:false };
@@ -347,9 +352,9 @@ export class Game {
         const walls = await getAsset('materials', 'walls').catch(()=>({materials:[]}));
         const floors = await getAsset('materials', 'floors').catch(()=>({materials:[]}));
         const ceils = await getAsset('materials', 'ceils').catch(()=>({materials:[]}));
-        const wallMats = (walls && walls.materials) ? walls.materials.slice(0,8) : [{base:[128,128,128]}];
-        const floorMats = (floors && floors.materials) ? floors.materials.slice(0,8) : [{base:[128,128,128]}];
-        const ceilMats = (ceils && ceils.materials) ? ceils.materials.slice(0,8) : [{base:[128,128,128]}];
+        const wallMats = (walls && walls.materials) ? [...walls.materials] : [{base:[128,128,128]}];
+        const floorMats = (floors && floors.materials) ? [...floors.materials] : [{base:[128,128,128]}];
+        const ceilMats = (ceils && ceils.materials) ? [...ceils.materials] : [{base:[128,128,128]}];
         const proc = mproc || this.cfg['materials-proc'] || this.cfg.materialsProc || {};
         const procNorm = proc.walls ? proc : { walls: proc, floors: proc.floors || proc.walls || proc, ceils: proc.ceils || proc.floors || proc.walls || proc };
         // Prefer array path if renderer supports it
@@ -579,6 +584,9 @@ export class Game {
       }
     }
     if (lastErr) throw lastErr;
+    if (this.dungeon?.meta?.paletteAccents?.length) {
+      this.cfg.palette = { ...(this.cfg.palette || {}), accentRamps: this.dungeon.meta.paletteAccents };
+    }
     this.renderer = new GPURenderer(this.canvas);
     await this.renderer.init(this.dungeon, this.cfg);
     const sx = Math.floor(this.dungeon.startX) + 0.5;
@@ -589,6 +597,10 @@ export class Game {
     this.input = new Input(this.canvas);
     this.ui = new UI(this.cfg);
     this.ui.setDungeon(this.dungeon);
+    this.architectureDebug = new ArchitectureDebugOverlay(document.querySelector('.game-viewport'), this.canvas);
+    this.architectureDebug.setDungeon(this.dungeon);
+    const architectureToggle = document.getElementById('architecture-debug-toggle');
+    if (architectureToggle) architectureToggle.onclick = () => this._toggleArchitectureDebug();
     this.hud.style.display = "none";
     try { window.game = this; window._gamePlayer = this.player; window._gameRenderer = this.renderer; window._gameDiscovery = this.discovery; window._gameDungeon = this.dungeon; console.log("Game exposed for E2E in game.js", !!window.game); } catch(e) { console.warn("expose failed in game.js", e); }
     this._resize();
@@ -606,9 +618,10 @@ export class Game {
     const scale = Math.min(vw / baseW, vh / baseH);
     this.canvas.style.width = Math.floor(baseW * scale) + "px";
     this.canvas.style.height = Math.floor(baseH * scale) + "px";
+    if (this.architectureDebug?.visible) this.architectureDebug.draw(this.player);
   }
 
-  async regen(seedOverride = null) {
+  async regen(seedOverride = null, { preservePlayer = false } = {}) {
     // Live-edit: ensure fresh fetch from server, not stale _caches, so Save+R works even when live OFF
     try { invalidateCache(); } catch {}
     const debugCfg = this.cfg?.debug || {};
@@ -617,29 +630,61 @@ export class Game {
     while (attempts < maxAttempts) {
       try {
         this.cfg = await this._loadAllConfigs();
+        if (this._architectureOverrideId && this.cfg.architectures) {
+          this.cfg.architectures = {
+            ...this.cfg.architectures,
+            selection: {
+              ...(this.cfg.architectures.selection || {}),
+              forcedArchitectureId: this._architectureOverrideId,
+              maxArchitecturesPerLevel: 1
+            }
+          };
+        }
         const seedToUse = seedOverride !== null ? seedOverride : (attempts === 0 ? null : Math.floor(Math.random() * 1000000));
         this.dungeon = await generateDungeon(this.cfg, seedToUse);
+        if (this.dungeon?.meta?.paletteAccents?.length) {
+          this.cfg.palette = { ...(this.cfg.palette || {}), accentRamps: this.dungeon.meta.paletteAccents };
+        }
         console.log("Dungeon regenerated:", this.dungeon.seed);
         // uploadMap also rebuilds config-driven modifier/structural data. Keep the
         // renderer cache in lockstep with the freshly reloaded configuration.
         this.renderer.updateConfig(this.cfg);
+        this.renderer.updatePalette?.(this.cfg.palette);
         this.renderer.uploadMap(this.dungeon);
-        const rsx = Math.floor(this.dungeon.startX) + 0.5;
-        const rsy = Math.floor(this.dungeon.startY) + 0.5;
-        this.player.setPosition(rsx, rsy, -Math.PI / 2);
-        this.player.setConfig(this.cfg);
-        this._initDiscovery();
+        const isWalkable = (x, y) => {
+          const gx = Math.floor(x), gy = Math.floor(y);
+          return gx >= 0 && gy >= 0 && gx < this.dungeon.w && gy < this.dungeon.h
+            && this.dungeon.grid[gy * this.dungeon.w + gx] === 0;
+        };
+        // Architecture cycling retains the seed/topology. Do not call any
+        // Player mutator here: setConfig/setPosition would cancel a grid lerp,
+        // buffered step, held input, mouse delta and view-bob phase. Movement
+        // simply continues against the freshly themed copy of the same map.
+        const canKeepPlayer = preservePlayer && isWalkable(this.player.x, this.player.y)
+          && (!this.player.gridMode || isWalkable(this.player.gridTargetX, this.player.gridTargetY));
+        if (!canKeepPlayer) {
+          this.player.setConfig(this.cfg);
+          const rsx = Math.floor(this.dungeon.startX) + 0.5;
+          const rsy = Math.floor(this.dungeon.startY) + 0.5;
+          this.player.setPosition(rsx, rsy, -Math.PI / 2);
+        }
+        if (preservePlayer && this.discovery && this.discovery._w === this.dungeon.w && this.discovery._h === this.dungeon.h) {
+          this.discovery.updateConfig(this.cfg?.discovery || { reveal:{}, trail:{} });
+        } else {
+          this._initDiscovery();
+        }
         this.ui.setDungeon(this.dungeon);
+        this.architectureDebug?.setDungeon(this.dungeon);
         try { window._gameDiscovery = this.discovery; window._gameDungeon = this.dungeon; } catch(e) {}
         this._setRegenRequired(false);
-        return;
+        return true;
       } catch (e) {
         attempts++;
         if (attempts >= maxAttempts) {
           console.warn("Generation failed after " + maxAttempts + " attempts", e);
           this.hud.textContent = "Generation failed — check console";
           this.hud.style.display = "block";
-          return;
+          return false;
         }
       }
     }
@@ -654,7 +699,9 @@ export class Game {
       this.input.update(dt, this.player, this.dungeon);
       this._updateDiscovery();
 
-      if (this.showMap) {
+      if (this.architectureDebug?.visible) {
+        this.architectureDebug.draw(this.player);
+      } else if (this.showMap) {
         const discoveryCfg = this.cfg?.discovery || null;
         const now = typeof performance !== "undefined" ? performance.now() : Date.now();
         const animDuration = discoveryCfg?.reveal?.animationDuration ?? 400;
@@ -671,6 +718,11 @@ export class Game {
   async _onKeyDown(e) {
     const code = e.code || "";
     if (code === "KeyR") { await this.regen(null); return; }
+    if (code === "KeyI") { this._toggleArchitectureDebug(); return; }
+    const architectureKey = this.cfg?.debug?.architectureCycle?.key || 'KeyH';
+    if (code === architectureKey && e.repeat) return;
+    if (code === architectureKey && !e.shiftKey) { await this._cycleArchitecture(); return; }
+    if (code === architectureKey && e.shiftKey) { await this._resetArchitectureCycle(); return; }
     if (code === "KeyM") {
       const wasShowing = this.showMap;
       this.showMap = !this.showMap;
@@ -726,6 +778,58 @@ export class Game {
     if (code === "Digit9" || code === "Numpad9") { const v = this.renderer.toggleModifiers(); this._showHud("Modifiers: " + (v ? "ON (moss + puddle + blood + dust + damaged; live JSON/UBO tuning)" : "OFF (clean PBR)")); return; }
     if (code === "Digit0" || code === "Numpad0") { const v = this.renderer.toggleSSR(); this._showHud("SSR Puddle Reflections: " + (v ? "ON (puddle-only, sprite-aware)" : "OFF")); return; }
     if (code === "KeyO") { const v = this.renderer.cycleSSRDebug(); const names=["OFF","PuddleMask cyan/pink","Depth","Normal","ReflectionUV","HitMask","RayDir","Fresnel","SSR only"]; this._showHud("SSR Debug: " + (names[v]||"Mode "+v) + " ("+v+") - O cycle, 0 toggle"); return; }
+  }
+
+  _toggleArchitectureDebug() {
+    if (!this.architectureDebug) return false;
+    const visible = this.architectureDebug.toggle();
+    const button = document.getElementById('architecture-debug-toggle');
+    if (button) button.setAttribute('aria-pressed', String(visible));
+    this._showHud(`Architecture IDs: ${visible ? 'ON — A# architecture / T# room type' : 'OFF — rendered PBR view'}`);
+    return visible;
+  }
+
+  _architectureChoices() {
+    const config = this.cfg?.architectures || {};
+    const active = new Set(config.selection?.activeArchitectureIds || []);
+    return (config.architectures || []).filter(architecture => architecture?.id && (!active.size || active.has(architecture.id)));
+  }
+
+  async _cycleArchitecture() {
+    if (this._architectureCycleBusy || !this.dungeon) return false;
+    const choices = this._architectureChoices();
+    if (!choices.length) { this._showHud('Architecture cycle: no configured architectures'); return false; }
+    const currentId = this._architectureOverrideId || this.dungeon.meta?.architecturePlan?.dominant;
+    const currentIndex = Math.max(-1, choices.findIndex(architecture => architecture.id === currentId));
+    const next = choices[(currentIndex + 1) % choices.length];
+    const retainedSeed = this.cfg?.debug?.architectureCycle?.keepSeed !== false ? this.dungeon.seed : null;
+    this._architectureOverrideId = next.id;
+    this._architectureCycleBusy = true;
+    this._showHud(`Changing architecture → ${next.name}…`);
+    try {
+      const ok = await this.regen(retainedSeed, { preservePlayer: true });
+      const activeName = this.dungeon?.rooms?.[0]?.architectureName || next.name;
+      this._showHud(ok ? `Architecture: ${activeName} · H next · Shift+H auto` : `Architecture change failed: ${next.name}`);
+      return !!ok;
+    } finally {
+      this._architectureCycleBusy = false;
+    }
+  }
+
+  async _resetArchitectureCycle() {
+    if (this._architectureCycleBusy || !this.dungeon) return false;
+    const retainedSeed = this.cfg?.debug?.architectureCycle?.keepSeed !== false ? this.dungeon.seed : null;
+    this._architectureOverrideId = null;
+    this._architectureCycleBusy = true;
+    this._showHud('Architecture: returning to weighted story selection…');
+    try {
+      const ok = await this.regen(retainedSeed, { preservePlayer: true });
+      const activeName = this.dungeon?.rooms?.[0]?.architectureName || this.dungeon?.meta?.architecturePlan?.dominant || 'automatic';
+      this._showHud(ok ? `Architecture: ${activeName} (automatic) · H to cycle` : 'Architecture reset failed');
+      return !!ok;
+    } finally {
+      this._architectureCycleBusy = false;
+    }
   }
 
   _focusStructuralFeature() {

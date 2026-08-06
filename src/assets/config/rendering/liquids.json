@@ -3,33 +3,45 @@
   "enabled": true,
   "liquids": {
     "water": {
-      "shallowColor": [52, 78, 82],
-      "deepColor": [13, 28, 31],
-      "roughness": 0.08,
-      "reflectionWeight": 0.82,
+      "shallowColor": [
+        103,
+        213,
+        116
+      ],
+      "deepColor": [
+        13,
+        28,
+        31
+      ],
+      "roughness": 0.1,
+      "reflectionWeight": 0.41,
       "normalAmplitude": 0.022,
       "rippleScale": 2.1,
-      "flowSpeed": 0.035,
+      "flowSpeed": 0.04,
       "animationHz": 8,
-      "edgeDarkening": 0.2,
+      "edgeDarkening": 2,
       "appearance": {
         "edgeBlendDepth": 0.08,
         "submergedLiningBrightness": 0.48,
-        "surfaceOpacity": 0.78,
+        "surfaceOpacity": 0.9,
         "minimumRoughness": 0.03,
-        "reflectionNormalStrength": 0.18,
+        "reflectionNormalStrength": 0.2,
         "colorVariationScale": 5,
         "colorVariationSpeed": 0.8,
         "shallowMix": 0.32,
         "shallowVariation": 0.18
       },
       "ripples": {
-        "primaryAcrossFrequency": 0.73,
+        "primaryAcrossFrequency": 6.73,
         "secondaryAlongFrequency": 0.61,
         "secondaryAcrossFrequency": 1.17,
         "secondaryPhase": 1.7
       },
-      "emissive": [0, 0, 0]
+      "emissive": [
+        0,
+        0,
+        0
+      ]
     }
   }
 }
