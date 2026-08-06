@@ -207,13 +207,13 @@
           33,
           30
         ],
-        "colorStrength": 0.95,
+        "colorStrength": 0.9,
         "desc": "Exposed substrate color and replacement strength. Values near 1 erase the host brick albedo inside cavity cores."
       },
       "noise": {
         "scale": 2.3,
         "threshold": 0.5,
-        "feather": 0.03,
+        "feather": 0.02,
         "warpStrength": 0,
         "desc": "True 3D damage field. Higher threshold makes scars sparser; feather controls the chipped boundary and therefore the geometric bevel width."
       },
@@ -271,17 +271,17 @@
         "cavityDepth": 0.1,
         "pitVar": 0.1,
         "ridgeHeight": -0.04,
-        "normalStrength": 0.2,
+        "normalStrength": 0.15,
         "normalDetail": 0.7,
         "roughAdd": 0.15,
         "roughVar": 0.2,
         "aoStrength": 0.4,
         "hostReliefRemoval": 0.9,
-        "normalSampleStep": 0.035,
+        "normalSampleStep": 0.004,
         "substrateHeight": 0.18,
         "microHeight": 0.06,
         "depthBoost": 1,
-        "pomBoost": 1.1,
+        "pomBoost": 1,
         "desc": "Unified cavity surface. Positive cavityDepth is always subtracted; noise feather forms the bevel; host relief is removed in the core; normals are finite differences of this same height field."
       }
     },
