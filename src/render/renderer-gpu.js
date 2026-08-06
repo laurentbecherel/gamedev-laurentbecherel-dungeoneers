@@ -918,7 +918,7 @@ export class GPURenderer {
 
     // Map textures – encoding must exactly match WebGL2 map-upload.js:
     // data R=cell (wall matID 0=floor else wall), G=(fh+0.5)*255, B=(ch-0.7)*255, A=deco
-    // dataMat R=floorMat, G=ceilMat
+    // dataMat R=floorMat, G=ceilMat, B=architectureId, A=typeId
     const mapW = dungeon.w, mapH = dungeon.h;
     const mapData = new Uint8Array(mapW * mapH * 4);
     const matData = new Uint8Array(mapW * mapH * 4);
@@ -941,8 +941,8 @@ export class GPURenderer {
         const ceilMat = dungeon.ceilMat ? dungeon.ceilMat[i] : 1;
         matData[i*4] = floorMat;
         matData[i*4+1] = ceilMat;
-        matData[i*4+2] = 0;
-        matData[i*4+3] = 0;
+        matData[i*4+2] = dungeon.architectureMap?.[i] || 1;
+        matData[i*4+3] = dungeon.typeMap?.[i] || 1;
       }
     }
 
@@ -1817,7 +1817,9 @@ export class GPURenderer {
       mapData[i*4]=cell; mapData[i*4+1]=g; mapData[i*4+2]=b; mapData[i*4+3]=dc;
       const floorMat = dungeon.floorMat ? dungeon.floorMat[i] : 1;
       const ceilMat = dungeon.ceilMat ? dungeon.ceilMat[i] : 1;
-      matData[i*4]=floorMat; matData[i*4+1]=ceilMat; matData[i*4+2]=0; matData[i*4+3]=0;
+      matData[i*4]=floorMat; matData[i*4+1]=ceilMat;
+      matData[i*4+2]=dungeon.architectureMap?.[i] || 1;
+      matData[i*4+3]=dungeon.typeMap?.[i] || 1;
     }
     const bpr = alignUp(mapW*4,256);
     const pad = new Uint8Array(bpr*mapH);
@@ -2404,9 +2406,10 @@ export class GPURenderer {
     // --- Debug mode routing (restores WebGL2 mutual exclusivity) ---
     const isPBRDebug = (this.pbrDebugMode | 0) !== 0;
     const isSSRDebug = (this.ssrDebugMode | 0) !== 0;
+    const isGridDebug = (this.gridDebug | 0) !== 0;
     // SSR should NOT run when PBR debug active (old: ssrShouldRun && pbrDebug==0)
-    const ssrShouldRun = !!this.ssrEnabled && !isPBRDebug && !!this.pipelines.ssr && !!this.pipelines.composite;
-    const depthOfFieldShouldRun = !!this.depthOfFieldEnabled && !isPBRDebug && !isSSRDebug && !!this.pipelines.depthOfField;
+    const ssrShouldRun = !!this.ssrEnabled && !isPBRDebug && !isGridDebug && !!this.pipelines.ssr && !!this.pipelines.composite;
+    const depthOfFieldShouldRun = !!this.depthOfFieldEnabled && !isPBRDebug && !isSSRDebug && !isGridDebug && !!this.pipelines.depthOfField;
 
     // GBuffer pass – pick debug PBR pipeline when active
     let raymarchPipeline = this.pipelines.raymarch;
@@ -2439,7 +2442,7 @@ export class GPURenderer {
     distortionClear.end();
 
     // Sprite pass – render to sceneTex with loadOp load, blend (restored from WebGL2) – with occlusion culling
-    if (this.spriteRenderer && this._sprites.length >0 && this.spriteRenderer.ready) {
+    if (!isGridDebug && this.spriteRenderer && this._sprites.length >0 && this.spriteRenderer.ready) {
       try {
         const cam = {
           x: camX,

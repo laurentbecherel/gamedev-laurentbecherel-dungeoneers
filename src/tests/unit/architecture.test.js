@@ -140,3 +140,15 @@ test('forced grotto resolves multiple earthen floor variants across rooms', asyn
   assert([...floors].some(id => [11,12,16].includes(id)), 'grotto generation selects earthen surfaces');
   assert(floors.size >= 4, `grotto rooms vary their floors (${[...floors].join(', ')})`);
 });
+
+test('3D construction debug shader renders architecture, type, and material IDs', async () => {
+  const [sceneShader, renderer] = await Promise.all([
+    fs.readFile(path.join(process.cwd(), 'render', 'shader-lib', 'scene.wgsl.js'), 'utf8'),
+    fs.readFile(path.join(process.cwd(), 'render', 'renderer-gpu.js'), 'utf8')
+  ]);
+  assert(sceneShader.includes('DEBUG_GLYPHS') && sceneShader.includes('debugConstructionSurface'));
+  assert(sceneShader.includes('debugTextLine(uv, 10u, ids.x') && sceneShader.includes('debugTextLine(uv, 11u, ids.y'));
+  assert(sceneShader.includes('debugTextLine(uv, 12u, materialId'), 'surface material ID is printed');
+  assert(sceneShader.includes('frame.gridDebug != 0'), 'key 1 flag selects the 3D diagnostic surface path');
+  assert(renderer.includes('dungeon.architectureMap?.[i]') && renderer.includes('dungeon.typeMap?.[i]'), 'architecture/type maps upload to the GPU material map');
+});

@@ -72,6 +72,25 @@ test('game toggles rendered PBR view to architecture/type ID grid', async ({ pag
   await expect(page.locator('#architecture-debug-canvas')).toBeHidden();
 });
 
+test('key 1 toggles the in-world 3D construction grid with architecture/type data', async ({ page }) => {
+  await page.goto('/game.html');
+  await page.waitForFunction(() => window.game?.dungeon?.architectureMap && window.game?.renderer?.isReady(), null, { timeout: 20000 });
+  await page.keyboard.press('1');
+  await expect.poll(() => page.evaluate(() => window.game.renderer.gridDebug)).toBe(1);
+  const state = await page.evaluate(() => ({
+    architectures: new Set(window.game.dungeon.architectureMap).size,
+    types: new Set(window.game.dungeon.typeMap).size,
+    hasArchitectureIds: window.game.dungeon.architectureMap.some(id => id > 0),
+    hasTypeIds: window.game.dungeon.typeMap.some(id => id > 0),
+    overviewVisible: window.game.architectureDebug.visible
+  }));
+  expect(state.hasArchitectureIds).toBe(true);
+  expect(state.hasTypeIds).toBe(true);
+  expect(state.overviewVisible).toBe(false);
+  await page.keyboard.press('1');
+  await expect.poll(() => page.evaluate(() => window.game.renderer.gridDebug)).toBe(0);
+});
+
 test('H cycles architecture with stable topology and rebuilds its palette', async ({ page }) => {
   await page.goto('/game.html');
   await page.waitForFunction(() => window.game?.dungeon?.meta?.architecturePlan && window.game?.renderer?.isReady(), null, { timeout: 20000 });

@@ -691,7 +691,7 @@ fn fs_main(@location(0) v_uv: vec2<f32>, @builtin(position) fragPos: vec4<f32>) 
     }
   }
 
-  let fogEn: f32 = f32(u_fogEnabled);
+  let fogEn: f32 = f32(u_fogEnabled) * (1.0 - f32(u_gridDebug));
   let fog: f32 = 1.0 / (1.0 + perpDist * u_fogBase + perpDist * perpDist * u_fogSquared);
   let fogged: vec3<f32> = finalColor * fog + u_fogColor * (1.0 - fog);
   finalColor = mix(finalColor, fogged, fogEn);
@@ -705,7 +705,7 @@ fn fs_main(@location(0) v_uv: vec2<f32>, @builtin(position) fragPos: vec4<f32>) 
   finalColor = mix(finalColor, tonemapped, overCond);
   finalColor = clamp(finalColor, vec3<f32>(0.0), vec3<f32>(1.0));
 
-  let authEn: f32 = f32(u_authentic);
+  let authEn: f32 = f32(u_authentic) * (1.0 - f32(u_gridDebug));
   let bands: i32 = max(8, u_bandLevels);
   let quantized: vec3<f32> = floor(finalColor * f32(bands)) / f32(bands);
   finalColor = mix(finalColor, quantized, authEn);
@@ -1226,7 +1226,7 @@ fn fs_main(@location(0) v_uv: vec2<f32>) -> QuantOut {
   var sc: vec4<f32> = textureSample(sceneTex, nearestSampler, uvFlip);
   // Restore WebGL2 parity: bypass palette quant when either PBR debug OR SSR debug active
   // Old quant shader checked pbrDebugMode !=0 ; old renderer also forced authentic=0 for SSR debug path.
-  if (frame.pbrDebugMode != 0 || frame.ssrDebugMode != 0) {
+  if (frame.pbrDebugMode != 0 || frame.ssrDebugMode != 0 || frame.gridDebug != 0) {
     var out: QuantOut; out.color = sc; return out;
   }
   let distortion: vec4<f32> = textureSample(distortionTex, nearestSampler, uvFlip);

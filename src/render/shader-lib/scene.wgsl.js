@@ -96,6 +96,62 @@ fn debugDamagedNoiseMask(worldPos: vec3<f32>) -> vec3<f32> {
   return clamp(bg + inside + edgeCol, vec3<f32>(0.0), vec3<f32>(1.0));
 }
 
+// Compact 3x5 diagnostic font: 0-9, A, T, M. Each construction tile shows
+// architecture, room type, and the material actually used on that surface.
+const DEBUG_GLYPHS: array<u32, 13> = array<u32, 13>(
+  31599u, 11415u, 29671u, 29647u, 23497u,
+  31183u, 31215u, 29257u, 31727u, 31695u,
+  11245u, 29842u, 24557u
+);
+
+fn debugGlyph(code: u32, uv: vec2<f32>) -> f32 {
+  if (code >= 13u || uv.x < 0.0 || uv.x >= 1.0 || uv.y < 0.0 || uv.y >= 1.0) { return 0.0; }
+  let column: u32 = min(2u, u32(floor(uv.x * 3.0)));
+  let row: u32 = min(4u, u32(floor((1.0 - uv.y) * 5.0)));
+  let bit: u32 = (4u - row) * 3u + (2u - column);
+  return f32((DEBUG_GLYPHS[code] >> bit) & 1u);
+}
+
+fn debugTextLine(uv: vec2<f32>, label: u32, value: u32, rowIndex: u32) -> f32 {
+  let lineTop: f32 = 0.84 - f32(rowIndex) * 0.235;
+  let local: vec2<f32> = vec2<f32>((uv.x - 0.14) / 0.72, (uv.y - (lineTop - 0.17)) / 0.17);
+  if (local.x < 0.0 || local.x >= 1.0 || local.y < 0.0 || local.y >= 1.0) { return 0.0; }
+  let slot: u32 = min(2u, u32(floor(local.x * 3.0)));
+  let slotUV: vec2<f32> = vec2<f32>(fract(local.x * 3.0) * 1.28 - 0.14, local.y * 1.18 - 0.09);
+  var code: u32 = label;
+  if (slot == 1u) { code = select(99u, min(9u, value / 10u), value >= 10u); }
+  if (slot == 2u) { code = value % 10u; }
+  return debugGlyph(code, slotUV);
+}
+
+fn debugConstructionIds(cell: vec2<i32>) -> vec2<u32> {
+  if (cell.x < 0 || cell.y < 0 || cell.x >= i32(frame.mapSize.x) || cell.y >= i32(frame.mapSize.y)) {
+    return vec2<u32>(0u);
+  }
+  let encoded: vec4<f32> = textureLoad(matMapTex, cell, 0);
+  return vec2<u32>(u32(round(encoded.b * 255.0)), u32(round(encoded.a * 255.0)));
+}
+
+fn debugConstructionSurface(uvRaw: vec2<f32>, cell: vec2<i32>, materialId: u32, surfaceKind: u32) -> vec3<f32> {
+  let uv: vec2<f32> = clamp(uvRaw, vec2<f32>(0.0), vec2<f32>(0.9999));
+  let ids: vec2<u32> = debugConstructionIds(cell);
+  var base: vec3<f32> = vec3<f32>(0.34, 0.085, 0.065); // wall
+  if (surfaceKind == 1u) { base = vec3<f32>(0.055, 0.27, 0.13); } // floor
+  if (surfaceKind == 2u) { base = vec3<f32>(0.065, 0.15, 0.34); } // ceiling
+  let edgeDistance: f32 = min(min(uv.x, 1.0 - uv.x), min(uv.y, 1.0 - uv.y));
+  let gridLine: f32 = 1.0 - smoothstep(0.025, 0.055, edgeDistance);
+  let panel: f32 = step(0.085, uv.x) * step(uv.x, 0.915) * step(0.085, uv.y) * step(uv.y, 0.91);
+  var color: vec3<f32> = mix(base, vec3<f32>(0.78, 0.84, 0.76), gridLine);
+  color = mix(color, vec3<f32>(0.012, 0.016, 0.017), panel * 0.88);
+  let aInk: f32 = debugTextLine(uv, 10u, ids.x, 0u);
+  let tInk: f32 = debugTextLine(uv, 11u, ids.y, 1u);
+  let mInk: f32 = debugTextLine(uv, 12u, materialId, 2u);
+  color = mix(color, vec3<f32>(1.0, 0.67, 0.22), aInk);
+  color = mix(color, vec3<f32>(0.24, 0.86, 0.91), tInk);
+  color = mix(color, vec3<f32>(0.92, 0.94, 0.88), mInk);
+  return color;
+}
+
 fn debugDamagedPlacementMask(worldPos: vec3<f32>) -> vec3<f32> {
   let biome: f32 = damagedBiomeMask(worldPos.xy);
   let presence: f32 = smoothstep(0.001, 0.02, biome);
@@ -152,6 +208,11 @@ struct HorizontalShadeResult {
 }
 
 fn shadeHorizontalCell(horizWorld: vec2<f32>, horizUV: vec2<f32>, matId: f32, count: f32, ray: vec2<f32>, eyeZ: f32, heightAtRay: f32, isCeil: bool) -> HorizontalShadeResult {
+  if (frame.gridDebug != 0) {
+    let kind: u32 = select(1u, 2u, isCeil);
+    let normal: vec3<f32> = select(vec3<f32>(0.0,0.0,1.0), vec3<f32>(0.0,0.0,-1.0), isCeil);
+    return HorizontalShadeResult(debugConstructionSurface(horizUV, vec2<i32>(floor(horizWorld)), u32(round(matId)), kind), distance(horizWorld, frame.playerPos), normal, 0.0);
+  }
   let hostLayer: i32 = clampLayer(matId, count);
   var layer: i32 = hostLayer;
   // Base floors are a strict z=0 plane. Only structural features alter macro
@@ -277,6 +338,9 @@ fn shadeCeilCell(ceilWorld: vec2<f32>, ceilUV: vec2<f32>, matId: f32, cc: f32, r
 }
 
 fn shadeWallCell(wallU: f32, wallV: f32, matId: f32, wc: f32, side: i32, stepDir: vec2<i32>, ray: vec2<f32>, hitPos: vec2<f32>, wallCell: vec2<i32>, hasCornerRound: bool, cornerNormal: vec3<f32>) -> vec3<f32> {
+  if (frame.gridDebug != 0) {
+    return debugConstructionSurface(vec2<f32>(wallU, 1.0 - wallV), wallCell, u32(round(matId)), 0u);
+  }
   let layer: i32 = clampLayer(matId, wc);
   var uv: vec2<f32> = vec2<f32>(wallU, wallV);
   let bitangent: vec3<f32> = vec3<f32>(0.0, 0.0, 1.0);

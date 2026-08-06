@@ -777,7 +777,7 @@ export class Game {
       }
       return;
     }
-    if (code === "Digit1" || code === "Numpad1") { const v = this.renderer.toggleGridDebug(); this._showHud("Grid debug: " + (v ? "ON (floor green / wall red / ceil blue)" : "OFF")); return; }
+    if (code === "Digit1" || code === "Numpad1") { const v = this.renderer.toggleGridDebug(); this._showHud("3D construction grid: " + (v ? "ON — A architecture · T type · M material" : "OFF — rendered materials")); return; }
     if (code === "Digit2" || code === "Numpad2") { const v = this.renderer.toggleLighting(); this._showHud("Lighting: " + (v ? "ON" : "OFF (flat albedo)")); return; }
     if (code === "Digit3" || code === "Numpad3") { const v = this.renderer.togglePBR(); this._showHud("PBR: " + (v ? "ON" : "OFF (diffuse only)")); return; }
     if (code === "Digit4" || code === "Numpad4") { const v = this.renderer.togglePOM(); this._showHud("POM: " + (v ? "ON" : "OFF")); return; }
