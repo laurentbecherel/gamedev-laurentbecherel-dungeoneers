@@ -1,0 +1,146 @@
+{
+  "version": 1,
+  "_readme": "Far-field depth pixelation. Distant scene pixels are grouped and depth-aware averaged after SSR but before palette quantization. This is intentionally a retro depth resolve rather than photographic bokeh.",
+  "enabled": true,
+  "distance": {
+    "sharpUntil": 6,
+    "fullEffectAt": 16,
+    "curve": 1.35
+  },
+  "pixelation": {
+    "maxBlockPixels": 3,
+    "strength": 1,
+    "referenceHeight": 360,
+    "scaleWithResolution": true
+  },
+  "filter": {
+    "pattern": "box9",
+    "strength": 1,
+    "radius": 0.65
+  },
+  "edge": {
+    "absoluteThreshold": 0.65,
+    "relativeThreshold": 0.2
+  },
+  "debug": {
+    "view": "off"
+  },
+  "docs": {
+    "enabled": "Enables the far-field depth pixelation pass. This is a Tier 1 live update and does not rebuild materials or regenerate the dungeon.",
+    "distance": {
+      "sharpUntil": "World-space distance that remains completely sharp. Keep this beyond immediate combat and interaction range.",
+      "fullEffectAt": "World-space distance where the configured maximum pixel block and filter strength are reached. Runtime validation keeps this above Sharp Until.",
+      "curve": "Shapes the distance ramp. Values above 1 delay the visible effect toward the far distance; values below 1 bring it forward."
+    },
+    "pixelation": {
+      "maxBlockPixels": "Largest screen-space pixel block at Full Effect At. Four is subtle at 640x360; eight or more is deliberately stylized.",
+      "strength": "Blends between the original scene and the depth-pixelated result without changing the distance ramp.",
+      "referenceHeight": "Internal render height at which Max Block Pixels is authored.",
+      "scaleWithResolution": "Scales block size relative to Reference Height so the effect has the same apparent size at other internal resolutions."
+    },
+    "filter": {
+      "pattern": "Sampling pattern inside each pixel block. Nearest is cheapest; Cross 5 is the recommended anti-moire default; Box 9 is the smoothest and most expensive.",
+      "strength": "Amount of depth-aware area averaging inside each distant pixel block. Zero keeps pure nearest pixelation.",
+      "radius": "How far samples spread across a pixel block. Values near 0.65 reduce distant texture shimmer without making silhouettes mushy."
+    },
+    "edge": {
+      "absoluteThreshold": "Maximum absolute world-space depth difference accepted by the block filter before a sample is rejected as another surface.",
+      "relativeThreshold": "Additional accepted depth difference proportional to the current distance. This keeps far coplanar surfaces filtered while protecting silhouettes."
+    },
+    "debug": {
+      "view": "Diagnostic output: depth, effect factor, selected block size, or rejected-sample ratio. Off renders the final effect."
+    }
+  },
+  "ui": {
+    "distance": {
+      "sharpUntil": {
+        "min": 0,
+        "max": 20,
+        "step": 0.25
+      },
+      "fullEffectAt": {
+        "min": 2,
+        "max": 40,
+        "step": 0.25
+      },
+      "curve": {
+        "min": 0.25,
+        "max": 4,
+        "step": 0.05
+      }
+    },
+    "pixelation": {
+      "maxBlockPixels": {
+        "min": 1,
+        "max": 12,
+        "step": 1
+      },
+      "strength": {
+        "min": 0,
+        "max": 1,
+        "step": 0.01
+      },
+      "referenceHeight": {
+        "min": 180,
+        "max": 2160,
+        "step": 1
+      }
+    },
+    "filter": {
+      "pattern": {
+        "type": "enum",
+        "options": [
+          "nearest",
+          "cross5",
+          "box9"
+        ],
+        "labels": {
+          "nearest": "Nearest — 1 sample",
+          "cross5": "Cross — 5 samples",
+          "box9": "Box — 9 samples"
+        }
+      },
+      "strength": {
+        "min": 0,
+        "max": 1,
+        "step": 0.01
+      },
+      "radius": {
+        "min": 0.25,
+        "max": 1,
+        "step": 0.05
+      }
+    },
+    "edge": {
+      "absoluteThreshold": {
+        "min": 0.05,
+        "max": 3,
+        "step": 0.05
+      },
+      "relativeThreshold": {
+        "min": 0,
+        "max": 0.25,
+        "step": 0.005
+      }
+    },
+    "debug": {
+      "view": {
+        "type": "enum",
+        "options": [
+          "off",
+          "depth",
+          "factor",
+          "blockSize",
+          "rejectedSamples"
+        ],
+        "labels": {
+          "off": "Final image",
+          "depth": "Linear depth",
+          "factor": "Effect strength",
+          "blockSize": "Pixel block size",
+          "rejectedSamples": "Edge rejection"
+        }
+      }
+    }
+  }
+}

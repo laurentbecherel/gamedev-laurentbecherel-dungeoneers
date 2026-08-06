@@ -150,6 +150,8 @@ export class Game {
     merged.structuralFeatures = renderCfgs['structural-features'] || baseCfg.structuralFeatures || baseCfg['structural-features'] || { enabled:false };
     merged['structural-features'] = merged.structuralFeatures;
     merged.liquids = renderCfgs.liquids || baseCfg.liquids || { enabled:true, liquids:{} };
+    merged.depthOfField = renderCfgs['depth-of-field'] || baseCfg.depthOfField || baseCfg['depth-of-field'] || { enabled:false };
+    merged['depth-of-field'] = merged.depthOfField;
     merged.playerCfg = this._pickCfg(renderCfgs, baseCfg, 'player', baseCfg.player || { moveSpeed:3, turnSpeed:2.2, radius:0.28, height:0.5 });
     merged.debug = this._pickCfg(renderCfgs, baseCfg, 'debug', {});
     merged.items = merged.generator?.items || merged.sprites?.generation || baseCfg.items || { maxTorches:24, minTorchDist:6, corridorBias:1.5, torchOffset:0.35 };
@@ -532,6 +534,13 @@ export class Game {
       case 'ssr': {
         this.cfg.ssr = data;
         if (this.renderer && typeof this.renderer.updateSSR === 'function') this.renderer.updateSSR(data);
+        break;
+      }
+      case 'depth-of-field':
+      case 'depthOfField': {
+        this.cfg.depthOfField = data;
+        this.cfg['depth-of-field'] = data;
+        if (this.renderer && typeof this.renderer.updateDepthOfField === 'function') this.renderer.updateDepthOfField(data);
         break;
       }
       default: {

@@ -13,6 +13,7 @@ const EXPECTED_FILES = [
   "rendering/pbr.json",
   "rendering/ao.json",
   "rendering/raymarch.json",
+  "rendering/depth-of-field.json",
   "rendering/materials-proc.json",
   "lighting/lighting.json",
   "lighting/shadows.json",
@@ -28,7 +29,7 @@ const EXPECTED_FILES = [
   "main.json"
 ];
 
-test("all 16 dedicated configs + main.json exist on disk", async () => {
+test("all dedicated configs + main.json exist on disk", async () => {
   for (const rel of EXPECTED_FILES) {
     const fp = path.join(CONFIG_ROOT, rel);
     const data = await fs.readFile(fp, "utf8").then(JSON.parse).catch(() => null);

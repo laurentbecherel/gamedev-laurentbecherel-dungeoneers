@@ -25,7 +25,7 @@ test("asset list populated with hierarchical nested categories", async ({ page }
   expect(joined).toContain("ui");
 });
 
-test("all 16 dedicated Task3 configs visible and editable", async ({ page }) => {
+test("all dedicated rendering configs visible and editable", async ({ page }) => {
   await page.goto("/editor.html");
   await expect(page.locator(".tree-file").first()).toBeVisible({ timeout: 6000 });
 
@@ -36,6 +36,7 @@ test("all 16 dedicated Task3 configs visible and editable", async ({ page }) => 
     "pbr.json",
     "ao.json",
     "raymarch.json",
+    "depth-of-field.json",
     "materials-proc.json",
     "lighting.json",
     "shadows.json",
@@ -64,6 +65,34 @@ test("config/display shows rendering.json with fov and toggles", async ({ page }
   await expect(page.locator(".field-label").first()).toBeVisible({ timeout: 3000 });
   const panelText = await page.locator("#editor-panel").textContent();
   expect(panelText.toLowerCase()).toContain("fov");
+});
+
+test("depth-of-field.json exposes documented distance, pixelation, filter and debug controls", async ({ page, request }) => {
+  const response = await request.get('/api/assets/config/rendering/depth-of-field');
+  expect(response.ok()).toBeTruthy();
+  const config = await response.json();
+  expect(config.enabled).toBe(true);
+  expect(config.distance.sharpUntil).toBeLessThan(config.distance.fullEffectAt);
+  expect(config.ui.pixelation.maxBlockPixels).toMatchObject({ min: 1, max: 12, step: 1 });
+  expect(config.ui.filter.pattern.options).toEqual(['nearest', 'cross5', 'box9']);
+
+  await page.goto('/editor.html');
+  await expect(page.locator('.tree-file').first()).toBeVisible({ timeout: 5000 });
+  await page.locator('.tree-file', { hasText: 'depth-of-field.json' }).first().click();
+  await page.waitForTimeout(250);
+  const panel = page.locator('#editor-panel');
+  await expect(panel).toContainText('Enabled');
+  const distance = page.locator('.object-section-toggle').filter({ hasText: 'Distance' }).first();
+  await distance.click();
+  await expect(panel).toContainText('World-space distance that remains completely sharp');
+  const distanceSliders = distance.locator('xpath=..').locator('input[type="range"]');
+  await expect(distanceSliders).toHaveCount(3);
+
+  const filter = page.locator('.object-section-toggle').filter({ hasText: 'Filter' }).first();
+  await filter.click();
+  const pattern = filter.locator('xpath=..').locator('select.field-select');
+  expect(['nearest', 'cross5', 'box9']).toContain(await pattern.inputValue());
+  await expect(pattern.locator('option[value="box9"]')).toHaveCount(1);
 });
 
 test("material modifiers exposes a live debug-view dropdown", async ({ page, context }) => {

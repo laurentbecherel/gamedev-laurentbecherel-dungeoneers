@@ -10,6 +10,7 @@ import { wgslModifiers } from './shader-lib/modifiers.wgsl.js';
 import { wgslScene } from './shader-lib/scene.wgsl.js';
 import { wgslSSR } from './shader-lib/ssr.wgsl.js';
 import { wgslFeatures } from './shader-lib/features.wgsl.js';
+export { fsDepthOfFieldWgsl } from './shader-lib/depth-of-field.wgsl.js';
 
 export const MAX_LIGHTS = 8;
 export const MAX_CHARS = 8;
@@ -1299,6 +1300,7 @@ struct CameraUniforms {
   shadowPointFactor: f32,
   shadowBias: f32,
   mapSize: vec2<f32>,
+  depthRange: f32,
 };
 @group(0) @binding(0) var<uniform> cam: CameraUniforms;
 @group(0) @binding(1) var<uniform> lightData: array<vec4<f32>, 40>;
@@ -1391,6 +1393,7 @@ struct CameraUniforms {
   shadowPointFactor: f32,
   shadowBias: f32,
   mapSize: vec2<f32>,
+  depthRange: f32,
 };
 @group(0) @binding(0) var<uniform> cam: CameraUniforms;
 @group(0) @binding(1) var<uniform> lightData: array<vec4<f32>, 40>;
@@ -1564,6 +1567,55 @@ fn fs_main(
   Lo = Lo / (vec3<f32>(1.0) + max(Lo - vec3<f32>(0.72), vec3<f32>(0.0)) * 0.42);
   Lo = clamp(Lo, vec3<f32>(0.0), vec3<f32>(1.0));
   return vec4<f32>(Lo, albedoS.a * v_alpha);
+}
+`;
+
+// Solid billboards contribute their visible surface distance to the shared
+// normal/depth buffer. Translucent effect layers use the color-only pipeline.
+export const fsSpriteDepthWgsl = `
+@group(1) @binding(0) var albedoTex: texture_2d<f32>;
+@group(1) @binding(1) var normalTex: texture_2d<f32>;
+@group(2) @binding(0) var materialSampler: sampler;
+struct CameraUniforms {
+  resolution: vec2<f32>, pos: vec2<f32>, angle: f32, planeLen: f32,
+  bobPixels: f32, eyeZ: f32, time: f32, horizon: f32,
+  sunDir: vec3<f32>, sunIntensity: f32, sunColor: vec3<f32>, ambient: f32,
+  fogBase: f32, fogSq: f32, shadowPointFactor: f32, shadowBias: f32,
+  mapSize: vec2<f32>, depthRange: f32,
+};
+@group(0) @binding(0) var<uniform> cam: CameraUniforms;
+
+fn decodeSpriteDepthNormal(enc: vec3<f32>) -> vec3<f32> {
+  return normalize(enc * 2.0 - 1.0);
+}
+fn octaEncodeSpriteDepth(nIn: vec3<f32>) -> vec2<f32> {
+  var n = nIn / (abs(nIn.x) + abs(nIn.y) + abs(nIn.z));
+  if (n.z < 0.0) {
+    n = vec3<f32>((vec2<f32>(1.0) - abs(n.yx)) * sign(n.xy), n.z);
+  }
+  return n.xy * 0.5 + vec2<f32>(0.5);
+}
+
+@fragment
+fn fs_main(
+  @location(0) v_uv: vec2<f32>,
+  @location(3) v_cameraRight: vec3<f32>,
+  @location(4) v_cameraForward: vec3<f32>,
+  @location(5) v_alpha: f32,
+  @location(6) v_normalStrength: f32,
+  @location(8) v_dist: f32
+) -> @location(0) vec4<f32> {
+  let albedo = textureSample(albedoTex, materialSampler, v_uv);
+  if (albedo.a * v_alpha < 0.20) { discard; }
+  var normalTS = decodeSpriteDepthNormal(textureSample(normalTex, materialSampler, v_uv).rgb);
+  normalTS = normalize(vec3<f32>(normalTS.xy * v_normalStrength, normalTS.z));
+  let tangent = normalize(v_cameraRight);
+  let bitangent = vec3<f32>(0.0, 0.0, 1.0);
+  let geomN = normalize(-v_cameraForward + vec3<f32>(0.0, 0.0, 0.4));
+  let worldNormal = normalize(tangent * normalTS.x + bitangent * normalTS.y + geomN * normalTS.z);
+  let encoded = octaEncodeSpriteDepth(worldNormal);
+  let depthNorm = clamp(v_dist / max(0.001, cam.depthRange), 0.0, 1.0);
+  return vec4<f32>(encoded, depthNorm, 0.0);
 }
 `;
 

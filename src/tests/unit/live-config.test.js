@@ -30,6 +30,7 @@ test("getTierForLogical classification matches architecture plan", async () => {
   assert.equal(getTierForLogical('map'), 'T1');
   assert.equal(getTierForLogical('sprites'), 'T1');
   assert.equal(getTierForLogical('light-types'), 'T1');
+  assert.equal(getTierForLogical('depth-of-field'), 'T1');
   // path overrides
   assert.equal(getTierForLogical('config/rendering/materials-proc'), 'T2');
   assert.equal(getTierForLogical('config/materials/walls'), 'T2');
@@ -45,6 +46,7 @@ test("getTierForLogical classification matches architecture plan", async () => {
   assert.equal(getTierForPath('config/rendering', 'materials-proc'), 'T2');
   assert.equal(getTierForPath('config/gameplay', 'generator'), 'T3');
   assert.equal(getTierForPath('config/geometry', 'chamfer'), 'T1');
+  assert.equal(getTierForPath('config/rendering', 'depth-of-field'), 'T1');
 });
 
 test("reverseLookupPath returns logical names", async () => {

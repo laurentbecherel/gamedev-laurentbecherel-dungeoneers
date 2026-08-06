@@ -19,11 +19,13 @@ import {
   fsRaymarchWgsl,
   fsSSRwgsl,
   fsCompositeWgsl,
+  fsDepthOfFieldWgsl,
   fsQuantizeWgsl,
   vsUIWgsl,
   fsUIWgsl,
   vsSpriteWgsl,
   fsSpriteWgsl,
+  fsSpriteDepthWgsl,
   fsSpriteDistortionWgsl,
   MAX_LIGHTS,
   fsDebugModifiersWgsl
@@ -40,6 +42,7 @@ import { expandFixtureLayers } from '../systems/fixtures.js';
 import { FixtureParticleSystem } from '../systems/fixture-particles.js';
 import { generateNoiseTextureData } from '../world/noise.js';
 import { generateModifierMap } from '../world/modifiers.js';
+import { DEPTH_OF_FIELD_UNIFORM_BYTES, packDepthOfFieldUniforms } from './depth-of-field.js';
 
 export function isWebGPUSupported() {
   try { return typeof navigator !== 'undefined' && !!navigator.gpu; } catch { return false; }
@@ -683,6 +686,7 @@ export class GPURenderer {
     this.gNormalDepthTex = null;
     this.ssrTex = null;
     this.compositeTex = null;
+    this.depthOfFieldTex = null;
     this.distortionTex = null;
     this.blueNoiseTex = null;
     this.mapTex = null;
@@ -708,6 +712,9 @@ export class GPURenderer {
     this.modifiersEnabled = 0;
     this.ssrEnabled = 1;
     this.ssrDebugMode = 0;
+    this.depthOfFieldEnabled = 0;
+    this.depthOfFieldDebugView = 0;
+    this.depthOfFieldNormalized = null;
     this.maxLights = MAX_LIGHTS || 8;
     // Light/sprite
     this.lightManager = null;
@@ -769,6 +776,8 @@ export class GPURenderer {
           }
         }
       } catch {}
+      this._cfgCache = config;
+      this._uploadDepthOfFieldUniforms();
       this.ready = true;
       this._fallback2D = true;
       console.log('[GPURenderer] fallback2D ready (headless)');
@@ -1013,6 +1022,7 @@ export class GPURenderer {
     this.gNormalDepthTex = device.createTexture({ size:{ width:cw,height:ch }, format:'rgba16float', usage: GPUTextureUsage.RENDER_ATTACHMENT|GPUTextureUsage.TEXTURE_BINDING, label:'gNormalDepth16F' });
     this.ssrTex = device.createTexture({ size:{ width:cw,height:ch }, format:'rgba8unorm', usage: GPUTextureUsage.RENDER_ATTACHMENT|GPUTextureUsage.TEXTURE_BINDING, label:'ssrTex' });
     this.compositeTex = device.createTexture({ size:{ width:cw,height:ch }, format:'rgba8unorm', usage: GPUTextureUsage.RENDER_ATTACHMENT|GPUTextureUsage.TEXTURE_BINDING, label:'compositeTex' });
+    this.depthOfFieldTex = device.createTexture({ size:{ width:cw,height:ch }, format:'rgba8unorm', usage: GPUTextureUsage.RENDER_ATTACHMENT|GPUTextureUsage.TEXTURE_BINDING, label:'depthOfFieldTex' });
     this.distortionTex = device.createTexture({ size:{ width:cw,height:ch }, format:'rgba16float', usage: GPUTextureUsage.RENDER_ATTACHMENT|GPUTextureUsage.TEXTURE_BINDING, label:'distortionTex' });
 
     // Blue noise 64x64
@@ -1042,6 +1052,16 @@ export class GPURenderer {
     this.buffers.frameData = device.createBuffer({ size: 512, usage: GPUBufferUsage.UNIFORM|GPUBufferUsage.COPY_DST, label:'frameData' });
     this.buffers.lightData = device.createBuffer({ size: 640, usage: GPUBufferUsage.UNIFORM|GPUBufferUsage.COPY_DST, label:'lightData' });
     this.buffers.uiUniform = device.createBuffer({ size: 16, usage: GPUBufferUsage.UNIFORM|GPUBufferUsage.COPY_DST, label:'uiUniform' });
+    this.buffers.depthOfFieldUniform = device.createBuffer({ size: DEPTH_OF_FIELD_UNIFORM_BYTES, usage: GPUBufferUsage.UNIFORM|GPUBufferUsage.COPY_DST, label:'depthOfFieldUniform' });
+
+    {
+      const depthRange = config?.ssr?.reprojection?.depthRange ?? config?.ssr?.depthRange ?? config?.rendering?.ssrDepthRange ?? 25;
+      const packed = packDepthOfFieldUniforms(config?.depthOfField || config?.['depth-of-field'] || {}, depthRange);
+      this.depthOfFieldNormalized = packed.normalized;
+      this.depthOfFieldEnabled = packed.normalized.enabled ? 1 : 0;
+      this.depthOfFieldDebugView = packed.normalized.debugView;
+      device.queue.writeBuffer(this.buffers.depthOfFieldUniform, 0, packed.buffer);
+    }
 
     // write initial modifiers UBO
     {
@@ -1122,8 +1142,16 @@ export class GPURenderer {
       ],
       label: 'bgl_quant'
     });
+    const bglDepthOfField = device.createBindGroupLayout({
+      entries: [
+        { binding:0, visibility: GPUShaderStage.FRAGMENT, texture:{ sampleType:'float' } },
+        { binding:1, visibility: GPUShaderStage.FRAGMENT, texture:{ sampleType:'float' } },
+        { binding:2, visibility: GPUShaderStage.FRAGMENT, buffer:{ type:'uniform' } },
+      ],
+      label: 'bgl_depth_of_field'
+    });
 
-    this.bindGroupLayouts = { bgl0, bgl1, bgl2, bgl3, bglComp, bglQuant };
+    this.bindGroupLayouts = { bgl0, bgl1, bgl2, bgl3, bglComp, bglQuant, bglDepthOfField };
 
     // Helper to create shader module
     const createModule = (code, label) => {
@@ -1139,6 +1167,7 @@ export class GPURenderer {
     const pipelineLayoutComposite = device.createPipelineLayout({ bindGroupLayouts: [bgl0, bglComp, bgl2], label:'pl_comp' });
     // Quantize needs frame + quant textures + sampler
     const pipelineLayoutQuant = device.createPipelineLayout({ bindGroupLayouts: [bgl0, bglQuant, bgl2], label:'pl_quant' });
+    const pipelineLayoutDepthOfField = device.createPipelineLayout({ bindGroupLayouts: [bglDepthOfField], label:'pl_depth_of_field' });
 
     // Raymarch pipeline (GBuffer MRT: 2 color attachments)
     const vsModRay = createModule(vsFullscreenWgsl, 'vsFullscreen');
@@ -1207,6 +1236,22 @@ export class GPURenderer {
         label:'composite'
       });
     } catch (e) { console.warn('[WebGPU] composite pipeline failed', e); }
+
+    // Retro far-field depth resolve: depth-aware block averaging after SSR.
+    const fsModDepthOfField = createModule(fsDepthOfFieldWgsl, 'fsDepthOfField');
+    await checkShaderCompilation(device, fsModDepthOfField, 'fsDepthOfField').catch(()=>{});
+    try {
+      this.pipelines.depthOfField = device.createRenderPipeline({
+        layout: pipelineLayoutDepthOfField,
+        vertex: { module: vsModRay, entryPoint: 'vs_main' },
+        fragment: { module: fsModDepthOfField, entryPoint: 'fs_main', targets: [{ format:'rgba8unorm' }] },
+        primitive: { topology:'triangle-list' },
+        label:'depthOfField'
+      });
+    } catch (e) {
+      console.warn('[WebGPU] depth-of-field pipeline failed', e);
+      this.pipelines.depthOfField = null;
+    }
 
     // Quantize
     const fsModQuant = createModule(fsQuantizeWgsl, 'fsQuantize');
@@ -1370,6 +1415,25 @@ export class GPURenderer {
       label:'bg_comp'
     });
 
+    this.bindGroups.depthOfFieldScene = device.createBindGroup({
+      layout: bglDepthOfField,
+      entries: [
+        { binding:0, resource: sceneView },
+        { binding:1, resource: gNormalView },
+        { binding:2, resource:{ buffer: this.buffers.depthOfFieldUniform } },
+      ],
+      label:'bg_depth_of_field_scene'
+    });
+    this.bindGroups.depthOfFieldComposite = device.createBindGroup({
+      layout: bglDepthOfField,
+      entries: [
+        { binding:0, resource: this.compositeTex.createView() },
+        { binding:1, resource: gNormalView },
+        { binding:2, resource:{ buffer: this.buffers.depthOfFieldUniform } },
+      ],
+      label:'bg_depth_of_field_composite'
+    });
+
     // Quantize
     this.bindGroups.quantize = device.createBindGroup({
       layout: bglQuant,
@@ -1391,6 +1455,16 @@ export class GPURenderer {
         { binding:3, resource: this.distortionTex.createView() },
       ],
       label:'bg_quant_comp'
+    });
+    this.bindGroups.quantizeDepthOfField = device.createBindGroup({
+      layout: bglQuant,
+      entries: [
+        { binding:0, resource: this.depthOfFieldTex.createView() },
+        { binding:1, resource: this.paletteTex.createView() },
+        { binding:2, resource: this.lutTex.createView() },
+        { binding:3, resource: this.distortionTex.createView() },
+      ],
+      label:'bg_quant_depth_of_field'
     });
 
     // UI
@@ -1426,6 +1500,7 @@ export class GPURenderer {
       await this.spriteRenderer.init({
         vsSpriteSrc: vsSpriteWgsl,
         fsSpritePBRSrc: fsSpriteWgsl,
+        fsSpriteDepthSrc: fsSpriteDepthWgsl,
         fsSpriteDistortionSrc: fsSpriteDistortionWgsl,
         MAX_LIGHTS: this.maxLights,
         textureFilter: this.textureFilter,
@@ -1822,6 +1897,7 @@ export class GPURenderer {
     if(!this._cfgCache) this._cfgCache={};
     Object.assign(this._cfgCache, partial);
     this._uploadFeatureUniforms();
+    if(partial.depthOfField || partial['depth-of-field'] || partial.ssr || partial.rendering) this._uploadDepthOfFieldUniforms();
   }
   updatePalette(paletteCfg){
     if(!paletteCfg) return;
@@ -1907,7 +1983,23 @@ export class GPURenderer {
       }
     } catch (e) { console.warn('[updateMaterialModifiers] UBO write failed', e); }
   }
-  updateSSR(ssr){ if(!ssr) return; if(!this._cfgCache) this._cfgCache={}; this._cfgCache.ssr=ssr; this.ssrEnabled = (ssr.enabled!==false)?1:0; }
+  updateSSR(ssr){ if(!ssr) return; if(!this._cfgCache) this._cfgCache={}; this._cfgCache.ssr=ssr; this.ssrEnabled = (ssr.enabled!==false)?1:0; this._uploadDepthOfFieldUniforms(); }
+  _uploadDepthOfFieldUniforms(){
+    const cfg = this._cfgCache || {};
+    const depthRange = cfg.ssr?.reprojection?.depthRange ?? cfg.ssr?.depthRange ?? cfg.rendering?.ssrDepthRange ?? 25;
+    const packed = packDepthOfFieldUniforms(cfg.depthOfField || cfg['depth-of-field'] || {}, depthRange);
+    this.depthOfFieldNormalized = packed.normalized;
+    this.depthOfFieldEnabled = packed.normalized.enabled ? 1 : 0;
+    this.depthOfFieldDebugView = packed.normalized.debugView;
+    if(this.device && this.buffers.depthOfFieldUniform) this.device.queue.writeBuffer(this.buffers.depthOfFieldUniform, 0, packed.buffer);
+  }
+  updateDepthOfField(depthOfField){
+    if(!depthOfField) return;
+    if(!this._cfgCache) this._cfgCache={};
+    this._cfgCache.depthOfField = depthOfField;
+    this._cfgCache['depth-of-field'] = depthOfField;
+    this._uploadDepthOfFieldUniforms();
+  }
   updateSprites(s){}
 
   renderMapOnly(dungeon, player) {
@@ -2314,6 +2406,7 @@ export class GPURenderer {
     const isSSRDebug = (this.ssrDebugMode | 0) !== 0;
     // SSR should NOT run when PBR debug active (old: ssrShouldRun && pbrDebug==0)
     const ssrShouldRun = !!this.ssrEnabled && !isPBRDebug && !!this.pipelines.ssr && !!this.pipelines.composite;
+    const depthOfFieldShouldRun = !!this.depthOfFieldEnabled && !isPBRDebug && !isSSRDebug && !!this.pipelines.depthOfField;
 
     // GBuffer pass – pick debug PBR pipeline when active
     let raymarchPipeline = this.pipelines.raymarch;
@@ -2391,7 +2484,8 @@ export class GPURenderer {
             mapSize: [dungeon.w,dungeon.h],
             shadowPointFactor: shadowsCfg.enabled === false ? 1 : (shadowsCfg.point?.shadowFactor ?? 0.15),
             shadowBias: shadowsCfg.bias?.dirOffset ?? 0.06,
-          }, encoder, sceneView);
+            depthRange: frameUniformValues.ssrDepthRange,
+          }, encoder, sceneView, gNormalView);
           }
           this.spriteRenderer.renderDistortion(distortionSprites, cam, timeSec, encoder, distortionView);
       } catch(e){ console.warn('[WebGPU] sprite pass error', e); }
@@ -2424,6 +2518,20 @@ export class GPURenderer {
       } catch(e){ console.warn('[WebGPU] SSR/composite failed', e); }
     }
 
+    // Depth-aware pixelation consumes the completed physical scene, including
+    // SSR when active, and deliberately runs before heat distortion + palette.
+    if (depthOfFieldShouldRun) {
+      try {
+        const depthOfFieldPass = encoder.beginRenderPass({
+          colorAttachments: [{ view: this.depthOfFieldTex.createView(), clearValue:{ r:0,g:0,b:0,a:1 }, loadOp:'clear', storeOp:'store' }]
+        });
+        depthOfFieldPass.setPipeline(this.pipelines.depthOfField);
+        depthOfFieldPass.setBindGroup(0, ssrShouldRun ? this.bindGroups.depthOfFieldComposite : this.bindGroups.depthOfFieldScene);
+        depthOfFieldPass.draw(3,1,0,0);
+        depthOfFieldPass.end();
+      } catch(e){ console.warn('[WebGPU] depth-of-field pass failed', e); }
+    }
+
     // Quantize to canvas – final pass – mirrors WebGL2 isDebug branch:
     // if PBR debug -> sceneTex (debug raymarch) ; if SSR debug -> compositeTex (contains SSR debug viz)
     // else normal: composite if SSR ran else scene
@@ -2444,7 +2552,10 @@ export class GPURenderer {
     } else {
       finalIsComposite = ssrShouldRun;
     }
-    finalPass.setBindGroup(1, finalIsComposite ? this.bindGroups.quantizeComposite : this.bindGroups.quantize);
+    const finalColorBindGroup = depthOfFieldShouldRun
+      ? this.bindGroups.quantizeDepthOfField
+      : (finalIsComposite ? this.bindGroups.quantizeComposite : this.bindGroups.quantize);
+    finalPass.setBindGroup(1, finalColorBindGroup);
     finalPass.setBindGroup(2, this.bindGroups.samplers);
     finalPass.draw(3,1,0,0);
     finalPass.end();

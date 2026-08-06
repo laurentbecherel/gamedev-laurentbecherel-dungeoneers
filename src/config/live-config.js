@@ -30,6 +30,7 @@ const TIER_MAP = {
   'fixtures': 'T3',
   'material-modifiers': 'T1',
   'ssr': 'T1',
+  'depth-of-field': 'T1',
   'liquids': 'T1',
   'main': 'T1',
   // T2 array rebuild
@@ -70,6 +71,8 @@ const PATH_TIER_OVERRIDES = {
   'config/material-modifiers': 'T1',
   'config/rendering/ssr': 'T1',
   'config/ssr': 'T1',
+  'config/rendering/depth-of-field': 'T1',
+  'config/depth-of-field': 'T1',
 };
 
 export function getTierForLogical(logicalOrPath) {

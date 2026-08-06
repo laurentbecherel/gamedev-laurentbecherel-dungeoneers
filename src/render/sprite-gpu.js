@@ -8,6 +8,7 @@ export class SpriteGpuRenderer {
   constructor(device) {
     this.device = device;
     this.pipeline = null;
+    this.depthPipeline = null;
     this.bindGroupLayout0 = null;
     this.bindGroupLayout1 = null;
     this.bindGroupLayout2 = null;
@@ -28,12 +29,14 @@ export class SpriteGpuRenderer {
 
     let vsSrc = externalShaders?.vsSpriteSrc;
     let fsSrc = externalShaders?.fsSpritePBRSrc;
+    let fsDepthSrc = externalShaders?.fsSpriteDepthSrc;
     let fsDistortionSrc = externalShaders?.fsSpriteDistortionSrc;
 
-    if (!vsSrc || !fsSrc || !fsDistortionSrc) {
+    if (!vsSrc || !fsSrc || !fsDepthSrc || !fsDistortionSrc) {
       const mod = await import('./shaders-wgsl.js');
       vsSrc = vsSrc || mod.vsSpriteWgsl || mod.vsSpriteSrc;
       fsSrc = fsSrc || mod.fsSpriteWgsl || mod.fsSpritePBRSrc;
+      fsDepthSrc = fsDepthSrc || mod.fsSpriteDepthWgsl;
       fsDistortionSrc = fsDistortionSrc || mod.fsSpriteDistortionWgsl;
       this.maxLights = externalShaders?.MAX_LIGHTS || mod.MAX_LIGHTS || 8;
     }
@@ -41,6 +44,7 @@ export class SpriteGpuRenderer {
     // Separate modules for VS and FS to avoid duplicate struct definitions (previous bug caused redefinition of CameraUniforms)
     const vsModule = device.createShaderModule({ code: vsSrc, label: 'spriteVS' });
     const fsModule = device.createShaderModule({ code: fsSrc, label: 'spriteFS' });
+    const fsDepthModule = device.createShaderModule({ code: fsDepthSrc, label: 'spriteDepthFS' });
     const fsDistortionModule = device.createShaderModule({ code: fsDistortionSrc, label: 'spriteDistortionFS' });
 
     this.uniformBuffer = device.createBuffer({ size: 256, usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST, label: 'spriteCamera' });
@@ -109,6 +113,30 @@ export class SpriteGpuRenderer {
       primitive: { topology: 'triangle-list' },
       label: 'sprite_pipeline'
     });
+    this.depthPipeline = device.createRenderPipeline({
+      layout: pipelineLayout,
+      vertex: {
+        module: vsModule,
+        entryPoint: 'vs_main',
+        buffers: [
+          { arrayStride: 8, stepMode: 'vertex', attributes: [{ shaderLocation: 0, offset: 0, format: 'float32x2' }] },
+          {
+            arrayStride: 13 * 4, stepMode: 'instance', attributes: [
+              { shaderLocation: 1, offset: 0, format: 'float32x3' },
+              { shaderLocation: 2, offset: 12, format: 'float32x2' },
+              { shaderLocation: 3, offset: 20, format: 'float32x4' },
+              { shaderLocation: 4, offset: 36, format: 'float32' },
+              { shaderLocation: 5, offset: 40, format: 'float32' },
+              { shaderLocation: 6, offset: 44, format: 'float32' },
+              { shaderLocation: 7, offset: 48, format: 'float32' },
+            ]
+          }
+        ]
+      },
+      fragment: { module: fsDepthModule, entryPoint: 'fs_main', targets: [{ format: 'rgba16float' }] },
+      primitive: { topology: 'triangle-list' },
+      label: 'sprite_depth_pipeline'
+    });
     this.distortionPipeline = device.createRenderPipeline({
       layout: pipelineLayout,
       vertex: {
@@ -169,7 +197,7 @@ export class SpriteGpuRenderer {
     for (const id of spriteIds) { try { await loadSpriteGL(device, id); } catch {} }
   }
 
-  render(sprites, camera, lights = [], time = 0, opts = {}, externalEncoder = null, targetView = null) {
+  render(sprites, camera, lights = [], time = 0, opts = {}, externalEncoder = null, targetView = null, normalDepthView = null) {
     if (!this.ready || !sprites || sprites.length === 0) return;
     const device = this.device;
     const sorted = sprites.slice().sort((a, b) => {
@@ -206,6 +234,7 @@ export class SpriteGpuRenderer {
       f32(92, opts.shadowBias ?? 0.06);
       f32(96, opts.mapSize?.[0] ?? 1);
       f32(100, opts.mapSize?.[1] ?? 1);
+      f32(104, opts.depthRange ?? 25);
       device.queue.writeBuffer(this.uniformBuffer, 0, buf);
     }
     {
@@ -234,6 +263,7 @@ export class SpriteGpuRenderer {
       // Pre-build all instance data to avoid writeBuffer inside pass (WebGPU best practice)
       const instances = [];
       const bgs = [];
+      const depthWriters = [];
       for (const s of sorted) {
         if (s.visible === false) continue;
         const texEntry = getSpriteTextures(device, s.spriteId || s.type);
@@ -260,6 +290,7 @@ export class SpriteGpuRenderer {
         if (instances.length >= this.instanceCapacity) break;
         instances.push(inst);
         bgs.push(bg);
+        depthWriters.push(s.depthWrite ?? (!s.isParticle && !s.isEffectLayer && meta?.category !== 'effect'));
       }
       if (instances.length > 0) {
         // Batch write instances into buffer with offsets
@@ -278,6 +309,21 @@ export class SpriteGpuRenderer {
         pass.draw(6, 1, 0, 0);
       }
       pass.end();
+
+      if (normalDepthView && this.depthPipeline && depthWriters.some(Boolean)) {
+        const depthPass = externalEncoder.beginRenderPass({ colorAttachments: [{ view: normalDepthView, loadOp: 'load', storeOp: 'store' }] });
+        depthPass.setPipeline(this.depthPipeline);
+        depthPass.setBindGroup(0, this.cameraBindGroup);
+        depthPass.setBindGroup(2, this.samplerBindGroup);
+        depthPass.setVertexBuffer(0, this.quadBuffer);
+        for (let i = 0; i < instances.length; i++) {
+          if (!depthWriters[i]) continue;
+          depthPass.setVertexBuffer(1, this.instanceBuffer, i * 13 * 4, 13 * 4);
+          depthPass.setBindGroup(1, bgs[i]);
+          depthPass.draw(6, 1, 0, 0);
+        }
+        depthPass.end();
+      }
     }
   }
 
